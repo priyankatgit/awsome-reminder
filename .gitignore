@@ -1,0 +1,6 @@
+.task
+.wails
+bin/
+frontend/node_modules/
+frontend/dist/
+.superpowers/
