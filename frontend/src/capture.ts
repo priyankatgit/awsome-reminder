@@ -88,6 +88,8 @@ export function mountCapture(root: HTMLElement): void {
   let timer: number | undefined;
   let current: Preview | null = null;
   let busy = false; // a save or hide is in progress
+  let hideTimer: number | undefined; // pending flash/fade before hiding
+  let endDraft = false; // the current text was saved or dismissed
 
   function setLead(name: IconName): void {
     if (lead.dataset.icon === name && lead.firstChild) return;
@@ -159,32 +161,43 @@ export function mountCapture(root: HTMLElement): void {
     if (refocus) input.focus();
   }
 
-  function reset(): void {
+  /** Clears transient state; the draft text too unless keepDraft. */
+  function reset(keepDraft = false): void {
     seq++;
     window.clearTimeout(timer);
-    input.value = "";
+    if (!keepDraft) input.value = "";
     showError("");
     closePicker(false);
-    renderPreview(null);
+    if (input.value.trim() === "") renderPreview(null); // a kept draft keeps its preview until refreshed
     flash.classList.remove("is-on");
     busy = false;
   }
 
-  /** Fades the box out, then asks Go to hide the window. */
+  /**
+   * Save and Esc end the draft: fade out, hide, clear. The pending timer is
+   * kept so open() can cancel it if the box is reopened meanwhile.
+   */
   function hide(): void {
+    endDraft = true;
     box.classList.add("is-hidden");
-    window.setTimeout(() => {
+    window.clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => {
       void api.hideCapture();
       reset();
+      endDraft = false;
     }, motionMs("--dur-exit"));
   }
 
   function open(): void {
-    reset();
+    window.clearTimeout(hideTimer); // a save/Esc hide still pending must not hide the new box
+    reset(!endDraft); // keep a draft left by blur; drop one already saved or dismissed
+    endDraft = false;
     box.classList.remove("is-hidden", "is-entering");
     void box.offsetWidth; // restart the enter animation
     box.classList.add("is-entering");
     input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    if (input.value.trim() !== "") void runPreview();
   }
 
   async function save(): Promise<void> {
@@ -199,8 +212,10 @@ export function mountCapture(root: HTMLElement): void {
       showError(msg.includes("empty input") ? "Add some text to save" : msg);
       return;
     }
+    endDraft = true;
     flash.classList.add("is-on");
-    window.setTimeout(hide, motionMs("--dur-flash"));
+    window.clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(hide, motionMs("--dur-flash"));
   }
 
   async function openPicker(): Promise<void> {
@@ -271,11 +286,12 @@ export function mountCapture(root: HTMLElement): void {
     else if (!busy) hide();
   });
 
-  // Go hides the window when it loses focus; make sure the next show starts
-  // from a clean, invisible state instead of flashing the old content.
+  // Go hides the window when it loses focus. Keep the draft text so a
+  // half-typed thought survives; the box starts invisible on the next show
+  // and open() restores it with the caret at the end.
   window.addEventListener("blur", () => {
     box.classList.add("is-hidden");
-    reset();
+    closePicker(false);
   });
   window.addEventListener("focus", () => {
     box.classList.remove("is-hidden");

@@ -22,14 +22,35 @@ const (
 type wailsWindows struct {
 	app     *application.App
 	capture *application.WebviewWindow
+	size    *heightKeeper
+}
 
+// heightKeeper applies capture-window heights in order. Each binding call
+// runs on its own goroutine, so the native resize happens under mu: the
+// recorded height always equals the last height applied. Nothing on the main
+// thread takes mu, so holding it across set (which waits for the main
+// thread) cannot deadlock.
+type heightKeeper struct {
 	mu     sync.Mutex
 	height int
+	set    func(height int)
+}
+
+// Resize clamps height and applies it unless it is already the current one.
+func (k *heightKeeper) Resize(height int) {
+	height = min(max(height, captureMinHeight), captureMaxHeight)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if height == k.height {
+		return
+	}
+	k.set(height)
+	k.height = height
 }
 
 // newWindows pre-creates the hidden capture window.
 func newWindows(app *application.App) *wailsWindows {
-	w := &wailsWindows{app: app, height: captureHeight}
+	w := &wailsWindows{app: app}
 	w.capture = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             captureWindowName,
 		Title:            "Awesome Reminder",
@@ -52,6 +73,7 @@ func newWindows(app *application.App) *wailsWindows {
 		},
 		DefaultContextMenuDisabled: true,
 	})
+	w.size = &heightKeeper{height: captureHeight, set: func(h int) { w.capture.SetSize(captureWidth, h) }}
 	w.capture.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		w.HideCapture()
 	})
@@ -80,14 +102,7 @@ func (w *wailsWindows) HideCapture() {
 
 // ResizeCapture sets the capture window height to fit its content.
 func (w *wailsWindows) ResizeCapture(height int) {
-	height = min(max(height, captureMinHeight), captureMaxHeight)
-	w.mu.Lock()
-	same := height == w.height
-	w.height = height
-	w.mu.Unlock()
-	if !same {
-		w.capture.SetSize(captureWidth, height)
-	}
+	w.size.Resize(height)
 }
 
 // OpenList shows the list window.

@@ -141,8 +141,11 @@ func Run(opts Options) error {
 		s, err := c.Settings()
 		if err != nil {
 			log.Printf("settings: %v", err)
-		} else if err := hk.Set(s.Hotkey); err != nil {
-			log.Printf("hotkey %s: %v", s.Hotkey, err)
+		} else {
+			if err := hk.Set(s.Hotkey); err != nil {
+				log.Printf("hotkey %s: %v", s.Hotkey, err)
+			}
+			syncAutostart(s.Autostart)
 		}
 		tray.SetTooltip(tooltip(svc.Status()))
 		sched.Start(ctx)
