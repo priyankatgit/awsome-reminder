@@ -27,6 +27,11 @@ type Core struct {
 	now func() time.Time
 	loc *time.Location
 
+	// opMu serializes every mutation, including its read-modify-write, since
+	// the UI service and the scheduler call Core concurrently. OnChange
+	// listeners run after it is released.
+	opMu sync.Mutex
+
 	mu       sync.Mutex
 	onChange func()
 }
@@ -148,34 +153,48 @@ func (c *Core) Capture(input string) (model.Item, error) {
 		DueAt: r.DueAt, TZ: c.loc.String(), RRule: r.RRule, Status: model.StatusOpen,
 		CreatedAt: now,
 	}
-	if err := c.save(&it, now); err != nil {
+	if err := c.write(func() error { return c.save(&it, now) }); err != nil {
 		return model.Item{}, err
 	}
 	return it, nil
 }
 
-// save stamps the update metadata, stores the item and notifies listeners.
-func (c *Core) save(it *model.Item, now time.Time) error {
-	it.UpdatedAt = now.UTC()
-	it.UpdatedBy = c.st.DeviceID()
-	if err := c.st.Put(*it); err != nil {
+// write runs fn under the operation lock and, if it succeeded, notifies
+// listeners after the lock is released.
+func (c *Core) write(fn func() error) error {
+	c.opMu.Lock()
+	err := fn()
+	c.opMu.Unlock()
+	if err != nil {
 		return err
 	}
 	c.changed()
 	return nil
 }
 
-// mutate loads an item, applies fn, and saves it.
+// save stamps the update metadata and stores the item. Callers hold opMu.
+func (c *Core) save(it *model.Item, now time.Time) error {
+	it.UpdatedAt = now.UTC()
+	it.UpdatedBy = c.st.DeviceID()
+	return c.st.Put(*it)
+}
+
+// mutate loads an item, applies fn, and saves it, all under the operation
+// lock.
 func (c *Core) mutate(id string, fn func(it *model.Item, now time.Time) error) (model.Item, error) {
-	it, err := c.st.Get(id)
+	var it model.Item
+	err := c.write(func() error {
+		var err error
+		if it, err = c.st.Get(id); err != nil {
+			return fmt.Errorf("item %s: %w", id, err)
+		}
+		now := c.now().UTC()
+		if err := fn(&it, now); err != nil {
+			return err
+		}
+		return c.save(&it, now)
+	})
 	if err != nil {
-		return model.Item{}, fmt.Errorf("item %s: %w", id, err)
-	}
-	now := c.now().UTC()
-	if err := fn(&it, now); err != nil {
-		return model.Item{}, err
-	}
-	if err := c.save(&it, now); err != nil {
 		return model.Item{}, err
 	}
 	return it, nil
@@ -308,9 +327,5 @@ func (c *Core) SaveSettings(s settings.Settings) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	if err := c.st.SaveSettings(s); err != nil {
-		return err
-	}
-	c.changed()
-	return nil
+	return c.write(func() error { return c.st.SaveSettings(s) })
 }
