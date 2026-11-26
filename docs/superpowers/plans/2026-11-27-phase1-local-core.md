@@ -416,7 +416,8 @@
 - [ ] **Step 3:** Implement Service + main wiring. Run `wails3 generate bindings` into `frontend/bindings`.
 - [ ] **Step 4:** Implement the capture view (`#capture`):
   - input autofocused;
-  - `Preview` debounced 80 ms, rendering one line: icon (⏰ reminder / ☐ to-do), `human`, `#tags`, `alerts`, and warnings in amber;
+  - layout, tokens, fonts, icons and motion exactly per `docs/superpowers/specs/2026-11-27-ui-design-guide.md` (create `frontend/src/tokens.css`; bundle fonts with `@fontsource/ibm-plex-sans` and `@fontsource/jetbrains-mono`; Lucide SVG icons, no emoji). Reserve the right-side 48×48 action slot for the future mic button and render nothing in it. On Windows use the Acrylic/translucent backdrop for this window, with a solid fallback;
+  - `Preview` debounced 80 ms, rendering the preview row: leading icon (search / bell / check-square), `human` as a time chip, tag chips, `alerts`, and warnings in amber;
   - Enter → `Capture` → clear + `HideCapture`;
   - Esc or window blur → `HideCapture`;
   - empty Enter does nothing; a Capture error shows inline;
@@ -436,6 +437,7 @@
 - Consumes: Service `View`, `Done`, `Reopen`, `Snooze`, `Delete`, `EditText`, `Update`, `StopRepeating`; event `items:changed`, `list:focus`.
 - Produces: `list` window, 900×640, normal frame, created on Open List or a left tray click, **destroyed on close**, URL `/#list`.
 
+- [ ] **Step 0:** Follow the "List window" section, keyboard map and pre-delivery checklist of `docs/superpowers/specs/2026-11-27-ui-design-guide.md`. Reuse `tokens.css` and the icon helper from Task 9.
 - [ ] **Step 1:** Implement the layout:
   - a search box at the top (client-side, case-insensitive filter over text and tags);
   - a **Today / Upcoming** section (overdue rows in red, showing the relative time);
@@ -466,7 +468,7 @@
   - `settings` window: 520×560, URL `/#settings`, destroyed on close.
 
 - [ ] **Step 1:** In `main.go`, the scheduler's fire callback creates or reuses the alert window and emits `alerts:show`. Never steal keyboard focus from the user's active app: show the window without activating it where the v3.1.0 window API allows.
-- [ ] **Step 2:** Build the alert view. Each alert card shows:
+- [ ] **Step 2:** Build the alert and settings views per the "Alert popup" and "Settings" sections of `docs/superpowers/specs/2026-11-27-ui-design-guide.md`, reusing `tokens.css`. Build the alert view: each alert card shows:
   - the text and due time (e.g. "in 10 min" / "now" / "missed · was due 14:00");
   - buttons **Done**, **Snooze ▾** (10m, 1h, tomorrow) and **Open**, which calls `OpenList(itemId)` so the list scrolls to and highlights that item.
   When the queue empties, `DismissAlerts` closes the window.

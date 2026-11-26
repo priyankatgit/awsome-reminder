@@ -15,7 +15,7 @@ Developers keep to-dos in Notepad and lose reminder-worthy thoughts mid-flow. Go
 ## Non-goals (v1) — deferred, each a separate design later
 - **Google/Outlook calendar integration** (reading meetings or writing reminders). Decided for later: support *multiple accounts* (read all, one target calendar for writes); prefer no-sign-in private ICS links for reading; sign-in/OAuth only if writing to calendar.
 - **Phone input** (add tasks from phone with no laptop on). Leading option recorded: Telegram bot + user's own free Cloudflare Worker (parses, confirms, stores inbox, schedules ntfy); laptops pull the inbox on sync. Alternatives: email-to-self (Gmail IMAP), ntfy inbox topic.
-- Voice / "Hey Awesome" wake word; meeting transcription → to-dos (see Roadmap).
+- "Hey Awesome" wake word; meeting transcription → to-dos (see Roadmap). (Click-to-dictate in the capture box is Phase 1.5 below.)
 - Teams/sharing, projects/priorities/subtasks, non-English date parsing, a mobile app.
 
 ## Anti-goals (failure even if it "works")
@@ -83,7 +83,14 @@ UI windows: capture (frameless, centered, always-on-top, hides on Esc/blur) · l
 - **Time zones/DST:** store UTC + original tz; recurrences expand in their tz.
 
 ## Delivery phases
-1. **Local core:** hotkey + capture box + parser + SQLite + tray list + desktop alerts + autostart + md export. Usable daily on one machine.
+1. **Local core:** hotkey + capture box + parser + SQLite + tray list + desktop alerts + autostart + md export. Usable daily on one machine. UI follows `2026-11-27-ui-design-guide.md`.
+1.5. **Voice dictation in the capture box** (added 2026-11-27 at the user's request; built right after Phase 1, before Atlas sync):
+   - A mic button in the capture box's right action slot (or `Ctrl+M`) starts listening. The UI shows a pulsing ring, a live waveform and a timer, per the UI guide.
+   - Listening auto-stops after about 1.5 s of silence; Esc cancels and the stop button stops.
+   - Audio is captured in the webview (`getUserMedia`), sent to Go as 16 kHz mono PCM, and transcribed **locally** by whisper.cpp running as a subprocess.
+   - The model (`base.en`, ~150 MB) and the engine binary are downloaded on first use, with consent and visible progress. The process exits after a short idle, so RAM is held only while dictating. CPU only.
+   - The text appears in the input with the normal parse preview. **Enter saves; it never auto-saves.**
+   - Engine packaging per OS (a prebuilt binary vs. building with CGo in CI) is decided in that phase's own plan.
 2. **Atlas sync:** Settings → paste URI, outbox/pull sync, restore on a fresh machine.
 3. **ntfy push:** settings toggle, claim-then-schedule, cancel/replace, test-notification button.
 
