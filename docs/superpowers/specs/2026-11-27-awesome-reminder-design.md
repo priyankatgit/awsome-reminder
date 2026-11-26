@@ -96,6 +96,7 @@ UI windows: capture (frameless, centered, always-on-top, hides on Esc/blur) · l
    - The tray icon carries a status dot, with tooltip text for each state: Synced (green, "Synced · 2 min ago"), Syncing (animated), Offline (grey, "Offline · N changes waiting"), Error (red, with the reason), Not set up (no dot).
    - The list window header shows the same status as a pill. Clicking it opens the details and a **Sync now** button.
    - Every item still in the outbox (not yet in Atlas) shows a small `offline` marker (cloud-off icon) on its row, which disappears once it's pushed.
+   - **"All synced" is highlighted too:** when the outbox is empty and the last sync succeeded, the header pill turns green with a cloud-check icon ("All synced · just now") and the tray dot is solid green. When a sync clears the last pending change, the pill glows briefly (≈600 ms, skipped under reduced motion), and the rows' `offline` markers fade out.
 3. **ntfy push:** settings toggle, claim-then-schedule, cancel/replace, test-notification button.
 
 ## Roadmap after v1 (direction only)
