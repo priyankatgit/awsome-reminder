@@ -1,0 +1,126 @@
+/*
+ * Design tokens: the only place raw colours and sizes live.
+ * See docs/superpowers/specs/2026-11-27-ui-design-guide.md.
+ * Dark is the default; light follows prefers-color-scheme.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Colour */
+  --bg: #0F172A;
+  --surface: #1B2336;
+  --surface-glass: rgba(15, 23, 42, 0.72);
+  --muted: #272F42;
+  --fg: #F8FAFC;
+  --fg-muted: #94A3B8;
+  --border: #334155;
+  --accent: #22C55E;
+  --on-accent: #0F172A;
+  --time: #F59E0B;
+  --danger: #EF4444;
+  --ring: #22C55E;
+  --warning: var(--time);
+
+  /* Time chip: --time tinted (contrast 6.6:1 dark, 6.4:1 light). */
+  --time-chip-fg: #F59E0B;
+  --time-chip-bg: rgba(245, 158, 11, 0.14);
+
+  /* Tag chips: hash(tag) % 8; every pair keeps >= 4.5:1 (dark >= 7.4:1). */
+  --tag-0-fg: #A5B4FC; --tag-0-bg: #1E2547; /* slate-blue */
+  --tag-1-fg: #5EEAD4; --tag-1-bg: #0F2E2E; /* teal */
+  --tag-2-fg: #C4B5FD; --tag-2-bg: #2A2045; /* violet */
+  --tag-3-fg: #FDA4AF; --tag-3-bg: #3A1C26; /* rose */
+  --tag-4-fg: #FCD34D; --tag-4-bg: #33270F; /* amber */
+  --tag-5-fg: #67E8F9; --tag-5-bg: #0E2A35; /* cyan */
+  --tag-6-fg: #BEF264; --tag-6-bg: #1F2C10; /* lime */
+  --tag-7-fg: #FDBA74; --tag-7-bg: #36230F; /* orange */
+  --tag-inbox-fg: var(--fg-muted);
+  --tag-inbox-bg: var(--muted);
+
+  /* Type */
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --text-input: 20px;
+  --text-body: 14px;
+  --text-small: 12px;
+  --line-body: 20px;
+  --line-small: 16px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --tracking-header: 0.06em;
+
+  /* Spacing (4-pt scale) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radius */
+  --radius-window: 14px;
+  --radius-card: 10px;
+  --radius-chip: 8px;
+  --radius-pill: 999px;
+
+  /* Lines, rings, icons, hit areas */
+  --hairline: 1px;
+  --ring-width: 2px;
+  --ring-offset: 2px;
+  --flash-height: 2px;
+  --icon-size: 18px;
+  --icon-size-inline: 14px;
+  --icon-stroke: 1.75;
+  --hit-area: 48px;
+  --chip-height: 20px;
+  --keycap-min: 20px;
+  --control-height: 32px;
+
+  /* Capture box */
+  --capture-input-row: 64px;
+
+  /* Shadow (floating windows only) */
+  --shadow-float: 0 20px 50px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border);
+
+  /* Motion */
+  --dur-enter: 140ms;
+  --dur-exit: 90ms;
+  --dur-hover: 150ms;
+  --dur-flash: 120ms;
+  --ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-exit: ease-in;
+  --enter-scale: 0.98;
+  --hover-opacity: 0.88;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --surface-glass: rgba(255, 255, 255, 0.78);
+    --muted: #EEF2F7;
+    --fg: #0F172A;
+    --fg-muted: #475569;
+    --border: #E2E8F0;
+    --accent: #16A34A;
+    --on-accent: #FFFFFF;
+    --time: #B45309;
+    --danger: #DC2626;
+    --ring: #16A34A;
+
+    --time-chip-fg: #92400E;
+    --time-chip-bg: #FEF3C7;
+
+    --tag-0-fg: #3730A3; --tag-0-bg: #E0E7FF;
+    --tag-1-fg: #115E59; --tag-1-bg: #CCFBF1;
+    --tag-2-fg: #5B21B6; --tag-2-bg: #EDE9FE;
+    --tag-3-fg: #9F1239; --tag-3-bg: #FFE4E6;
+    --tag-4-fg: #92400E; --tag-4-bg: #FEF3C7;
+    --tag-5-fg: #155E75; --tag-5-bg: #CFFAFE;
+    --tag-6-fg: #3F6212; --tag-6-bg: #ECFCCB;
+    --tag-7-fg: #9A3412; --tag-7-bg: #FFEDD5;
+  }
+}

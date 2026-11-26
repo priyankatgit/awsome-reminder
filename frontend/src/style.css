@@ -1,0 +1,324 @@
+/* Component styles. Raw colours and sizes live in tokens.css only. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--keycap-min);
+  height: var(--keycap-min);
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--muted);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  stroke-width: var(--icon-stroke);
+  flex: none;
+}
+
+.btn {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-chip);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: opacity var(--dur-hover);
+}
+
+.btn:hover {
+  opacity: var(--hover-opacity);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:focus-visible {
+  outline: var(--ring-width) solid var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+/* ---------- Capture box ---------- */
+
+/* Over a native backdrop the window itself is the box: the OS draws its
+   rounded corners and shadow. Without one, CSS draws them. */
+.capture {
+  min-height: 100vh;
+  background: var(--surface-glass);
+  overflow: hidden;
+  transform-origin: 50% 0;
+}
+
+html[data-backdrop="solid"] .capture {
+  background: var(--bg);
+  border-radius: var(--radius-window);
+  box-shadow: var(--shadow-float);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .capture {
+    background: var(--bg);
+  }
+}
+
+.capture.is-entering {
+  animation: capture-enter var(--dur-enter) var(--ease-enter);
+}
+
+.capture.is-hidden {
+  opacity: 0;
+  transition: opacity var(--dur-exit) var(--ease-exit);
+}
+
+@keyframes capture-enter {
+  from {
+    opacity: 0;
+    transform: scale(var(--enter-scale));
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.cap-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--capture-input-row);
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+
+.cap-lead {
+  display: inline-flex;
+  color: var(--fg-muted);
+}
+
+.cap-lead[data-icon="bell"] {
+  color: var(--time);
+}
+
+.cap-lead[data-icon="todo"] {
+  color: var(--fg);
+}
+
+.cap-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--hit-area);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--fg);
+  caret-color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-input);
+  user-select: text;
+}
+
+.cap-input::placeholder {
+  color: var(--fg-muted);
+}
+
+/* Reserved for the voice-phase mic button: a 48x48 hit area, empty now. */
+.cap-action-slot {
+  flex: none;
+  width: var(--hit-area);
+  height: var(--hit-area);
+}
+
+/* Save feedback: an accent underline under the input row. */
+.cap-flash {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--flash-height);
+  background: var(--accent);
+  opacity: 0;
+}
+
+.cap-flash.is-on {
+  opacity: 1;
+}
+
+.cap-error {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-2);
+  color: var(--danger);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.cap-picker[hidden],
+.cap-error[hidden] {
+  display: none;
+}
+
+.cap-picker-label {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-header);
+  text-transform: uppercase;
+}
+
+.cap-due {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+}
+
+/* Keyboard-first: the field is edited in place; no calendar popup that would
+   take focus away from the window. */
+.cap-due::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
+.cap-picker-hint {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+}
+
+.cap-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: calc(var(--line-body) + 2 * var(--space-2) + var(--hairline));
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.cap-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cap-empty,
+.cap-sub {
+  color: var(--fg-muted);
+}
+
+.cap-sub {
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-kind {
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+.cap-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warning);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-warning .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  white-space: nowrap;
+}
+
+.chip-time {
+  background: var(--time-chip-bg);
+  color: var(--time-chip-fg);
+}
+
+.chip-tag[data-hue="inbox"] { background: var(--tag-inbox-bg); color: var(--tag-inbox-fg); }
+.chip-tag[data-hue="0"] { background: var(--tag-0-bg); color: var(--tag-0-fg); }
+.chip-tag[data-hue="1"] { background: var(--tag-1-bg); color: var(--tag-1-fg); }
+.chip-tag[data-hue="2"] { background: var(--tag-2-bg); color: var(--tag-2-fg); }
+.chip-tag[data-hue="3"] { background: var(--tag-3-bg); color: var(--tag-3-fg); }
+.chip-tag[data-hue="4"] { background: var(--tag-4-bg); color: var(--tag-4-fg); }
+.chip-tag[data-hue="5"] { background: var(--tag-5-bg); color: var(--tag-5-fg); }
+.chip-tag[data-hue="6"] { background: var(--tag-6-bg); color: var(--tag-6-fg); }
+.chip-tag[data-hue="7"] { background: var(--tag-7-bg); color: var(--tag-7-fg); }
+
+.cap-hint {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-hint span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
