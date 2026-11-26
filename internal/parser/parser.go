@@ -49,7 +49,7 @@ var prefixes = [][]string{
 // colonPrefixes are single-token prefixes that end in a colon.
 var colonPrefixes = []string{"reminder:", "todo:"}
 
-// Parse extracts text, tags and (in later tasks) a due time from input.
+// Parse extracts text, tags, a due time and an optional RRULE from input.
 func Parse(input string, now time.Time, cfg Config) Result {
 	toks := tokenize(input)
 	toks = stripPrefix(toks)
@@ -62,23 +62,21 @@ func Parse(input string, now time.Time, cfg Config) Result {
 
 	words := make([]string, 0, len(rest))
 	for _, t := range rest {
+		if t.Text == "" {
+			continue // empty quotes contribute nothing
+		}
 		words = append(words, t.Text)
 	}
-	return Result{
+	res := Result{
 		Text:  strings.Join(words, " "),
 		Tags:  tags,
 		DueAt: due,
 		RRule: rrule,
 	}
-}
-
-// parseWhen is the hook for time phrases (implemented in when.go by a later
-// task). It receives the tokens left after prefix and tag removal and returns
-// the due time (UTC) and RRULE it found, plus the tokens that remain as item
-// text with the time phrase removed. Quoted tokens must never be consumed.
-// Returning (nil, "", nil) means "no time phrase": Parse then keeps all tokens.
-func parseWhen(tokens []token, now time.Time, cfg Config) (due *time.Time, rrule string, rest []token) {
-	return nil, "", nil
+	if due != nil && due.Before(now) {
+		res.Warnings = append(res.Warnings, "time is in the past")
+	}
+	return res
 }
 
 // tokenize splits input on whitespace, treating a double-quoted segment that

@@ -4,13 +4,14 @@ import (
 	"reflect"
 	"testing"
 	"time"
+	_ "time/tzdata"
 )
 
 func testNow(t *testing.T) (time.Time, Config) {
 	t.Helper()
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
-		t.Skipf("tzdata unavailable: %v", err)
+		t.Fatalf("load America/New_York: %v", err)
 	}
 	now := time.Date(2026, 11, 25, 10, 0, 0, 0, loc)
 	cfg := Config{
@@ -79,6 +80,12 @@ func TestParseQuotes(t *testing.T) {
 		{"quoted prefix literal", `"remind me to" x`, "remind me to x", []string{}},
 		{"quoted spaces", `say "hello   world" #t`, "say hello   world", []string{"t"}},
 		{"unclosed quote", `say "hello #t`, `say "hello`, []string{"t"}},
+	})
+}
+
+func TestEmptyQuotes(t *testing.T) {
+	runCases(t, []parseCase{
+		{"empty quotes", `a "" b`, "a b", []string{}},
 	})
 }
 
