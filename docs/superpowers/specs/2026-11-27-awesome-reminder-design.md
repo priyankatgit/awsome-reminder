@@ -92,6 +92,10 @@ UI windows: capture (frameless, centered, always-on-top, hides on Esc/blur) · l
    - The text appears in the input with the normal parse preview. **Enter saves; it never auto-saves.**
    - Engine packaging per OS (a prebuilt binary vs. building with CGo in CI) is decided in that phase's own plan.
 2. **Atlas sync:** Settings → paste URI, outbox/pull sync, restore on a fresh machine.
+   **Sync status everywhere** (user request, 2026-11-27):
+   - The tray icon carries a status dot, with tooltip text for each state: Synced (green, "Synced · 2 min ago"), Syncing (animated), Offline (grey, "Offline · N changes waiting"), Error (red, with the reason), Not set up (no dot).
+   - The list window header shows the same status as a pill. Clicking it opens the details and a **Sync now** button.
+   - Every item still in the outbox (not yet in Atlas) shows a small `offline` marker (cloud-off icon) on its row, which disappears once it's pushed.
 3. **ntfy push:** settings toggle, claim-then-schedule, cancel/replace, test-notification button.
 
 ## Roadmap after v1 (direction only)
