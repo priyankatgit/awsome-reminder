@@ -25,6 +25,10 @@ var weekdayNames = map[string]time.Weekday{
 	"sat": time.Saturday, "saturday": time.Saturday,
 }
 
+// weekdayAbbrevs are common words in technical text, so as a bare date they
+// need an "on" before them or a clock time right after.
+var weekdayAbbrevs = map[string]bool{"sun": true, "mon": true, "tue": true, "tues": true, "wed": true, "thu": true, "thur": true, "thurs": true, "fri": true, "sat": true}
+
 var monthNames = map[string]time.Month{
 	"jan": time.January, "january": time.January,
 	"feb": time.February, "february": time.February,
@@ -85,71 +89,120 @@ func parseWhen(tokens []token, now time.Time, cfg Config) (due *time.Time, rrule
 		loc = time.UTC
 	}
 	now = now.In(loc)
+
+	// The first strong phrase wins. A weak one ("at 5" on its own) is only
+	// used when no strong phrase exists anywhere in the input.
+	var weak *phrase
+	var best *phrase
 	for i := range tokens {
 		if tokens[i].Quoted {
 			continue
 		}
-		rec, date, clock, n := matchPhrase(tokens, i, now, cfg)
-		if n == 0 {
+		p := matchPhrase(tokens, i)
+		if p.n == 0 {
 			continue
 		}
-		start := i
-		if start > 0 && !tokens[start-1].Quoted && isConnector(tokens[start-1].Text) {
-			start--
+		p.start = i
+		if p.strong() {
+			best = &p
+			break
 		}
-		rest = append(rest, tokens[:start]...)
-		rest = append(rest, tokens[i+n:]...)
-		if rest == nil {
-			rest = []token{}
+		if weak == nil {
+			weak = &p
 		}
-
-		var t time.Time
-		switch {
-		case rec != nil:
-			c := cfg.DefaultTime
-			if clock != nil {
-				c = *clock
-			}
-			t = firstOccurrence(*rec, c, now, loc)
-			rrule = rec.rule
-		case date != nil:
-			t = resolveDate(*date, clock, now, cfg, loc)
-		default:
-			t = clockOnly(*clock, now, loc)
-		}
-		u := t.UTC()
-		return &u, rrule, rest
 	}
-	return nil, "", nil
+	if best == nil {
+		best = weak
+	}
+	if best == nil {
+		return nil, "", nil
+	}
+	p := *best
+
+	start := p.start
+	if start > 0 && !tokens[start-1].Quoted && isConnector(tokens[start-1].Text) {
+		start--
+	}
+	rest = append(rest, tokens[:start]...)
+	rest = append(rest, tokens[p.start+p.n:]...)
+	if rest == nil {
+		rest = []token{}
+	}
+
+	var clock *Clock
+	if p.clock != nil {
+		c := *p.clock
+		// "tonight at 9" means 21:00 unless am was given explicitly.
+		if p.date != nil && p.date.kind == dkTonight && p.ckind != ckExplicit && c.Hour < 12 {
+			c.Hour += 12
+		}
+		clock = &c
+	}
+	var t time.Time
+	switch {
+	case p.rec != nil:
+		c := cfg.DefaultTime
+		if clock != nil {
+			c = *clock
+		}
+		t = firstOccurrence(*p.rec, c, now, loc)
+		rrule = p.rec.rule
+	case p.date != nil:
+		t = resolveDate(*p.date, clock, now, cfg, loc)
+	default:
+		t = clockOnly(*clock, now, loc)
+	}
+	u := t.UTC()
+	return &u, rrule, rest
+}
+
+// phrase is one recognised time phrase: tokens[start:start+n].
+type phrase struct {
+	rec      *recurPart
+	date     *datePart
+	clock    *Clock
+	ckind    clockKind
+	start, n int
+}
+
+// strong reports whether the phrase may take precedence over a weak one.
+func (p phrase) strong() bool {
+	return p.rec != nil || p.date != nil || (p.clock != nil && p.ckind != ckWeakAt)
 }
 
 // matchPhrase greedily takes at most one recurrence-or-date part and one time
-// part, in either order, starting at tokens[i]. n is the tokens consumed.
-func matchPhrase(toks []token, i int, now time.Time, cfg Config) (rec *recurPart, date *datePart, clock *Clock, n int) {
+// part, in either order, starting at toks[i]. A bare "H:MM" is only accepted
+// next to a date or recurrence part.
+func matchPhrase(toks []token, i int) phrase {
+	var p phrase
 	pos := i
 	for {
-		if rec == nil && date == nil {
+		if p.rec == nil && p.date == nil {
 			if r, k, ok := matchRecur(toks, pos); ok {
-				rec, pos = &r, pos+k
+				p.rec, pos = &r, pos+k
 				continue
 			}
 			if d, k, ok := matchDate(toks, pos); ok {
-				date, pos = &d, pos+k
+				p.date, pos = &d, pos+k
 				if d.kind == dkRelDur {
 					break // an absolute offset takes no time of day
 				}
 				continue
 			}
 		}
-		if clock == nil && (date == nil || date.kind != dkRelDur) {
-			if c, k, ok := matchClock(toks, pos); ok {
-				clock, pos = &c, pos+k
+		if p.clock == nil && (p.date == nil || p.date.kind != dkRelDur) {
+			if c, k, kind, ok := matchClock(toks, pos); ok {
+				p.clock, p.ckind, pos = &c, kind, pos+k
 				continue
 			}
 		}
 		break
 	}
-	return rec, date, clock, pos - i
+	if p.rec == nil && p.date == nil && p.clock != nil && p.ckind == ckBareColon {
+		return phrase{}
+	}
+	p.n = pos - i
+	return p
 }
 
 func matchRecur(toks []token, i int) (recurPart, int, bool) {
@@ -198,6 +251,12 @@ func matchDate(toks []token, i int) (datePart, int, bool) {
 		return matchRelative(toks, i)
 	}
 	if wd, ok := weekdayNames[w]; ok {
+		if weekdayAbbrevs[w] {
+			prev, _ := word(toks, i-1)
+			if _, _, _, hasClock := matchClock(toks, i+1); prev != "on" && !hasClock {
+				return datePart{}, 0, false
+			}
+		}
 		return datePart{kind: dkWeekday, wd: wd}, 1, true
 	}
 	if m := isoRe.FindStringSubmatch(w); m != nil {

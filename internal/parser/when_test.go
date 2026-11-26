@@ -51,6 +51,18 @@ var whenCases = []whenCase{
 	{"ordinal", "dec 3rd dentist", "dentist", nil, "2026-12-03 09:00", ""},
 	{"in a week", "in 1 week review", "review", nil, "2026-12-02 10:00", ""},
 	{"not a time", "buy 5 apples", "buy 5 apples", nil, "", ""},
+	// fix round 1
+	{"abbrev ignored in text", "fix sat solver tomorrow 5pm", "fix sat solver", nil, "2026-11-26 17:00", ""},
+	{"abbrev after on", "on sat 10am brunch", "brunch", nil, "2026-11-28 10:00", ""},
+	{"abbrev before clock", "sat 10am brunch", "brunch", nil, "2026-11-28 10:00", ""},
+	{"abbrev alone is text", "mon standup", "mon standup", nil, "", ""},
+	{"tonight at 9 is pm", "tonight at 9 backup", "backup", nil, "2026-11-25 21:00", ""},
+	{"tonight 10:30 is pm", "tonight 10:30 deploy", "deploy", nil, "2026-11-25 22:30", ""},
+	{"tonight explicit am", "tonight 1am deploy", "deploy", nil, "2026-11-25 01:00", ""},
+	{"weak at N loses to date", "look at 3 PRs tomorrow", "look at 3 PRs", nil, "2026-11-26 09:00", ""},
+	{"bare H:MM alone is text", "read john 3:16", "read john 3:16", nil, "", ""},
+	{"weak at N alone (accepted)", "meet at 5 people", "meet people", nil, "2026-11-25 17:00", ""},
+	{"bare H:MM next to date", "tomorrow 9:30 sync", "sync", nil, "2026-11-26 09:30", ""},
 }
 
 func localDue(t *testing.T, s string, loc *time.Location) time.Time {
