@@ -200,13 +200,18 @@ func (c *Core) mutate(id string, fn func(it *model.Item, now time.Time) error) (
 	return it, nil
 }
 
-// EditText returns the editable one-line form of an item.
+// EditText returns the editable one-line form of an item. The implicit
+// inbox tag is left out when it is the only tag; Update adds it back.
 func (c *Core) EditText(id string) (string, error) {
 	it, err := c.st.Get(id)
 	if err != nil {
 		return "", fmt.Errorf("item %s: %w", id, err)
 	}
-	return parser.Render(it.Text, it.Tags, it.DueAt, it.RRule, c.itemLoc(it)), nil
+	tags := it.Tags
+	if len(tags) == 1 && tags[0] == inboxTag {
+		tags = nil
+	}
+	return parser.Render(it.Text, tags, it.DueAt, it.RRule, c.itemLoc(it)), nil
 }
 
 // Update re-parses input for an existing item. ID, CreatedAt, LeadTimes, TZ

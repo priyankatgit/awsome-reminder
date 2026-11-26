@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +191,31 @@ func TestEditTextRoundTrip(t *testing.T) {
 	got, err := e.c.Update(it.ID, txt)
 	if err != nil || !got.DueAt.Equal(*it.DueAt) || got.Text != "deploy" {
 		t.Fatalf("%q -> %+v %v", txt, got, err)
+	}
+}
+
+func TestEditTextOmitsImplicitInbox(t *testing.T) {
+	e := newEnv(t)
+	plain := mustCapture(t, e, "read rfc")
+	txt, err := e.c.EditText(plain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(txt, "#inbox") || txt != "read rfc" {
+		t.Fatalf("untagged: %q", txt)
+	}
+	got, err := e.c.Update(plain.ID, txt)
+	if err != nil || !reflect.DeepEqual(got.Tags, []string{"inbox"}) {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+
+	tagged := mustCapture(t, e, "deploy #inbox #ops")
+	txt, err = e.c.EditText(tagged.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(txt, "#inbox") || !strings.Contains(txt, "#ops") {
+		t.Fatalf("tagged: %q", txt)
 	}
 }
 
