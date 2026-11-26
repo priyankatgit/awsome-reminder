@@ -3,7 +3,9 @@ package hotkey
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type fakeReg struct {
@@ -134,5 +136,66 @@ func TestValidateForOS(t *testing.T) {
 	c2, _ := ParseCombo("Ctrl+K")
 	if err := validateFor("linux", c2); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// pumpReg is a Registrar built on pumpPresses, like the real one.
+func pumpReg(events chan struct{}) Registrar {
+	return func(c Combo, onPress func()) (func(), error) {
+		stop := make(chan struct{})
+		go pumpPresses((<-chan struct{})(events), stop, onPress)
+		return func() { close(stop) }, nil
+	}
+}
+
+func within(t *testing.T, what string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { f(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("%s blocked while handler running", what)
+	}
+}
+
+func TestBlockedHandlerDoesNotBlockSetOrClose(t *testing.T) {
+	events := make(chan struct{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var m *Manager
+	m = NewManager(pumpReg(events), func() {
+		_ = m.Err() // re-entrancy must not deadlock
+		close(started)
+		<-release
+	})
+	defer close(release)
+	if err := m.Set("Ctrl+Alt+K"); err != nil {
+		t.Fatal(err)
+	}
+	events <- struct{}{}
+	<-started
+	within(t, "Set", func() { _ = m.Set("Ctrl+Alt+J") })
+	within(t, "Close", m.Close)
+}
+
+func TestPumpPressesCoalescesWhileBusy(t *testing.T) {
+	events := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop)
+	var n atomic.Int32
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	go pumpPresses((<-chan struct{})(events), stop, func() { n.Add(1); started <- struct{}{}; <-release })
+	events <- struct{}{}
+	<-started
+	events <- struct{}{} // dropped: handler still running
+	events <- struct{}{}
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	events <- struct{}{} // handler finished: accepted
+	<-started
+	if n.Load() != 2 {
+		t.Fatalf("handler ran %d times, want 2", n.Load())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	lib "golang.design/x/hotkey"
 )
@@ -73,27 +74,37 @@ func register(c Combo, onPress func()) (func(), error) {
 		return nil, fmt.Errorf("register %s: %w", c, err)
 	}
 	stop := make(chan struct{})
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		for {
-			select {
-			case <-stop:
-				return
-			case _, ok := <-hk.Keydown():
-				if !ok {
-					return
-				}
-				onPress()
-			}
-		}
-	}()
+	go pumpPresses(hk.Keydown(), stop, onPress)
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			close(stop)
-			<-stopped
+			close(stop) // never waits on a running handler
 			onMain(func() { _ = hk.Unregister() })
 		})
 	}, nil
+}
+
+// pumpPresses dispatches each event from events to onPress on its own
+// goroutine until stop is closed or events is closed. If a previous handler is
+// still running, the new press is dropped, so rapid repeats coalesce. It never
+// waits for a handler, so a slow onPress cannot block key events or unregister.
+func pumpPresses[T any](events <-chan T, stop <-chan struct{}, onPress func()) {
+	var busy atomic.Bool
+	for {
+		select {
+		case <-stop:
+			return
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+			if !busy.CompareAndSwap(false, true) {
+				continue
+			}
+			go func() {
+				defer busy.Store(false)
+				onPress()
+			}()
+		}
+	}
 }
