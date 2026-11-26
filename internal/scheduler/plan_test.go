@@ -93,3 +93,36 @@ func TestPlanTodoNoAlerts(t *testing.T) {
 		t.Fatal("expected nothing")
 	}
 }
+
+func TestPlanSkipsLeadsBeforeEdit(t *testing.T) {
+	due := t0.Add(5 * time.Minute)
+	it := rem("a", due, t0.Add(-24*time.Hour))
+	it.UpdatedAt = t0
+	fire, cov, next := Plan([]model.Item{it}, leads, t0, none)
+	if len(fire) != 0 || len(cov) != 0 {
+		t.Fatalf("got %+v %v", fire, cov)
+	}
+	if !next.Equal(due) {
+		t.Fatalf("next=%v", next)
+	}
+}
+
+func TestWallJumped(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		elapsed time.Duration
+		want    bool
+	}{
+		{"normal", 30 * time.Second, false},
+		{"small drift", 33 * time.Second, false},
+		{"forward jump", 10 * time.Minute, true},
+		{"backward jump", -time.Hour, true},
+		{"slightly short", 20 * time.Second, true},
+	}
+	for _, c := range cases {
+		if got := wallJumped(base, base.Add(c.elapsed), 30*time.Second); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
+		}
+	}
+}

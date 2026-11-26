@@ -27,11 +27,13 @@ type Scheduler struct {
 	fire  func([]Alert)
 	now   func() time.Time
 	kick  chan struct{}
+
+	retryDelay time.Duration // re-plan delay after a Source error
 }
 
 // New creates a Scheduler.
 func New(src Source, leads func() []time.Duration, fire func([]Alert), now func() time.Time) *Scheduler {
-	return &Scheduler{src: src, leads: leads, fire: fire, now: now, kick: make(chan struct{}, 1)}
+	return &Scheduler{src: src, leads: leads, fire: fire, now: now, kick: make(chan struct{}, 1), retryDelay: checkInterval}
 }
 
 // Kick requests a re-plan. It never blocks; concurrent kicks coalesce.
@@ -56,8 +58,8 @@ func (s *Scheduler) run(ctx context.Context) {
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	var target time.Time // timer's target in s.now() terms; zero = none
-	lastWall := time.Now()
+	var target time.Time            // timer's target in s.now() terms; zero = none
+	lastWall := time.Now().Round(0) // strip monotonic reading
 
 	replan := func() {
 		next := s.plan()
@@ -88,8 +90,8 @@ func (s *Scheduler) run(ctx context.Context) {
 			target = time.Time{}
 			replan()
 		case <-ticker.C:
-			wall := time.Now()
-			jumped := wall.Sub(lastWall)-checkInterval > jumpTolerance || checkInterval-wall.Sub(lastWall) > jumpTolerance
+			wall := time.Now().Round(0)
+			jumped := wallJumped(lastWall, wall, checkInterval)
 			lastWall = wall
 			if jumped || (!target.IsZero() && !target.After(s.now())) {
 				replan()
@@ -98,12 +100,20 @@ func (s *Scheduler) run(ctx context.Context) {
 	}
 }
 
+// wallJumped reports whether the wall clock moved by something other than the expected
+// interval (forward or backward) beyond tolerance, e.g. after sleep/wake or a clock change.
+// Both times must have monotonic readings stripped.
+func wallJumped(last, wall time.Time, expected time.Duration) bool {
+	d := wall.Sub(last) - expected
+	return d > jumpTolerance || d < -jumpTolerance
+}
+
 // plan computes alerts, fires due ones, marks them notified, and returns the next fire time.
 func (s *Scheduler) plan() time.Time {
 	items, err := s.src.ListOpen()
 	if err != nil {
 		log.Printf("scheduler: list open: %v", err)
-		return time.Time{}
+		return s.now().Add(s.retryDelay)
 	}
 	now := s.now()
 	notified := func(key string) bool {

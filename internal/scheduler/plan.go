@@ -29,7 +29,8 @@ type candidate struct {
 
 // Plan is pure. fireNow = alerts to show now (at most one per item); covered = every due,
 // un-notified key (including ones collapsed away) to mark notified after firing; next =
-// earliest future alert time (zero if none).
+// earliest future alert time (zero if none). Lead alerts whose fire time is strictly before
+// max(CreatedAt, UpdatedAt) are skipped; the at-time alert is never skipped.
 func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notified func(key string) bool) (fireNow []Alert, covered []string, next time.Time) {
 	var shown []candidate
 	for _, it := range items {
@@ -37,6 +38,10 @@ func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notif
 			continue
 		}
 		var cands []candidate
+		ref := it.CreatedAt // leads firing before the item was created or last edited are skipped
+		if it.UpdatedAt.After(ref) {
+			ref = it.UpdatedAt
+		}
 		if it.SnoozeUntil != nil {
 			cands = append(cands, candidate{
 				alert: Alert{Key: fmt.Sprintf("%s|snooze|%d", it.ID, it.SnoozeUntil.Unix()),
@@ -56,7 +61,7 @@ func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notif
 				}
 				seen[l] = true
 				fire := it.DueAt.Add(-l)
-				if l != 0 && fire.Before(it.CreatedAt) {
+				if l != 0 && fire.Before(ref) {
 					continue
 				}
 				cands = append(cands, candidate{
