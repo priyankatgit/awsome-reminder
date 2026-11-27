@@ -63,6 +63,11 @@ export function installDemo(): void {
     done: async (id: string) => patch(id, { status: "done" as Item["status"], doneAt: new Date().toISOString() }),
     reopen: async (id: string) => patch(id, { status: "open" as Item["status"], doneAt: null }),
     deleteItem: async (id: string) => patch(id, { status: "deleted" as Item["status"] }),
+    undelete: async (id: string) => {
+      const it = items.find((i) => i.id === id);
+      const status = it?.doneAt && !it.rrule ? "done" : "open";
+      patch(id, { status: status as Item["status"] });
+    },
     snooze: async (id: string) => patch(id, { snoozeUntil: new Date(Date.now() + 3_600_000).toISOString() }),
     stopRepeating: async (id: string) => patch(id, { rrule: "" }),
     editText: async (id: string) => editText(items.find((i) => i.id === id)!),

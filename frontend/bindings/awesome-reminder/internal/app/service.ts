@@ -184,6 +184,14 @@ export function TakePendingFocus(): $CancellablePromise<string> {
 }
 
 /**
+ * Undelete undoes Delete, restoring the item's previous status and snooze
+ * (the list's Undo toast).
+ */
+export function Undelete(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2786668140, id);
+}
+
+/**
  * Update re-parses input for an existing item.
  */
 export function Update(id: string, input: string): $CancellablePromise<model$0.Item> {

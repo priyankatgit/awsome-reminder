@@ -39,6 +39,8 @@ export const api = {
   reopen: (id: string): Promise<void> => Service.Reopen(id),
   snooze: (id: string, preset: SnoozePreset): Promise<void> => Service.Snooze(id, preset),
   deleteItem: (id: string): Promise<void> => Service.Delete(id),
+  /** Undoes deleteItem, restoring the item's status and snooze. */
+  undelete: (id: string): Promise<void> => Service.Undelete(id),
   editText: (id: string): Promise<string> => Service.EditText(id),
   update: (id: string, input: string): Promise<Item> => Service.Update(id, input),
   stopRepeating: (id: string): Promise<void> => Service.StopRepeating(id),

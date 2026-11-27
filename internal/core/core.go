@@ -360,6 +360,24 @@ func (c *Core) Delete(id string) error {
 	return err
 }
 
+// Undelete undoes Delete, restoring the status the item had: done for a
+// completed one-off item (DoneAt set, no recurrence), open otherwise. DoneAt
+// and SnoozeUntil are kept as they were, unlike Reopen. An item that is not
+// deleted is left as it is.
+func (c *Core) Undelete(id string) error {
+	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
+		if it.Status != model.StatusDeleted {
+			return nil
+		}
+		it.Status = model.StatusOpen
+		if it.DoneAt != nil && it.RRule == "" {
+			it.Status = model.StatusDone
+		}
+		return nil
+	})
+	return err
+}
+
 // View builds the main-window data.
 func (c *Core) View() (View, error) {
 	open, err := c.st.ListOpen()

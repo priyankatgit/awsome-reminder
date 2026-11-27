@@ -468,3 +468,45 @@ func TestAdvanceRecurringWeeklyCollapses(t *testing.T) {
 		t.Fatalf("one-off touched: %+v", o)
 	}
 }
+
+// I5: undoing a delete restores the item as it was, unlike Reopen.
+func TestUndeleteRestoresState(t *testing.T) {
+	e := newEnv(t)
+	done := mustCapture(t, e, "refactor auth")
+	if _, err := e.c.Done(done.ID); err != nil {
+		t.Fatal(err)
+	}
+	snoozed := mustCapture(t, e, "tomorrow 5pm deploy")
+	if err := e.c.Snooze(snoozed.ID, "1h"); err != nil {
+		t.Fatal(err)
+	}
+	rec := mustCapture(t, e, "every monday 10am standup")
+	if _, err := e.c.Done(rec.ID); err != nil { // advances, stays open, DoneAt set
+		t.Fatal(err)
+	}
+	before := map[string]model.Item{}
+	for _, id := range []string{done.ID, snoozed.ID, rec.ID} {
+		before[id], _ = e.st.Get(id)
+		if err := e.c.Delete(id); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.c.Undelete(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, _ := e.st.Get(done.ID)
+	if d.Status != model.StatusDone || d.DoneAt == nil || !d.DoneAt.Equal(*before[done.ID].DoneAt) {
+		t.Fatalf("done item: %+v", d)
+	}
+	s, _ := e.st.Get(snoozed.ID)
+	if s.Status != model.StatusOpen || s.SnoozeUntil == nil || !s.SnoozeUntil.Equal(*before[snoozed.ID].SnoozeUntil) {
+		t.Fatalf("snoozed item: %+v", s)
+	}
+	r, _ := e.st.Get(rec.ID)
+	if r.Status != model.StatusOpen || !r.DueAt.Equal(*before[rec.ID].DueAt) {
+		t.Fatalf("recurring item: %+v", r)
+	}
+	if err := e.c.Undelete("nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+}

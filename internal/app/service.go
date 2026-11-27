@@ -120,6 +120,10 @@ func (s *Service) Delete(id string) error {
 	return nil
 }
 
+// Undelete undoes Delete, restoring the item's previous status and snooze
+// (the list's Undo toast).
+func (s *Service) Undelete(id string) error { return s.d.Core.Undelete(id) }
+
 // View returns the list-window data.
 func (s *Service) View() (core.View, error) { return s.d.Core.View() }
 
