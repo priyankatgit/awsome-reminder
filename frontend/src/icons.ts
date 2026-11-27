@@ -38,6 +38,7 @@ import {
   Square,
   SquareCheckBig,
   Trash2,
+  TextQuote,
   TriangleAlert,
   X,
 } from "lucide";
@@ -107,6 +108,7 @@ export const icons = {
   // Replies owed
   reply: render(Reply as IconNode),
   replyOff: render(MessageSquareOff as IconNode),
+  quote: render(TextQuote as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

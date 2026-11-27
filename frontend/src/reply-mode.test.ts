@@ -33,7 +33,7 @@ vi.mock("./api", () => ({
 }));
 
 import { mountCapture } from "./capture";
-import { nudgeSummary, personLabel } from "./reply-mode";
+import { lineKeepsQuote, nudgeSummary, personLabel } from "./reply-mode";
 
 const workWeek = { defaultTime: "09:00", workDays: ["monday", "tuesday", "wednesday", "thursday", "friday"] };
 const at = (iso: string) => new Date(iso); // local time
@@ -60,6 +60,20 @@ describe("nudgeSummary", () => {
   });
 });
 
+describe("lineKeepsQuote", () => {
+  it("finds the quote's leading text in the line, whatever the spacing or quote marks", () => {
+    expect(lineKeepsQuote('Reply: "tok-123 abc"', "tok-123 abc")).toBe(true);
+    expect(lineKeepsQuote('Reply to P: "say ”yes”  now"', 'say "yes"\n now')).toBe(true);
+    expect(lineKeepsQuote("Reply to Sam", "tok-123 abc")).toBe(false);
+    expect(lineKeepsQuote("anything", "")).toBe(true);
+  });
+  it("only needs the first 20 characters (the line cuts long quotes)", () => {
+    const long = "abcdefghijklmnopqrstuvwxyz".repeat(20);
+    expect(lineKeepsQuote(`Reply: "${long.slice(0, 30)}…"`, long)).toBe(true);
+    expect(lineKeepsQuote(`Reply: "${long.slice(1, 30)}…"`, long)).toBe(false);
+  });
+});
+
 describe("personLabel", () => {
   it("names nobody as Someone", () => {
     expect(personLabel("")).toBe("Someone");
@@ -70,7 +84,7 @@ describe("personLabel", () => {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const prefill = (extra: Record<string, unknown> = {}) => ({
-  line: "Reply to Priya: can you check the deploy?",
+  line: 'Reply to Priya: "can you check the deploy?"',
   owedTo: "Priya",
   source: "Teams",
   quote: "can you check the deploy?",
@@ -100,7 +114,7 @@ describe("capture box in reply mode", () => {
     h.handlers.get("reply:open")!(prefill());
     await tick();
     const input = q<HTMLInputElement>("#cap-input");
-    expect(input.value).toBe("Reply to Priya: can you check the deploy?");
+    expect(input.value).toBe('Reply to Priya: "can you check the deploy?"');
     expect(q("#cap-lead").dataset.icon).toBe("reply");
     expect(q("#cap-preview").textContent).toContain("Reply owed");
     expect(q("#cap-preview").textContent).toContain("for Priya");
@@ -120,7 +134,7 @@ describe("capture box in reply mode", () => {
     await tick();
     expect(plain).toEqual([]);
     expect(calls).toEqual([
-      { input: "Reply to Priya: can you check the deploy?", meta: { owedTo: "Sam", source: "Teams", quote: "can you check the deploy?" } },
+      { input: 'Reply to Priya: "can you check the deploy?"', meta: { owedTo: "Sam", source: "Teams", quote: "can you check the deploy?" } },
     ]);
   });
 
@@ -151,7 +165,7 @@ describe("capture box in reply mode", () => {
   });
 
   it("keeps the person editor focused when the window takes focus after reply:open", async () => {
-    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: "Reply: can you check?" }));
+    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: 'Reply: "can you check?"' }));
     await tick();
     const person = q<HTMLInputElement>(".cap-person");
     expect(document.activeElement).toBe(person);
@@ -166,7 +180,7 @@ describe("capture box in reply mode", () => {
   it("ends in the person editor when the window takes focus before reply:open", async () => {
     window.dispatchEvent(new Event("focus"));
     expect(document.activeElement).toBe(q("#cap-input"));
-    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: "Reply: can you check?" }));
+    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: 'Reply: "can you check?"' }));
     await new Promise((r) => window.requestAnimationFrame(r));
     const person = q<HTMLInputElement>(".cap-person");
     expect(document.activeElement).toBe(person);
@@ -217,5 +231,101 @@ describe("capture box in reply mode", () => {
     await tick();
     expect(q("#cap-error").hidden).toBe(false);
     expect(q("#cap-error").textContent).toBe("store is closed");
+  });
+  it("shows the quote as its own row with a Remove quote button", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    const row = q("#cap-quote");
+    expect(row.hidden).toBe(false);
+    expect(row.getAttribute("role")).toBe("group");
+    expect(q(".cap-quote-text").textContent).toBe("can you check the deploy?");
+    const remove = q<HTMLButtonElement>(".cap-quote-remove");
+    expect(remove.getAttribute("aria-label")).toBe("Remove quote");
+    expect(remove.getAttribute("aria-keyshortcuts")).toBe("Alt+Q");
+    expect(remove.tabIndex).not.toBe(-1);
+  });
+
+  it("removing the quote sends an empty quote and gives focus back to the line", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    const remove = q<HTMLButtonElement>(".cap-quote-remove");
+    remove.focus();
+    remove.click();
+    expect(q("#cap-quote").hidden).toBe(true);
+    expect(document.activeElement).toBe(q("#cap-input"));
+    expect(q(".cap-quote-say").textContent).toContain("Quote removed");
+    key(q("#cap-input"), "Enter");
+    await tick();
+    expect(calls).toEqual([{ input: 'Reply to Priya: "can you check the deploy?"', meta: { owedTo: "Priya", source: "Teams", quote: "" } }]);
+  });
+
+  it("Alt+Q removes the quote from the keyboard", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    const input = q<HTMLInputElement>("#cap-input");
+    key(input, "q", { code: "KeyQ", altKey: true });
+    expect(q("#cap-quote").hidden).toBe(true);
+    expect(document.activeElement).toBe(input);
+    key(input, "Enter");
+    await tick();
+    expect((calls[0].meta as { quote: string }).quote).toBe("");
+  });
+
+  it("a clipboard quote deleted from the line is not sent", async () => {
+    const secret = "tok_live_0123456789abcdef";
+    h.handlers.get("reply:open")!(prefill({ owedTo: "Sam", line: `Reply to Sam: "${secret}"`, quote: secret, grabbed: false }));
+    await tick();
+    const input = q<HTMLInputElement>("#cap-input");
+    // Without an input event (the safety net at save time) ...
+    input.value = "Reply to Sam";
+    key(input, "Enter");
+    await tick();
+    expect(calls).toEqual([{ input: "Reply to Sam", meta: { owedTo: "Sam", source: "Teams", quote: "" } }]);
+  });
+
+  it("a clipboard quote deleted from the line leaves the box at once", async () => {
+    const secret = "tok_live_0123456789abcdef";
+    h.handlers.get("reply:open")!(prefill({ owedTo: "Sam", line: `Reply to Sam: "${secret}"`, quote: secret, grabbed: false }));
+    await tick();
+    const input = q<HTMLInputElement>("#cap-input");
+    expect(q("#cap-quote").hidden).toBe(false);
+    input.value = "Reply to Sam";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(q("#cap-quote").hidden).toBe(true);
+    input.value = `Reply to Sam: "${secret}"`; // typing it back does not restore it
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    key(input, "Enter");
+    await tick();
+    expect((calls[0].meta as { quote: string }).quote).toBe("");
+  });
+
+  it("a clipboard quote still in the line is sent", async () => {
+    h.handlers.get("reply:open")!(prefill({ line: 'Reply to Priya: "can you check the deploy?" by 5pm', grabbed: false }));
+    await tick();
+    key(q("#cap-input"), "Enter");
+    await tick();
+    expect((calls[0].meta as { quote: string }).quote).toBe("can you check the deploy?");
+  });
+
+  it("a grabbed quote is sent intact, even when the line is rewritten", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    const input = q<HTMLInputElement>("#cap-input");
+    input.value = "Reply to Priya";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(q("#cap-quote").hidden).toBe(false); // still shown, still removable
+    key(input, "Enter");
+    await tick();
+    expect(calls).toEqual([{ input: "Reply to Priya", meta: { owedTo: "Priya", source: "Teams", quote: "can you check the deploy?" } }]);
+  });
+
+  it("no quote, no quote row", async () => {
+    h.handlers.get("reply:open")!(prefill({ line: "Reply to Sam", owedTo: "Sam", quote: "", grabbed: false }));
+    await tick();
+    expect(q("#cap-quote").hidden).toBe(true);
+    const input = q<HTMLInputElement>("#cap-input");
+    input.value = "x";
+    key(input, "q", { code: "KeyQ", altKey: true }); // not taken: nothing to remove
+    expect(input.value).toBe("x");
   });
 });

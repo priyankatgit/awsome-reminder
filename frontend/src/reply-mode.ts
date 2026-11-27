@@ -1,10 +1,11 @@
 // Reply mode of the capture box ("Replies owed"): the reply hotkey opens the
 // box with a suggested line, who the reply is owed to and where the message
 // came from. capture.ts owns the line, the lead icon and saving; this module
-// owns the reply parts of the preview row, the person editor, the reply hint
-// row and the macOS Accessibility note.
+// owns the reply parts of the preview row, the person editor, the quote row,
+// the reply hint row and the macOS Accessibility note.
 import { api, type Preview, type ReplyMeta, type ReplyPrefill, type Settings } from "./api";
 import { el } from "./dom";
+import { icons } from "./icons";
 import { pop } from "./motion";
 
 /** What is saved with a reply besides its line. */
@@ -84,6 +85,26 @@ export function nudgeSummary(created: Date, settings: Pick<Settings, "defaultTim
   return "nudge in 2h";
 }
 
+/** How much of a quote's start must still be in the line (internal/reply cuts the line's copy at 200). */
+const QUOTE_LEAD = 20;
+/** How much of the quote the quote row holds (it shows one line). */
+const QUOTE_SHOWN = 300;
+
+/** Whitespace collapsed and " turned into ”, as internal/reply Line writes the quote. */
+function flatQuote(s: string): string {
+  return s.replace(/\s+/g, " ").replace(/"/g, "”").trim();
+}
+
+/**
+ * Whether the line still holds the start of the quote (its first 20
+ * characters, ignoring spacing and quote marks). A quote taken from the
+ * clipboard rather than the selection is only saved while it does.
+ */
+export function lineKeepsQuote(line: string, quote: string): boolean {
+  const lead = [...flatQuote(quote)].slice(0, QUOTE_LEAD).join("");
+  return lead === "" || flatQuote(line).includes(lead);
+}
+
 /** The person a reply is owed to, as shown; nobody is "Someone". */
 export function personLabel(owedTo: string): string {
   return owedTo.trim() || "Someone";
@@ -101,7 +122,7 @@ export interface ReplyHost {
   field: HTMLElement;
   /** The normal hint row: the reply hint row follows it. */
   hint: HTMLElement;
-  /** Whether Alt+P may open the person editor now (not saving, recording or picking a time). */
+  /** Whether Alt+P may open the person editor, or Alt+Q remove the quote, now (not saving, recording or picking a time). */
   canEditPerson(): boolean;
 }
 
@@ -119,7 +140,7 @@ export interface ReplyMode {
   render(p: Preview | null): void;
   /** Opens the person editor and focuses it (selecting its text when it opens). */
   editPerson(): void;
-  /** Handles Alt+P; true when the key was taken. */
+  /** Handles Alt+P, and Alt+Q while a quote is shown; true when the key was taken. */
   handleKey(e: KeyboardEvent): boolean;
 }
 
@@ -159,17 +180,43 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   note.hidden = true;
   host.field.after(note);
 
+  // The quote saved with the reply (the description), on its own row under
+  // the input so it is always visible and easy to remove: the line only
+  // carries its first 200 characters, and may no longer carry any of it.
+  const quoteRow = el("div", "cap-quote");
+  quoteRow.id = "cap-quote";
+  quoteRow.setAttribute("role", "group");
+  quoteRow.setAttribute("aria-label", "Quote saved with the reply");
+  quoteRow.hidden = true;
+  const quoteIcon = el("span", "cap-quote-icon");
+  quoteIcon.innerHTML = icons.quote;
+  const quoteText = el("span", "cap-quote-text");
+  const quoteRemove = el("button", "icon-btn cap-quote-remove");
+  quoteRemove.type = "button";
+  quoteRemove.setAttribute("aria-label", "Remove quote");
+  quoteRemove.setAttribute("aria-keyshortcuts", "Alt+Q");
+  quoteRemove.title = "Remove quote (Alt+Q)";
+  quoteRemove.innerHTML = icons.close;
+  quoteRow.append(quoteIcon, quoteText, quoteRemove);
+  const quoteSay = el("p", "sr-only cap-quote-say");
+  quoteSay.setAttribute("role", "status");
+  quoteSay.setAttribute("aria-live", "polite");
+  host.field.after(quoteRow, quoteSay);
+
   const hint = el("footer", "cap-hint cap-hint-reply");
   hint.id = "cap-hint-reply";
   hint.innerHTML =
     `<span><kbd>↵</kbd> save</span>` +
     `<span><kbd>Alt</kbd><span class="keycap-plus">+</span><kbd>P</kbd> person</span>` +
+    `<span class="cap-hint-quote"><kbd>Alt</kbd><span class="keycap-plus">+</span><kbd>Q</kbd> remove quote</span>` +
     `<span><kbd>Tab</kbd> time</span>` +
     `<span><kbd>Esc</kbd> cancel</span>`;
   host.hint.after(hint);
+  const quoteHint = hint.querySelector<HTMLElement>(".cap-hint-quote")!;
 
   let active = false;
   let state: ReplyState = { owedTo: "", source: "", quote: "" };
+  let grabbed = false; // the quote is the selection, not the clipboard's own text
   let rules = DEFAULT_RULES;
   let due: Date | null = null;
   let editing = false;
@@ -225,14 +272,44 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   personInput.addEventListener("blur", () => closeEditor(true));
   person.addEventListener("click", () => editPerson());
 
+  /** Shows the quote row for the quote, or hides it when there is none. */
+  function paintQuote(): void {
+    const has = state.quote.trim() !== "";
+    quoteRow.hidden = !has;
+    quoteHint.hidden = !has;
+    const flat = state.quote.replace(/\s+/g, " ").trim();
+    const r = [...flat];
+    quoteText.textContent = r.length > QUOTE_SHOWN ? `${r.slice(0, QUOTE_SHOWN).join("")}…` : flat;
+  }
+
+  /** Drops the quote: it is not saved. Focus on the row's button goes back to the line. */
+  function removeQuote(): void {
+    if (state.quote === "") return;
+    const fromRow = quoteRow.contains(document.activeElement);
+    state = { ...state, quote: "" };
+    paintQuote();
+    quoteSay.textContent = "Quote removed. It will not be saved.";
+    if (fromRow) backToLine();
+  }
+
+  quoteRemove.addEventListener("click", () => removeQuote());
+  // A clipboard quote (nothing was selected) leaves as soon as the line no
+  // longer holds it: the user cleared it, and it may be something private.
+  input.addEventListener("input", () => {
+    if (active && !grabbed && state.quote !== "" && !lineKeepsQuote(input.value, state.quote)) removeQuote();
+  });
+
   function enter(p: ReplyPrefill): void {
     const was = active;
     active = true;
     closeEditor(false);
-    state = { owedTo: p.owedTo.trim(), source: p.source.trim(), quote: p.quote };
+    state = { owedTo: p.owedTo.trim(), source: p.source.trim(), quote: p.quote.trim() === "" ? "" : p.quote };
+    grabbed = p.grabbed;
     due = null;
     box.dataset.mode = "reply";
     parts.hidden = false;
+    quoteSay.textContent = "";
+    paintQuote();
     note.hidden = !p.needsAccess || p.keepText;
     input.placeholder = "Reply to Sam: send the figures";
     input.setAttribute("aria-describedby", normalDescribedBy.replace("cap-hint", "cap-hint-reply") + (note.hidden ? "" : " cap-access"));
@@ -255,10 +332,13 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
     closeEditor(false);
     active = false;
     state = { owedTo: "", source: "", quote: "" };
+    grabbed = false;
     due = null;
     delete box.dataset.mode;
     parts.hidden = true;
     note.hidden = true;
+    quoteSay.textContent = "";
+    paintQuote();
     input.placeholder = normalPlaceholder;
     input.setAttribute("aria-describedby", normalDescribedBy);
   }
@@ -274,7 +354,10 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
     exit,
     meta(): ReplyMeta {
       closeEditor(true); // a save while the editor is open keeps what was typed
-      return { owedTo: state.owedTo, source: state.source, quote: state.quote };
+      // Only the quote still shown is saved; a clipboard quote also needs to
+      // still be in the line (a safety net for edits no input event reported).
+      const keep = state.quote !== "" && (grabbed || lineKeepsQuote(input.value, state.quote));
+      return { owedTo: state.owedTo, source: state.source, quote: keep ? state.quote : "" };
     },
     render(p: Preview | null): void {
       if (!active) return;
@@ -283,10 +366,18 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
     },
     editPerson,
     handleKey(e: KeyboardEvent): boolean {
-      if (!active || !e.altKey || e.ctrlKey || e.shiftKey || e.metaKey || e.code !== "KeyP") return false;
-      e.preventDefault(); // macOS Option+P would type "π"
-      if (host.canEditPerson()) editPerson();
-      return true;
+      if (!active || !e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return false;
+      if (e.code === "KeyP") {
+        e.preventDefault(); // macOS Option+P would type "π"
+        if (host.canEditPerson()) editPerson();
+        return true;
+      }
+      if (e.code === "KeyQ" && state.quote !== "") {
+        e.preventDefault(); // macOS Option+Q would type "œ"
+        if (host.canEditPerson()) removeQuote();
+        return true;
+      }
+      return false;
     },
   };
 }
