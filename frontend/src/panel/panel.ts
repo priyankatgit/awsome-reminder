@@ -14,6 +14,7 @@ import { icons } from "../icons";
 import { agoLabel, isDone, isReminder } from "../item-row";
 import { closeMenu, openMenu } from "../menu";
 import { createAutosaver, type Autosaver } from "./autosave";
+import { mountEditor } from "./editor";
 import { dueField, isEditing, priorityField, repeatField, tagsField, titleField } from "./fields";
 
 const WIDEN_TO = 1100; // px: the list window grows to this when narrower (capped to the screen)
@@ -113,29 +114,23 @@ const due = dueField((d) => shown && void saveNow(due, (id) => api.setDue(id, d)
 const repeat = repeatField((r) => shown && void saveNow(repeat, (id) => api.setRepeat(id, r)));
 const tags = tagsField((list) => (shown ? saveNow(tags, (id) => api.setTags(id, list)) : Promise.resolve(false)));
 
-/** Task 8 mounts the Markdown editor here; until then a plain textarea. */
+/** Holds the Markdown description editor (editor.ts). */
 export const descriptionHost = el("div", "panel-desc");
 const descLabel = el("span", "pf-label panel-desc-label", "Description");
 descLabel.id = "panel-desc-label";
-const descText = el("textarea", "input panel-desc-text");
-descText.setAttribute("aria-labelledby", descLabel.id);
-descText.placeholder = "Notes, steps, links (Markdown)";
-descText.spellcheck = false;
 const descError = el("p", "field-error");
 descError.setAttribute("role", "alert");
 descError.hidden = true;
-descriptionHost.append(descText);
 const setDescError = (msg: string) => {
   descError.textContent = msg;
   descError.hidden = msg === "";
 };
 
 const titleSaver = textSaver("title", (id, v) => api.setText(id, v), title.setError);
-/** The description's own autosaver (Task 8's editor reuses it). */
+/** The description's own autosaver; the editor saves through it. */
 export const descriptionSaver = textSaver("description", (id, v) => api.setDescription(id, v), setDescError);
+const editor = mountEditor(descriptionHost, { labelledBy: descLabel.id, saver: descriptionSaver, itemId: () => shown?.id ?? null });
 
-descText.addEventListener("input", () => shown && descriptionSaver.change(shown.id, descText.value));
-descText.addEventListener("blur", () => void descriptionSaver.flush());
 title.input.addEventListener("blur", () => void titleSaver.flush());
 
 const body = el("div", "panel-body");
@@ -261,7 +256,7 @@ function fill(force: boolean, own?: Field): void {
   if (force || own === due || !isBusy(due)) due.fill(it, force || own === due); // due.fill skips a focused input itself
   if (free(repeat, repeat.root)) repeat.fill(it);
   if (free(tags)) tags.fill(it);
-  if (force || (!isEditing(descriptionHost) && descriptionSaver.status() !== "saving")) descText.value = it.description ?? "";
+  if (force || (!isEditing(descriptionHost) && descriptionSaver.status() !== "saving")) editor.fill(it.description ?? "", force);
 
   const now = new Date();
   const edited = new Date(it.updatedAt);

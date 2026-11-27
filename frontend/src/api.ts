@@ -5,10 +5,10 @@ import "../bindings/events/index.js"; // registers typed event data
 import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
-import type { Item } from "../bindings/awesome-reminder/internal/model/models.js";
+import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, Status } from "../bindings/awesome-reminder/internal/app/models.js";
 
-export type { Detail, Preview, Item, Status, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, Preview, Item, Status, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -25,6 +25,17 @@ function pcmBase64(pcm: Int16Array): string {
 
 /** One card of the alert window (internal/app/alerts.go); tags never null. */
 export type AlertCard = Omit<GenAlertCard, "tags"> & { tags: string[] };
+
+/** Base64 of a blob's bytes (a Go []byte argument travels as base64). */
+async function blobBase64(b: Blob): Promise<string> {
+  const url = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(b);
+  });
+  return url.slice(url.indexOf(",") + 1);
+}
 
 /** Snooze presets understood by Service.Snooze. */
 export type SnoozePreset = "10m" | "1h" | "tomorrow";
@@ -97,6 +108,10 @@ export const api = {
   setRepeat: (id: string, repeat: string): Promise<Item> => Service.SetRepeat(id, repeat),
   setTags: (id: string, tags: string[]): Promise<Item> => Service.SetTags(id, tags),
   setDescription: (id: string, md: string): Promise<Item> => Service.SetDescription(id, md),
+  /** Stores a compressed WebP image for an item (Go accepts WebP up to 2 MB). */
+  addAttachment: async (itemId: string, webp: Blob): Promise<Attachment> => Service.AddAttachment(itemId, await blobBase64(webp)),
+  /** Opens an http, https or mailto link in the system browser. */
+  openURL: (url: string): Promise<void> => Service.OpenURL(url),
   widenList: (minWidth: number): Promise<void> => Service.WidenList(minWidth),
   restoreListWidth: (): Promise<void> => Service.RestoreListWidth(),
 };

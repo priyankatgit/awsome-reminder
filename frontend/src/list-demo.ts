@@ -5,11 +5,28 @@
 // Ctrl+Alt+K fails as "already used"; ?demo#capture, with a toy parser that
 // knows "tomorrow", "5pm", #tags and !priority tokens). Click a row in
 // ?demo#list to try the detail panel; its saves take a moment, like the real
-// ones. Loaded only when
-// import.meta.env.DEV and ?demo are both set, so production bundles never
-// include it.
+// ones. Item 2's description has a checklist, links and a demo image; item 4
+// carries hostile Markdown, to check that the preview stays inert. There is no
+// Go /att/ route here, so attachments live in memory as data:/blob: URLs.
+// Loaded only when import.meta.env.DEV and ?demo are both set, so production
+// bundles never include it.
 import { api, emitLocal, events, type AlertCard, type Item, type Preview, type Settings, type View } from "./api";
 import { effectiveDue } from "./item-row";
+
+/** A demo attachment (ULID-shaped id) and the in-memory images by id. */
+const DEMO_ATT = "01JDEMQ" + "0".repeat(19);
+const demoImages = new Map<string, string>([
+  [
+    DEMO_ATT,
+    "data:image/svg+xml," +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600"><defs><linearGradient id="g" x2="1" y2="1">' +
+          '<stop offset="0" stop-color="#1e3a8a"/><stop offset="1" stop-color="#15803d"/></linearGradient></defs>' +
+          '<rect width="1200" height="600" fill="url(#g)"/><polyline points="0,480 200,420 400,450 600,300 800,330 1000,180 1200,220" ' +
+          'fill="none" stroke="#fff" stroke-width="8"/><text x="40" y="80" fill="#fff" font-size="48" font-family="sans-serif">demo image</text></svg>',
+      ),
+  ],
+]);
 
 function item(id: string, text: string, tags: string[], dueInMin: number | null, extra: Partial<Item> = {}): Item {
   const now = Date.now();
@@ -37,9 +54,34 @@ function item(id: string, text: string, tags: string[], dueInMin: number | null,
 export function installDemo(): void {
   let items: Item[] = [
     item("1", "standup notes", ["team"], -95, { rrule: "FREQ=WEEKLY;BYDAY=MO" }),
-    item("2", "check deploy", ["backend"], 180, { priority: "high", description: "Steps:\n- [ ] watch the canary\n- [ ] check error rate" }),
+    item("2", "check deploy", ["backend"], 180, {
+      priority: "high",
+      description: [
+        "Steps:",
+        "- [ ] watch the canary",
+        "- [x] check error rate",
+        "",
+        "Dashboards: [Grafana](https://grafana.example.com), or [mail ops](mailto:ops@example.com)",
+        "",
+        `![canary graph](att:${DEMO_ATT})`,
+      ].join("\n"),
+    }),
     item("3", "read RFC 9110", ["inbox"], null, { priority: "low" }),
-    item("4", "fix flaky test", ["backend"], null, { priority: "medium", description: "Fails about 1 in 20 runs on CI." }),
+    item("4", "fix flaky test", ["backend"], null, {
+      priority: "medium",
+      description: [
+        "Fails about 1 in 20 runs on CI.",
+        "",
+        "## Sanitizer check (all inert)",
+        "",
+        '<img src=x onerror=alert(1)> [js link](javascript:alert(1)) <a href="file:///C:/">file link</a>',
+        "![remote image](https://example.com/a.png) <script>alert(1)</script>",
+        "",
+        "```",
+        "let flaky = true",
+        "```",
+      ].join("\n"),
+    }),
     item("5", "review auth PR with a rather long title that should be truncated at the edge", ["backend", "review"], null),
     item("6", "call the dentist", ["inbox"], 60 * 26),
     item("7", "renew passport", ["home"], 60 * 24 * 4),
@@ -108,6 +150,13 @@ function installPanelDemo(all: () => Item[], patch: (id: string, p: Partial<Item
     return it;
   };
   const slow = () => new Promise((r) => window.setTimeout(r, 150)); // a save takes a moment
+  // Stands in for Go's /att/<id> route: preview images get their in-memory URL.
+  new MutationObserver(() => {
+    for (const img of Array.from(document.querySelectorAll<HTMLImageElement>('img[src^="/att/"]'))) {
+      const url = demoImages.get(img.getAttribute("src")!.slice(5));
+      if (url) img.src = url;
+    }
+  }).observe(document.body, { childList: true, subtree: true });
   const set = async (id: string, p: Partial<Item>) => {
     get(id);
     patch(id, p);
@@ -147,6 +196,20 @@ function installPanelDemo(all: () => Item[], patch: (id: string, p: Partial<Item
       const out = [...new Set(tags.map((t) => t.trim().replace(/^#/, "").toLowerCase()).filter(Boolean))];
       if (out.some((t) => !/^[a-z][a-z0-9_-]*$/.test(t))) throw new Error("tags start with a letter and use a-z, 0-9, - or _");
       return set(id, { tags: out.length ? out : ["inbox"] });
+    },
+    addAttachment: async (itemId: string, webp: Blob) => {
+      get(itemId);
+      await new Promise((r) => window.setTimeout(r, 800)); // shows the placeholder
+      if (webp.type !== "image/webp") throw new Error("image must be WebP");
+      if (webp.size > 2 * 1024 * 1024) throw new Error("image too large after compression (max 2 MB)");
+      const id = "01JDEMQ" + String(demoImages.size).padStart(19, "0");
+      demoImages.set(id, URL.createObjectURL(webp));
+      console.info(`demo: stored ${id}, ${webp.size} bytes`);
+      return { id, itemId, mime: "image/webp", bytes: webp.size };
+    },
+    openURL: async (url: string) => {
+      if (!/^(https?:|mailto:)/i.test(url)) throw new Error("unsupported link");
+      console.info(`demo: open ${url}`);
     },
     widenList: async (w: number) => console.info(`demo: widen list to ${w}`),
     restoreListWidth: async () => console.info("demo: restore list width"),

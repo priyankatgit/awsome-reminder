@@ -274,7 +274,7 @@ html[data-panel="open"] .toast {
   outline: none; /* the ring is drawn on .pf-tags */
 }
 
-/* ---------- Description (Task 8 replaces the textarea with the editor) ---------- */
+/* ---------- Description: Markdown editor (editor.ts) ---------- */
 
 .panel-desc-field {
   display: flex;
@@ -282,14 +282,296 @@ html[data-panel="open"] .toast {
   gap: var(--space-2);
 }
 
-.panel-desc-text {
+.md-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-radius: var(--radius-chip);
+}
+
+/* A file dragged over the editor: a dashed accent outline (no layout shift). */
+.md-editor.is-drop {
+  outline: var(--ring-width) dashed var(--accent);
+  outline-offset: var(--ring-offset);
+}
+
+.md-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.md-tool:disabled {
+  opacity: var(--completing-opacity);
+  cursor: default;
+}
+
+.md-tool:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.md-sep {
+  width: var(--hairline);
+  height: var(--md-sep-height);
+  margin: 0 var(--space-1);
+  background: var(--border);
+}
+
+/* Edit | Preview: a two-button segmented toggle at the end of the toolbar. */
+.md-modes {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.md-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--text-small);
+  cursor: pointer;
+  transition: background-color var(--dur-hover), color var(--dur-hover);
+}
+
+.md-mode .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.md-mode:hover {
+  background: var(--muted);
+  color: var(--fg);
+}
+
+.md-mode[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+.md-text,
+.md-preview {
   width: 100%;
   min-height: var(--panel-desc-min);
-  height: auto;
   padding: var(--space-2);
-  font-family: var(--font-mono);
   line-height: var(--line-body);
+}
+
+.md-text {
+  height: auto;
+  font-family: var(--font-mono);
   resize: vertical;
+}
+
+.md-text[hidden],
+.md-preview[hidden],
+.md-error[hidden] {
+  display: none;
+}
+
+/* ---------- Preview: rendered Markdown ---------- */
+
+.md-preview {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--text-body);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.md-preview:focus-visible {
+  outline: var(--ring-width) solid var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.md-preview > :first-child {
+  margin-top: 0;
+}
+
+.md-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.md-preview p,
+.md-preview ul,
+.md-preview ol,
+.md-preview pre,
+.md-preview blockquote,
+.md-preview table {
+  margin: 0 0 var(--space-2);
+}
+
+.md-preview h1,
+.md-preview h2,
+.md-preview h3,
+.md-preview h4,
+.md-preview h5,
+.md-preview h6 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-body);
+}
+
+.md-preview h1 {
+  font-size: var(--md-h1);
+  line-height: var(--panel-title-line);
+}
+
+.md-preview h2 {
+  font-size: var(--md-h2);
+  line-height: var(--panel-title-line);
+}
+
+.md-preview ul,
+.md-preview ol {
+  padding-left: var(--space-5);
+}
+
+/* Task-list items: the checkbox replaces the bullet. */
+.md-preview li:has(> input[type="checkbox"]) {
+  list-style: none;
+}
+
+.md-preview li > input[type="checkbox"] {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+  margin: 0 var(--space-2) 0 calc(-1 * var(--space-5) + var(--space-1));
+  vertical-align: middle;
+  accent-color: var(--accent-fill);
+  cursor: pointer;
+}
+
+.md-preview li:has(> input[type="checkbox"]:checked) {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+
+.md-preview code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-chip);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
+.md-preview pre {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  background: var(--muted);
+  overflow-x: auto;
+}
+
+.md-preview pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.md-preview blockquote {
+  padding-left: var(--space-3);
+  border-left: var(--md-quote-bar) solid var(--border);
+  color: var(--fg-muted);
+}
+
+.md-preview hr {
+  margin: var(--space-3) 0;
+  border: 0;
+  border-top: var(--hairline) solid var(--border);
+}
+
+.md-preview table {
+  border-collapse: collapse;
+}
+
+.md-preview th,
+.md-preview td {
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border);
+}
+
+/* Links: accent text, always underlined (not colour alone). */
+.md-preview a[href] {
+  color: var(--accent-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.md-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: var(--md-image-max);
+  margin: var(--space-1) 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  cursor: zoom-in;
+}
+
+.md-preview img:focus-visible {
+  outline: var(--ring-width) solid var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.md-empty {
+  color: var(--fg-muted);
+}
+
+/* ---------- Lightbox: one image over the whole window ---------- */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: var(--lightbox-backdrop);
+  cursor: zoom-out;
+  animation: lightbox-in var(--dur-enter) var(--ease-enter);
+}
+
+.lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-chip);
+  box-shadow: var(--shadow-menu);
+  cursor: default;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.lightbox-close:hover {
+  background: var(--muted);
+}
+
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox {
+    animation: none;
+  }
 }
 
 /* ---------- Footer: meta + save status, then actions ---------- */

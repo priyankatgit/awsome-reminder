@@ -274,4 +274,22 @@
   --panel-title-line: 24px;
   --panel-desc-min: 160px;
   --dur-panel: 180ms; /* slide-in */
+
+  /* Description editor (Task 8). Preview text sits on --bg: --fg 17.06 / 17.06,
+     links --accent-text 10.25 / 4.79, --fg-muted 6.96 / 7.24; code and pre
+     use --fg on --muted 12.77 / 15.88 (dark / light). The lightbox close
+     button is --fg on --surface (14.98 / 17.85), so its contrast never depends on the
+     backdrop. */
+  --md-sep-height: 20px;
+  --md-h1: 18px;
+  --md-h2: 16px;
+  --md-quote-bar: 3px;
+  --md-image-max: 320px;
+  --lightbox-backdrop: rgba(2, 6, 23, 0.86);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --lightbox-backdrop: rgba(15, 23, 42, 0.72);
+  }
 }
