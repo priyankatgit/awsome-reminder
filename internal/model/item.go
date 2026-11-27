@@ -72,3 +72,14 @@ type Attachment struct {
 	Deleted           bool       `json:"deleted"`
 	UnreferencedSince *time.Time `json:"unreferencedSince"`
 }
+
+// Newer reports whether stamp a (time, device) beats stamp b under
+// last-writer-wins: the later time at millisecond precision wins, and on a tie
+// the lexicographically greater device ID does. Equal stamps are not newer.
+func Newer(aAt time.Time, aBy string, bAt time.Time, bBy string) bool {
+	am, bm := aAt.UnixMilli(), bAt.UnixMilli()
+	if am != bm {
+		return am > bm
+	}
+	return aBy > bBy
+}

@@ -423,7 +423,16 @@ func (c *Core) View() (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	return buildView(open, done, c.now()), nil
+	pending, err := c.st.PendingItemIDs()
+	if err != nil {
+		return View{}, err
+	}
+	v := buildView(open, done, c.now())
+	v.Pending = pending
+	if v.Pending == nil {
+		v.Pending = []string{}
+	}
+	return v, nil
 }
 
 // Item returns the stored item with the given ID.
