@@ -192,7 +192,9 @@ export function Undelete(id: string): $CancellablePromise<void> {
 }
 
 /**
- * Update re-parses input for an existing item.
+ * Update re-parses input for an existing item. If that moves its due time
+ * (or changes its status) the item's alert cards are removed, since a "now"
+ * or "missed" card would be stale.
  */
 export function Update(id: string, input: string): $CancellablePromise<model$0.Item> {
     return $Call.ByID(834883917, id, input);
