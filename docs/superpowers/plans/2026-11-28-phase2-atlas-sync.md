@@ -26,7 +26,7 @@
 - The URI is stored in the OS keychain (service `dev.awesome-reminder.app`, account `atlas-uri`) and falls back to the AES-256-GCM file (`<DataDir>/sync.key` + meta `sync_uri_enc`). It never appears in logs, events or error strings. The UI shows only the host (`atlas.Host`).
 - **LWW:** the newer `updated_at` (compared at millisecond precision) wins; on a tie the lexicographically greater `updated_by` (device ULID) wins. Deletes are tombstones, and nothing is purged in Phase 2.
 - **Push** writes Atlas with `$set` of the known fields plus `$currentDate: {_srv: {$type: "date"}}`, conditionally on LWW. It never replaces a document, so fields written by anything else (e.g. a newer app version) survive.
-- **Pull** reads by the server stamp `_srv`, ordered by `(_srv, _id)`, re-reading a 2 min overlap before the saved watermark. Page size is 200 items, or 8 attachments (attachments carry their bytes).
+- **Pull** reads by the server stamp `_srv`, ordered by `(_srv, _id)`, re-reading a 2 min overlap (as shipped: from 2 min before the start of the previous complete pull of that collection, in server time, or from the saved watermark when that is later, so a quiet collection is not re-read). Page size is 200 items, or 8 attachments (attachments carry their bytes).
 - **Cadence:**
   - poll every 30 s;
   - push 2 s after a local change;
