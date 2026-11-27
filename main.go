@@ -48,5 +48,16 @@ func setupLogging() *slog.Logger {
 		}
 	}
 	log.SetOutput(w)
-	return slog.New(slog.NewTextHandler(w, nil))
+	return newLogger(w)
+}
+
+// logLevel MUST stay above slog.LevelDebug. At Debug, Wails logs every
+// binding call with its arguments ("Binding call complete ... args"), and
+// SyncConnect's argument is the Atlas connection string, password included,
+// which would then sit in the log file in plain text.
+const logLevel = slog.LevelInfo
+
+// newLogger is Wails' logger: text lines at logLevel.
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: logLevel}))
 }

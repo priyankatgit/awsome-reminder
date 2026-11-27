@@ -19,7 +19,11 @@ import (
 const (
 	metaWMAttachments = "sync_wm_attachments"
 	metaWMItems       = "sync_wm_items"
-	metaLastAt        = "sync_last_at"
+	// When the last complete pull of each collection started, in server
+	// time (RFC 3339): it bounds the next pull's overlap.
+	metaPullAttachments = "sync_pull_at_attachments"
+	metaPullItems       = "sync_pull_at_items"
+	metaLastAt          = "sync_last_at"
 )
 
 const (
@@ -52,6 +56,10 @@ type Engine struct {
 	cycleMu    sync.Mutex
 	needChecks bool // the clock and scope checks are still to run
 	closed     bool
+	// srvOffset is the server clock minus the local clock, read once per
+	// start (srvKnown). Pull starts are stamped in server time with it.
+	srvOffset time.Duration
+	srvKnown  bool
 
 	mu       sync.Mutex // guards st, failures, started, stopped, cancel, done
 	st       Status
@@ -183,9 +191,12 @@ func RetryDelay(st State, failures int, o Options) time.Duration {
 	return nextDelay(st, failures, o)
 }
 
-// WatermarkKeys are the meta keys of the pull watermarks. Deleting them makes
-// the next cycle pull everything (a new sync target).
-func WatermarkKeys() []string { return []string{metaWMItems, metaWMAttachments} }
+// WatermarkKeys are the meta keys of the pull watermarks (and the pull starts
+// that bound their overlap). Deleting them makes the next cycle pull
+// everything (a new sync target).
+func WatermarkKeys() []string {
+	return []string{metaWMItems, metaWMAttachments, metaPullItems, metaPullAttachments}
+}
 
 func (e *Engine) delay() time.Duration {
 	e.mu.Lock()
@@ -248,8 +259,10 @@ func (e *Engine) runLogged(ctx context.Context, manual bool) {
 }
 
 // RunOnce runs one full cycle: push the outbox, pull attachments, settings
-// and items, then report the status. A manual cycle, or one with changes to
-// push, shows syncing first; a quiet poll keeps the shown state.
+// and items, then report the status. A push that fails for a reason other
+// than the connection does not stop the pulls; the cycle still reports it. A
+// manual cycle, or one with changes to push, shows syncing first; a quiet poll
+// keeps the shown state.
 func (e *Engine) RunOnce(ctx context.Context, manual bool) error {
 	e.cycleMu.Lock()
 	defer e.cycleMu.Unlock()
@@ -314,8 +327,18 @@ func (e *Engine) finish(ctx context.Context, prev State, err error) {
 }
 
 func (e *Engine) cycle(ctx context.Context) error {
-	if err := e.push(ctx); err != nil {
-		return err
+	pushErr := e.push(ctx)
+	if pushErr != nil {
+		// A push error that is not the connection (an M0 cluster over its
+		// space quota refuses every write) must not stop this machine from
+		// receiving changes: pull anyway, then report the push error.
+		if st, _ := e.s.Classify(pushErr); st != StateError || ctx.Err() != nil {
+			return pushErr
+		}
+		log.Printf("sync: push failed, pulling anyway: %v", pushErr)
+	}
+	if e.needChecks {
+		e.readServerClock(ctx)
 	}
 	if err := e.pullAttachments(ctx); err != nil {
 		return err
@@ -334,7 +357,7 @@ func (e *Engine) cycle(ctx context.Context) error {
 		e.needChecks = false
 		e.check(ctx)
 	}
-	return nil
+	return pushErr
 }
 
 // push sends up to maxPushBatches batches of the outbox. An entry is acked
@@ -404,6 +427,16 @@ func (e *Engine) loadWatermark(key string) Watermark {
 	return wm
 }
 
+// savePull records a complete pull: its watermark, then when it started. A
+// crash between the two leaves an older start, which only widens the next
+// overlap.
+func (e *Engine) savePull(wmKey, startKey string, saved, last Watermark, start time.Time) error {
+	if err := e.saveWatermark(wmKey, saved, last); err != nil {
+		return err
+	}
+	return e.l.SetSyncMeta(startKey, start.UTC().Format(time.RFC3339Nano))
+}
+
 func (e *Engine) saveWatermark(key string, saved, last Watermark) error {
 	if !saved.Less(last) {
 		return nil
@@ -415,13 +448,65 @@ func (e *Engine) saveWatermark(key string, saved, last Watermark) error {
 	return e.l.SetSyncMeta(key, string(b))
 }
 
-// overlap is where a pull starts: 2 min before the saved watermark, so a
-// write whose server stamp landed just before it is not missed.
-func overlap(saved Watermark) Watermark {
+// pullFrom is where a pull starts. A write's server stamp is taken when the
+// write starts, so it can commit after a pull has already read past that
+// stamp. Such a write is stamped at most pullOverlap before the start of the
+// pull that missed it, so the next pull re-reads from pullOverlap before the
+// previous pull's start, or from the saved watermark when that is later.
+// Bounding the overlap by the previous pull's start, not by the watermark,
+// means a quiet collection is not re-read on every poll. Without a recorded
+// start (a store from before it was recorded) it falls back to pullOverlap
+// before the watermark, once.
+func pullFrom(saved Watermark, prevStart time.Time, known bool) Watermark {
 	if saved.T.IsZero() {
 		return Watermark{}
 	}
-	return Watermark{T: saved.T.Add(-pullOverlap)}
+	if !known {
+		return Watermark{T: saved.T.Add(-pullOverlap)}
+	}
+	from := prevStart.Add(-pullOverlap)
+	if saved.T.Before(from) {
+		return saved
+	}
+	return Watermark{T: from}
+}
+
+// startOf reads the recorded start of the previous complete pull.
+func (e *Engine) startOf(key string) (time.Time, bool) {
+	v, ok, err := e.l.SyncMeta(key)
+	if err != nil || !ok {
+		if err != nil {
+			log.Printf("sync: read %s: %v", key, err)
+		}
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		log.Printf("sync: bad %s, overlapping from the watermark: %v", key, err)
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// serverNow is the server's clock as far as this engine knows it: the local
+// clock, corrected by the offset read at start when that read worked.
+func (e *Engine) serverNow() time.Time {
+	now := e.o.Now()
+	if e.srvKnown {
+		return now.Add(e.srvOffset)
+	}
+	return now
+}
+
+// readServerClock reads the server clock, for the pull starts and the skew
+// warning. It runs before the pulls of each cycle until the checks have run.
+func (e *Engine) readServerClock(ctx context.Context) {
+	srv, err := e.s.ServerTime(ctx)
+	if err != nil {
+		log.Printf("sync: server time: %v", err)
+		return
+	}
+	e.srvOffset, e.srvKnown = srv.Sub(e.o.Now()), true
 }
 
 // errStuck guards against a backend whose watermark does not advance, which
@@ -432,7 +517,9 @@ func errStuck(after, next Watermark) error {
 
 func (e *Engine) pullAttachments(ctx context.Context) error {
 	saved := e.loadWatermark(metaWMAttachments)
-	after, done := overlap(saved), saved
+	start := e.serverNow()
+	prev, known := e.startOf(metaPullAttachments)
+	after, done := pullFrom(saved, prev, known), saved
 	for {
 		page, next, err := e.s.PullAttachments(ctx, after, attachmentPage)
 		if err != nil {
@@ -460,14 +547,16 @@ func (e *Engine) pullAttachments(ctx context.Context) error {
 			return errStuck(after, next)
 		}
 		if len(page) < attachmentPage {
-			return e.saveWatermark(metaWMAttachments, saved, done)
+			return e.savePull(metaWMAttachments, metaPullAttachments, saved, done, start)
 		}
 	}
 }
 
 func (e *Engine) pullItems(ctx context.Context) error {
 	saved := e.loadWatermark(metaWMItems)
-	after, done := overlap(saved), saved
+	start := e.serverNow()
+	prev, known := e.startOf(metaPullItems)
+	after, done := pullFrom(saved, prev, known), saved
 	var all []core.Applied
 	defer func() {
 		if len(all) > 0 && e.o.OnApplied != nil {
@@ -497,7 +586,7 @@ func (e *Engine) pullItems(ctx context.Context) error {
 			return errStuck(after, next)
 		}
 		if len(page) < itemPage {
-			return e.saveWatermark(metaWMItems, saved, done)
+			return e.savePull(metaWMItems, metaPullItems, saved, done, start)
 		}
 	}
 }
@@ -515,9 +604,7 @@ func (e *Engine) pullShared(ctx context.Context) error {
 // logged, never shown.
 func (e *Engine) check(ctx context.Context) {
 	warnings := []string{}
-	if srv, err := e.s.ServerTime(ctx); err != nil {
-		log.Printf("sync: server time: %v", err)
-	} else if skew := srv.Sub(e.o.Now()).Abs(); skew > maxSkew {
+	if skew := e.srvOffset.Abs(); e.srvKnown && skew > maxSkew {
 		warnings = append(warnings, fmt.Sprintf("This computer's clock is %d min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.", int(math.Round(skew.Minutes()))))
 	}
 	if broad, err := e.s.ScopeTooBroad(ctx); err != nil {

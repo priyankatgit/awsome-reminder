@@ -6,8 +6,10 @@ import (
 	"image/png"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -369,22 +371,68 @@ func (w *badgeWiring) Stop() {
 	}
 }
 
+// maxTooltip is the longest tray tooltip in UTF-16 code units: Wails cuts
+// the Windows tooltip at 127.
+const maxTooltip = 127
+
 // pendingTooltip is the tray tooltip: "Awesome Reminder — N pending", or
 // just the name when the count is off (n < 0), then the sync text and any
-// capture and reply hotkey errors, each skipped when empty.
+// capture and reply hotkey errors, each skipped when empty. A tooltip over
+// maxTooltip puts the hotkey errors ahead of the sync text, so the cut falls
+// on the sync text, and ends in an ellipsis.
 func pendingTooltip(n int, syncText, hotkeyErr, replyHotkeyErr string) string {
 	s := appName
 	if n >= 0 {
 		s += " — " + strconv.Itoa(n) + " pending"
 	}
-	if syncText != "" {
-		s += " — " + syncText
-	}
+	errs := []string{}
 	if hotkeyErr != "" {
-		s += " — hotkey error: " + hotkeyErr
+		errs = append(errs, "hotkey error: "+hotkeyErr)
 	}
 	if replyHotkeyErr != "" {
-		s += " — reply hotkey error: " + replyHotkeyErr
+		errs = append(errs, "reply hotkey error: "+replyHotkeyErr)
+	}
+	var parts []string
+	if syncText != "" {
+		parts = append(parts, syncText)
+	}
+	parts = append(parts, errs...)
+	if full := joinTooltip(s, parts); utf16Len(full) <= maxTooltip {
+		return full
+	}
+	if syncText != "" {
+		errs = append(errs, syncText)
+	}
+	return truncateUTF16(joinTooltip(s, errs), maxTooltip)
+}
+
+func joinTooltip(s string, parts []string) string {
+	for _, p := range parts {
+		s += " — " + p
+	}
+	return s
+}
+
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// truncateUTF16 cuts s to at most max UTF-16 units, the last one an
+// ellipsis, never splitting a surrogate pair.
+func truncateUTF16(s string, max int) string {
+	if utf16Len(s) <= max {
+		return s
+	}
+	n := 0
+	for i, r := range s {
+		if n+utf16.RuneLen(r) > max-1 {
+			return strings.TrimRight(s[:i], " —") + "…"
+		}
+		n += utf16.RuneLen(r)
 	}
 	return s
 }

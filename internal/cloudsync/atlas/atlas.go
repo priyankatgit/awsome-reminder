@@ -64,13 +64,7 @@ func Open(ctx context.Context, uri string, o Options) (*Syncer, error) {
 			}
 		}
 	}
-	opts := options.Client().ApplyURI(uri).
-		SetMaxPoolSize(2).SetMinPoolSize(0).
-		SetMaxConnIdleTime(90 * time.Second).
-		SetHeartbeatInterval(60 * time.Second).
-		SetServerSelectionTimeout(10 * time.Second).
-		SetConnectTimeout(10 * time.Second).
-		SetAppName("awesome-reminder")
+	opts := clientOptions(uri)
 	if err := opts.Validate(); err != nil {
 		return nil, redactedError{fmt.Errorf("atlas: %w", err)}
 	}
@@ -89,6 +83,24 @@ func Open(ctx context.Context, uri string, o Options) (*Syncer, error) {
 		return nil, redactedError{err}
 	}
 	return s, nil
+}
+
+// opTimeout bounds every operation client-side, so a half-open connection
+// fails the cycle (offline) instead of leaving it at "Syncing…" until TCP
+// gives up.
+const opTimeout = 30 * time.Second
+
+// clientOptions are the driver options for a connection string (Global
+// Constraints: a small pool, slow heartbeat, bounded waits).
+func clientOptions(uri string) *options.ClientOptions {
+	return options.Client().ApplyURI(uri).
+		SetMaxPoolSize(2).SetMinPoolSize(0).
+		SetMaxConnIdleTime(90 * time.Second).
+		SetHeartbeatInterval(60 * time.Second).
+		SetServerSelectionTimeout(10 * time.Second).
+		SetConnectTimeout(10 * time.Second).
+		SetTimeout(opTimeout).
+		SetAppName("awesome-reminder")
 }
 
 func (s *Syncer) init(ctx context.Context) error {

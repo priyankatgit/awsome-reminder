@@ -99,6 +99,16 @@ func (s *Syncer) PutRaw(d map[string]any) {
 	s.items[id] = cp
 }
 
+// SetItemSrv sets the server stamp of a stored item, to simulate a write
+// that committed after later-stamped writes had been read.
+func (s *Syncer) SetItemSrv(id string, srv time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.items[id]; d != nil {
+		d["_srv"] = ms(srv)
+	}
+}
+
 // Closed reports whether Close was called.
 func (s *Syncer) Closed() bool {
 	s.mu.Lock()

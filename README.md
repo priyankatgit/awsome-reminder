@@ -1,6 +1,6 @@
 # Awesome Reminder
 
-Awesome Reminder is a small desktop app for capturing to-dos and reminders without leaving what you are doing. Press a global hotkey, type a line such as `remind me tomorrow 5pm check deploy #backend`, and press Enter. The app works out whether it is a to-do or a timed reminder, stores it locally, and alerts you before it is due. It runs from the system tray, keeps everything in a local SQLite file, and needs no account or network. It is built with Go and Wails v3 and runs on Windows 11, macOS 14+ and Linux.
+Awesome Reminder is a small desktop app for capturing to-dos and reminders without leaving what you are doing. Press a global hotkey, type a line such as `remind me tomorrow 5pm check deploy #backend`, and press Enter. The app works out whether it is a to-do or a timed reminder, stores it locally, and alerts you before it is due. It runs from the system tray, keeps everything in a local SQLite file, and needs no account or network. If you want the same list on several computers, it can optionally sync through your own MongoDB Atlas cluster. It is built with Go and Wails v3 and runs on Windows 11, macOS 14+ and Linux.
 
 ## Screenshots
 
@@ -170,6 +170,17 @@ Open Settings from the tray menu or the gear in the list window.
 - **Start at login:** on by default.
 - **Show pending count:** on by default. Turn it off to remove the count from the tray icon, the taskbar button and the Dock.
 
+### Sync across machines (optional)
+
+Sync is off by default and the app never touches the network for it until you turn it on. To turn it on, create a free MongoDB Atlas cluster and a database user limited to `readWrite` on `awesome_reminder`, then paste the cluster's `mongodb+srv://` connection string in **Settings › Sync across machines** and click **Connect**. The step-by-step guide is [docs/atlas-setup.md](docs/atlas-setup.md).
+
+- **What syncs:** to-dos and reminders (text, tags, due time, repeat, priority, description, done and snooze state, deletions), the description images, and the reminder defaults (lead times, default time, "next week" day and time). The hotkey, export path, "Start at login", "Show pending count" and the record of shown alerts stay on each computer.
+- **A new machine** connects with the same string and restores everything. The first sync merges both sides: the union of the two, and for an item edited on both the newest edit wins. Overdue items that come back do not flood you with "missed" cards.
+- **Cadence:** a change is sent about 2 seconds after you make it, and the app checks for changes from other computers every 30 seconds. Your changes made offline are kept and sent when the network returns. Capture, the list and alerts never wait for the network.
+- **Status:** the list header shows a pill (`All synced · 2 min ago`, `Syncing…`, `Offline · 3 changes waiting`, `Sync error`); click it for details, **Sync now** and the cluster host. Rows that Atlas has not received yet show a small crossed-out cloud marker. The tray icon carries a status dot and the tooltip ends with the same wording.
+- **Safety:** the connection string is kept in the OS keychain (or an AES-256-GCM encrypted file where there is none) and never logged. If the database user can reach other databases, Settings warns you but sync still works. Synced data is not encrypted beyond Atlas's own TLS and storage, so it is readable by anyone with access to your cluster.
+- **Disconnect** in Settings stops sync and forgets the string; your items stay here and Atlas keeps its copy.
+
 ### Pending count
 
 The number of open items (to-dos and reminders not yet done) shows as a red badge. Above 9 it reads `9+`, and with nothing open there is no badge. It updates whenever an item changes.
@@ -189,7 +200,7 @@ Everything is under the per-user config directory, in an `awesome-reminder` fold
 | macOS | `~/Library/Application Support/awesome-reminder/` |
 | Linux | `~/.config/awesome-reminder/` |
 
-It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). Settings are stored in the database. Delete the folder to reset the app.
+It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). With sync on and no OS keychain it also holds `sync.key`. Settings are stored in the database. Delete the folder to reset the app.
 
 At startup the app deletes images that no description has referred to for more than 7 days, and images of items that have been deleted for more than 30 days. Undoing a delete within those windows keeps the images.
 
@@ -226,12 +237,11 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Nothing leaves your machine unless you turn sync on (the one-time voice download is the only other network use, and only after you agree to it).
 
 Planned, in order:
 
-1. **Phase 2:** optional sync across your machines through your own MongoDB Atlas cluster, with sync status indicators in the tray and list.
-2. **Phase 3:** hands-free voice. Say "Hey Awesome" to start capturing without the hotkey, and dictate several tasks in one go: saying "create new task" saves the current one and starts the next.
-3. **Phase 4:** optional phone push for reminders through ntfy.
+1. **Phase 3:** hands-free voice. Say "Hey Awesome" to start capturing without the hotkey, and dictate several tasks in one go: saying "create new task" saves the current one and starts the next.
+2. **Phase 4:** optional phone push for reminders through ntfy.
 
-The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).
+The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Atlas setup is in [docs/atlas-setup.md](docs/atlas-setup.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).

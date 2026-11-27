@@ -2505,6 +2505,7 @@ legend.field-label {
     animation: none;
   }
 }
+
 /* ---------- Motion: fly to tray, confetti ---------- */
 
 /* Save: a copy of the typed line flies to the tray corner (capture.ts),

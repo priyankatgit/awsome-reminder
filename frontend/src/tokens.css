@@ -331,6 +331,7 @@
     --sync-glow: 0 0 10px 2px rgba(22, 163, 74, 0.45);
   }
 }
+
 /* ---- Motion: springs, reflow and celebration ----
    Kept in its own block so it merges cleanly with other token changes.
    Springs are linear() samples of a damped spring (scratch generator:

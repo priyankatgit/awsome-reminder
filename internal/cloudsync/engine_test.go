@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -238,6 +241,24 @@ type countingSyncer struct {
 	cloudsync.Syncer
 	mu                  sync.Mutex
 	itemPages, itemDocs int
+	attDocs             int
+}
+
+func (c *countingSyncer) PullAttachments(ctx context.Context, after cloudsync.Watermark, limit int) ([]cloudsync.RemoteAttachment, cloudsync.Watermark, error) {
+	atts, wm, err := c.Syncer.PullAttachments(ctx, after, limit)
+	c.mu.Lock()
+	c.attDocs += len(atts)
+	c.mu.Unlock()
+	return atts, wm, err
+}
+
+// docs returns and clears the pulled item and attachment document counts.
+func (c *countingSyncer) docs() (items, atts int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	items, atts = c.itemDocs, c.attDocs
+	c.itemDocs, c.attDocs = 0, 0
+	return
 }
 
 func (c *countingSyncer) PullItems(ctx context.Context, after cloudsync.Watermark, limit int) ([]model.Item, cloudsync.Watermark, error) {
@@ -548,22 +569,104 @@ func TestPullOverlapIdempotent(t *testing.T) {
 	}
 	a.recorded()
 
-	clk.Add(10 * time.Second) // well inside the 2 min overlap
-	cs.mu.Lock()
-	cs.itemDocs = 0
-	cs.mu.Unlock()
+	// 10 s later the previous pull started less than 2 min ago, so the
+	// overlap re-reads what that pull read (a write it raced with may have
+	// committed since). Applying the re-read documents is a no-op.
+	clk.Add(10 * time.Second)
+	cs.docs()
 	b.sync()
 	a.sync()
-	cs.mu.Lock()
-	reread := cs.itemDocs
-	cs.mu.Unlock()
-	if reread != 2 {
-		t.Errorf("overlap re-read %d items, want 2", reread)
+	if items, atts := cs.docs(); items != 2 || atts != 1 {
+		t.Errorf("overlap re-read %d items, %d attachments; want 2, 1", items, atts)
 	}
 	for name, d := range map[string]*device{"a": a, "b": b} {
 		if _, applied, changes := d.recorded(); len(applied) != 0 || changes != 0 {
 			t.Errorf("%s: quiet cycle applied %v, %d changes", name, applied, changes)
 		}
+	}
+
+	// Once the previous pull started more than 2 min after the newest
+	// document, the overlap is past it: nothing is re-read.
+	clk.Add(3 * time.Minute)
+	b.sync() // the previous pull started 10 s after the newest document
+	cs.docs()
+	clk.Add(30 * time.Second)
+	b.sync() // the previous pull started 3 min 10 s after it
+	if items, atts := cs.docs(); items != 0 || atts != 0 {
+		t.Errorf("quiet poll re-read %d items, %d attachments; want 0", items, atts)
+	}
+}
+
+// TestQuietPollsDoNotRepull is the review probe: long after the last write,
+// polls must not re-download the newest documents (an attachment's bytes
+// included) on every cycle.
+func TestQuietPollsDoNotRepull(t *testing.T) {
+	ms, clk := setup()
+	a := newDevice(t, ms, clk)
+	it := a.capture("with a picture")
+	a.capture("another")
+	if _, err := a.c.AddAttachment(it.ID, tinyWebP(t)); err != nil {
+		t.Fatal(err)
+	}
+	a.sync()
+	cs := &countingSyncer{Syncer: ms}
+	b := newDevice(t, cs, clk)
+	b.sync()
+	if items, atts := cs.docs(); items != 2 || atts != 1 {
+		t.Fatalf("first pull: %d items, %d attachments", items, atts)
+	}
+
+	clk.Add(time.Hour)
+	b.sync() // the previous pull is the restore itself: one overlap re-read
+	cs.docs()
+	for i := range 10 {
+		clk.Add(30 * time.Second)
+		b.sync()
+		if items, atts := cs.docs(); items != 0 || atts != 0 {
+			t.Errorf("quiet poll %d re-pulled %d items, %d attachments", i, items, atts)
+		}
+	}
+}
+
+// TestLateCommitInsideOverlapIsPulled: a write stamped before the saved
+// watermark but committed after the pull that set it is still picked up,
+// because it falls within 2 min of that pull's start.
+func TestLateCommitInsideOverlapIsPulled(t *testing.T) {
+	ms, clk := setup()
+	ctx := context.Background()
+	b := newDevice(t, ms, clk)
+	early := remoteItem("01JD00000000000000000000C1", "early", clk.Now())
+	if err := ms.PushItem(ctx, early); err != nil {
+		t.Fatal(err)
+	}
+	b.sync()
+
+	clk.Add(10 * time.Second)
+	newer := remoteItem("01JD00000000000000000000C2", "newer", clk.Now())
+	if err := ms.PushItem(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(10 * time.Second)
+	pullStart := clk.Now()
+	b.sync() // reads "newer": the watermark moves to its stamp
+	wm, _ := b.watermark("sync_wm_items")
+
+	// A write that started 15 s before that pull commits only now, with the
+	// stamp it took when it started: before the watermark.
+	late := remoteItem("01JD00000000000000000000C3", "late", clk.Now())
+	if err := ms.PushItem(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	stamp := pullStart.Add(-15 * time.Second)
+	ms.SetItemSrv(late.ID, stamp)
+	if !stamp.Before(wm.T) {
+		t.Fatalf("fixture: late stamp %v should be before the watermark %v", stamp, wm.T)
+	}
+
+	clk.Add(30 * time.Second)
+	b.sync()
+	if got := b.item(late.ID); got.Text != "late" {
+		t.Errorf("late commit not pulled: %+v", got)
 	}
 }
 
@@ -918,5 +1021,100 @@ func TestSkippedDocAdvancesWatermark(t *testing.T) {
 	b.sync()
 	if wm, ok := b.watermark("sync_wm_items"); !ok || wm != want {
 		t.Errorf("watermark %+v (saved %v), want %+v past the skipped doc", wm, ok, want)
+	}
+}
+
+// TestPushErrorStillPulls: a push refused for a reason other than the
+// connection (an M0 over its space quota refuses every write) must not stop
+// this machine from receiving changes. A lost connection still aborts.
+func TestPushErrorStillPulls(t *testing.T) {
+	ms, clk := setup()
+	ctx := context.Background()
+	b := newDevice(t, ms, clk)
+	b.capture("local change the cluster refuses")
+	remote := remoteItem("01JD00000000000000000000C1", "from elsewhere", clk.Now())
+	if err := ms.PushItem(ctx, remote); err != nil {
+		t.Fatal(err)
+	}
+	quota := errors.New("you are over your space quota, using 513 MB of 512 MB (8000)")
+	ms.FailNext(quota, 1)
+	if err := b.e.RunOnce(ctx, false); !errors.Is(err, quota) {
+		t.Fatalf("cycle error %v, want the push error", err)
+	}
+	if got := b.item(remote.ID); got.Text != "from elsewhere" {
+		t.Errorf("remote change not applied after a push error: %+v", got)
+	}
+	st := b.e.Status()
+	if st.State != cloudsync.StateError || !strings.Contains(st.Error, quota.Error()) || st.Pending != 1 {
+		t.Errorf("status %+v, want error with the push's text and 1 pending", st)
+	}
+
+	clk.Add(time.Minute)
+	remote2 := remoteItem("01JD00000000000000000000C2", "while offline", clk.Now())
+	if err := ms.PushItem(ctx, remote2); err != nil {
+		t.Fatal(err)
+	}
+	ms.FailNext(memsync.ErrNetwork, 1)
+	if err := b.e.RunOnce(ctx, false); !errors.Is(err, memsync.ErrNetwork) {
+		t.Fatalf("cycle error %v, want offline", err)
+	}
+	if _, err := b.c.Item(remote2.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("an offline push should abort the cycle before pulling: %v", err)
+	}
+	if st := b.e.Status(); st.State != cloudsync.StateOffline {
+		t.Errorf("status %+v, want offline", st)
+	}
+}
+
+// legacySettings saves custom reminder defaults the Phase 1.6 way (no shared
+// stamp) with the migration's outbox seed, then runs the startup step that
+// an upgraded app runs when it opens the store.
+func (d *device) legacySettings(leads ...time.Duration) {
+	d.t.Helper()
+	s := settings.Defaults(runtime.GOOS)
+	s.LeadTimes = leads
+	if err := d.st.SaveSettingsShared(s); err != nil { // row + v3 seed
+		d.t.Fatal(err)
+	}
+	if ok, err := d.st.StampLegacyShared(runtime.GOOS); err != nil || !ok {
+		d.t.Fatalf("stamp legacy settings: %v %v", ok, err)
+	}
+}
+
+func TestRestoreLegacySettings(t *testing.T) {
+	ms, clk := setup()
+	a := newDevice(t, ms, clk)
+	a.legacySettings(30 * time.Minute)
+	a.sync()
+
+	c := newDevice(t, ms, clk)
+	if err := c.c.EnqueueAll(); err != nil { // first connect
+		t.Fatal(err)
+	}
+	c.sync()
+	if got, _ := c.c.Settings(); !reflect.DeepEqual(got.LeadTimes, []time.Duration{30 * time.Minute}) {
+		t.Errorf("fresh device lead times %v, want A's legacy ones", got.LeadTimes)
+	}
+	a.sync()
+	if got, _ := a.c.Settings(); !reflect.DeepEqual(got.LeadTimes, []time.Duration{30 * time.Minute}) {
+		t.Errorf("A's lead times %v after C connected", got.LeadTimes)
+	}
+}
+
+func TestTwoLegacyDevicesConverge(t *testing.T) {
+	ms, clk := setup()
+	a, b := newDevice(t, ms, clk), newDevice(t, ms, clk)
+	a.legacySettings(30 * time.Minute)
+	b.legacySettings(15 * time.Minute)
+	a.sync()
+	b.sync()
+	a.sync()
+	ga, _ := a.c.Settings()
+	gb, _ := b.c.Settings()
+	if !ga.Shared().Equal(gb.Shared()) {
+		t.Errorf("not converged: A %v, B %v", ga.LeadTimes, gb.LeadTimes)
+	}
+	if a.pending() != 0 || b.pending() != 0 {
+		t.Errorf("pending: a=%d b=%d", a.pending(), b.pending())
 	}
 }

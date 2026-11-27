@@ -258,3 +258,21 @@ func TestOpenSRVLookupFailureIsOffline(t *testing.T) {
 		t.Errorf("classified %v %q (%v)", st, text, err)
 	}
 }
+
+func TestClientOptions(t *testing.T) {
+	o := clientOptions("mongodb+srv://user:" + password + "@cluster0.example.mongodb.net/")
+	for name, got := range map[string]*time.Duration{
+		"operation timeout": o.Timeout, "server selection": o.ServerSelectionTimeout,
+		"connect": o.ConnectTimeout, "heartbeat": o.HeartbeatInterval, "idle": o.MaxConnIdleTime,
+	} {
+		if got == nil || *got <= 0 {
+			t.Errorf("%s not set: %v", name, got)
+		}
+	}
+	if o.Timeout != nil && *o.Timeout != 30*time.Second {
+		t.Errorf("operation timeout %v, want 30s", *o.Timeout)
+	}
+	if o.MaxPoolSize == nil || *o.MaxPoolSize != 2 {
+		t.Errorf("pool size %v", o.MaxPoolSize)
+	}
+}

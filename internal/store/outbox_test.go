@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/settings"
@@ -259,5 +260,81 @@ func TestEnqueueAllWithoutSettingsRow(t *testing.T) {
 	}
 	if n := count(t, s); n != 1 {
 		t.Fatalf("count=%d", n)
+	}
+}
+
+// v2DB writes a Phase 1.6 (schema v2) database holding only this settings
+// JSON and returns its path.
+func v2DB(t *testing.T, settingsJSON string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "v2.db")
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{migrations[0], migrations[1],
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES('schema_version','2')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO settings VALUES(1,?)`, settingsJSON); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestOpenStampsLegacySharedSettings(t *testing.T) {
+	p := v2DB(t, `{"hotkey":"Ctrl+Shift+Space","leadTimes":["30m0s"],"defaultTime":"08:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`)
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadSettings("windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SharedUpdatedAt.UnixMilli() != 1 || got.SharedUpdatedBy != s.DeviceID() {
+		t.Errorf("stamp %v/%q, want unix ms 1 by %q", got.SharedUpdatedAt, got.SharedUpdatedBy, s.DeviceID())
+	}
+	if !reflect.DeepEqual(got.LeadTimes, []time.Duration{30 * time.Minute}) || got.DefaultTime != "08:00" {
+		t.Errorf("values changed: %+v", got)
+	}
+	es, _ := s.Outbox(10)
+	if len(es) != 1 || es[0].Kind != OutboxSettings || es[0].Seq != 2 {
+		t.Errorf("outbox %+v, want the settings re-queued after the seed", es)
+	}
+	s.Close()
+
+	// Already stamped: a second start leaves it alone.
+	s, err = Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if es, _ := s.Outbox(10); len(es) != 1 || es[0].Seq != 2 {
+		t.Errorf("second open re-queued: %+v", es)
+	}
+}
+
+func TestOpenLeavesLegacyDefaultSettingsUnstamped(t *testing.T) {
+	const js = `{"hotkey":"Ctrl+Alt+K","leadTimes":["1h0m0s","10m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`
+	s, err := Open(v2DB(t, js))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var stored string
+	if err := s.db.QueryRow(`SELECT json FROM settings WHERE id=1`).Scan(&stored); err != nil || stored != js {
+		t.Errorf("default-valued row rewritten: %q %v", stored, err)
+	}
+	if es, _ := s.Outbox(10); len(es) != 1 || es[0].Seq != 1 {
+		t.Errorf("outbox %+v, want only the migration seed", es)
+	}
+	if ok, err := s.StampLegacyShared("windows"); ok || err != nil {
+		t.Errorf("StampLegacyShared = %v, %v; want no stamp", ok, err)
 	}
 }

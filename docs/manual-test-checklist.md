@@ -1,6 +1,6 @@
 # Manual test checklist
 
-Per-OS verification for the Phase 1 build, from the Verification section of the [design spec](superpowers/specs/2026-11-27-awesome-reminder-design.md). Run it on a release build (`wails3 build`) and record the result per OS.
+Per-OS verification for the Phase 1 to Phase 2 builds, from the Verification section of the [design spec](superpowers/specs/2026-11-27-awesome-reminder-design.md). Run it on a release build (`wails3 build`) and record the result per OS.
 
 Result values: **pass**, **fail** (with the number or a note), **needs human** (not verifiable by a script or needs a person at the keyboard or a reboot), **n/a**, or blank (not run yet). Only the Windows column has been filled in so far, and only with what was actually observed; the macOS and Linux columns are still to be run on those machines.
 
@@ -93,6 +93,51 @@ Notes: whisper-server (8 threads on 16 cores, `base.en`) commits about 740 MB pr
 | B5 | Pinned button | Pin the taskbar button, quit, start from the pin: the pin and the running button merge into one, with the badge. | needs human | n/a | n/a | n/a |
 
 Windows run (2026-11-27, same machine; temp copy with `APPDATA`/`LOCALAPPDATA` pointed at a scratch folder): no `taskbar:` errors in `awesome.log`. The Go process was at 58 MB private / 40 MB working set a few seconds after start with the native window. That is no measurement of the window's own cost, which is a plain Win32 window with no WebView.
+
+## Sync across machines (Phase 2)
+
+The rows need an Atlas cluster set up as in [atlas-setup.md](atlas-setup.md); most need two machines. The Windows run below used a copy of the build under `%TEMP%` with `APPDATA` / `LOCALAPPDATA` pointed at a scratch folder, and the MongoDB service on `localhost:27017` as a stand-in for Atlas (an empty server with no authentication and no `awesome_reminder` database beforehand). That tests the app's own paths, not Atlas itself: no SRV lookup, no TLS, no IP access list, no pausing, no per-user roles.
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| S1 | Connect and status | Settings › Sync across machines: paste the string, Connect. The section shows "All synced · just now", the cluster host, where the string is stored, and "Images in Atlas: N MB of 512 MB". | pass (`mongodb://localhost:27017/`: "All synced · just now", "Cluster localhost", "Connection string stored in Windows Credential Manager", "Images in Atlas: 0.0 MB of 512 MB", read through UI Automation) | | | |
+| S2 | Wrong password | Connect with a user whose password is wrong. | pass (a made-up user on the local server: "Atlas rejected the username or password."; nothing saved) | | | |
+| S3 | Cluster unreachable wording | Use a string whose host resolves but does not answer, or pause the cluster. | pass for the wording only (`mongodb://localhost:1/` after about 10 s: "Can't reach your Atlas cluster. It may be paused (resume it in Atlas), or this network's IP isn't on the Atlas access list."). A really paused M0 cluster: needs human | | | |
+| S4 | Broad user warning | Connect with a user that has `readWriteAnyDatabase`. Settings and the pill popover show "This Atlas user can reach other databases on your cluster. Limit it to readWrite on awesome_reminder (see the setup guide)."; sync still works. | needs human (the local server has no users; needs an Atlas cluster. Covered by the engine's scope-check tests) | | | |
+| S5 | Two machines converge | Machines A and B on the same cluster. Add, edit and mark done on A; B shows each within 30 s, and the other way round. | needs human (two machines) | | | |
+| S6 | Done on A removes the card on B | Both machines running. An alert card for the same item is showing on B; click Done on A. Within 30 s the card on B goes away. | needs human (two machines) | | | |
+| S7 | Offline edit, marker, reconnect | Disconnect the network. Edit an item: its row shows the "not synced yet" marker and the pill reads "Offline · 1 change waiting". Reconnect (or press Sync now): the marker fades, the pill glows once and reads "All synced · just now". | needs human (network switch; the pill and marker wording is covered by the vitest suites) | | | |
+| S8 | Restore on a fresh profile | New profile (or machine), same connection string: items, images and lead times come back, and no stack of "missed" cards appears for the overdue items. | needs human (an empty local server cannot show it; covered by `TestRestoreFreshDevice` and `TestApplyRemoteNewItemSuppressesPastAlerts`) | | | |
+| S9 | Tray dot and tooltip | The tray icon shows the dot (green synced, alternating ring/dot syncing, grey ring offline, red error; macOS uses shapes instead); the tooltip ends with the matching text. | needs human (the tray icon and tooltip were not inspected; covered by `TestBadgeWiringSyncChanged`) | | | |
+| S10 | Sleep and wake | Sleep for longer than 5 minutes with sync on; on wake the status returns to synced within a minute and no item is lost. | needs human (sleep) | | | |
+| S11 | Idle RAM with sync on after 10 min < 150 MB | As row 6, with sync connected. | **Fresh start, no window opened: pass** (143.6 MB private, 10 min idle). **After the list and Settings windows have been opened and closed: fail, 151.7 MB** (just over 150; 60 s settle). The same round with sync off also reads 151.8 MB, so sync made no measurable difference in these runs (one run each, against an empty local MongoDB with no TLS or SRV, so real Atlas may cost more); see measurements | | | |
+| S12 | ~0% idle CPU with sync on | As row 7 with sync connected (a poll every 30 s). | pass: 0.15% of one core for the whole tree over 60 s (Go process 0.03%), with a poll every 30 s | | | |
+
+### Windows 11 measurements with sync on
+
+Same machine and method as above (PowerShell, the app's process tree through `Win32_Process.ParentProcessId`, `WorkingSet64`, `PrivateMemorySize64`, CPU over a 60 s window after the idle time). Build: `wails3 build` of this branch, run from a copy under `%TEMP%` with `APPDATA` / `LOCALAPPDATA` in a scratch folder. Sync was connected to the local MongoDB service (`mongodb://localhost:27017`, stored in Windows Credential Manager); the database was empty, so the numbers do not include the cost of holding items, and a real Atlas cluster adds TLS and an SRV lookup that this run did not exercise. The scratch database and the credential were removed afterwards.
+
+Fresh start (the app opened the saved string by itself), no window opened, 10 minutes idle:
+
+| Process | Working set | Private | CPU (% of one core) |
+|---|---|---|---|
+| awesome-reminder (Go app) | 42.9 MB | 55.9 MB | 0.03 |
+| msedgewebview2 browser | 144.5 MB | 38.8 MB | 0.03 |
+| msedgewebview2 renderer (capture window) | 71.8 MB | 26.1 MB | 0.03 |
+| msedgewebview2 utility x2 | 40.9 + 21.3 MB | 11.9 + 7.8 MB | 0.03 + 0 |
+| msedgewebview2 crashpad-handler | 13.5 MB | 3.1 MB | 0.03 |
+| **Total (6 processes)** | **334.9 MB** | **143.6 MB** | **0.15** |
+
+Against Phase 1 (137.0 MB private, Go process 52.4 MB) sync adds about 6.6 MB private, nearly all in the Go process (55.9 MB) and the WebView2 browser process. That leaves 6.4 MB below the 150 MB limit for the fresh-start case only. After opening and closing windows the figure is 151.7 MB with sync on, which is over the limit, and equal to sync off (see below).
+
+After a window round, sync off against sync on (same build, scratch profile each, 6 processes each; the round is `--capture`, `--list`, `--settings` against the running copy, then Settings and the list closed with WM_CLOSE through UI Automation, with no synthetic keyboard input; 15 s after start before the round, 60 s settle, 60 s window; no alerts fired, unlike Phase 1's "After" row, and no 10-minute idle first):
+
+| Case | Working set | Private | CPU (% of one core) | Verdict (< 150 MB private) |
+|---|---|---|---|---|
+| Sync off | 335.8 MB | 151.8 MB | 0.54 | fail (by 1.8 MB) |
+| Sync on (local server, empty database) | 340.4 MB | 151.7 MB | 0.67 | fail (by 1.7 MB) |
+
+After the window round, both sync off and sync on read about 8 MB above the fresh-start 143.6 MB, and sync on and off are the same within 0.1 MB. The cause of that growth is not established; this run did not reproduce Phase 1's 143.6 MB "After" figure, which was taken with a different alert sequence and a 10-minute idle first. The earlier 188.9 MB reading, with a second renderer still alive after the list and Settings windows had been opened and closed in a different order, was not reproduced here (6 processes both times) and should not be relied on; why that run kept a second renderer is not established.
 
 ## Replies owed
 

@@ -43,10 +43,9 @@ func syncTooltip(st cloudsync.Status, now time.Time) string {
 		}
 		return "Offline"
 	case cloudsync.StateError:
-		if st.Error == "" {
-			return "Sync error"
-		}
-		return "Sync error: " + st.Error
+		// The reason can be long; it shows in the pill and Settings. The
+		// Windows tooltip holds only 127 UTF-16 units.
+		return "Sync error"
 	}
 	return ""
 }

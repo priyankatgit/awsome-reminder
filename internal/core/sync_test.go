@@ -294,6 +294,12 @@ func TestApplyRemoteAttachment(t *testing.T) {
 		t.Error("older tombstone removed file")
 	}
 
+	// An equal remote (the pull overlap re-reading it) is skipped before its
+	// bytes are decoded or hashed: garbage bytes give no validation error.
+	if ok, err := e.c.ApplyRemoteAttachment(a, []byte("not an image")); err != nil || ok {
+		t.Fatalf("equal remote: %v %v, want skipped before decoding", ok, err)
+	}
+
 	// local UnreferencedSince kept on a newer update; then a tombstone removes the file
 	ref := at.Add(-time.Hour)
 	loc := got
@@ -559,12 +565,39 @@ func TestAttachmentStampsStrictlyIncrease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.c.SetDescription(it.ID, "![x](att:"+a.ID+")"); err != nil {
+	// Never referenced: swept after 7 days. Its stamp is already the sweep's
+	// millisecond (a remote edit landed then), so the tombstone must step
+	// past it.
+	e.now = e.now.Add(8 * 24 * time.Hour)
+	a, _ = e.st.GetAttachment(a.ID)
+	a.UpdatedAt = e.now.UTC()
+	if err := e.st.PutAttachment(a); err != nil {
 		t.Fatal(err)
 	}
+	if n, err := e.c.SweepAttachments(); err != nil || n != 1 {
+		t.Fatalf("sweep: %d %v", n, err)
+	}
 	got, _ := e.st.GetAttachment(a.ID)
-	if !got.UpdatedAt.After(a.UpdatedAt) {
-		t.Errorf("attachment restamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
+	if !got.Deleted || !got.UpdatedAt.After(a.UpdatedAt) {
+		t.Errorf("tombstone stamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
+	}
+}
+
+// A legacy row stamped at unix ms 1 (store.StampLegacyShared) must win over
+// a device that never saved settings (zero stamp).
+func TestApplyRemoteSharedLegacyStampBeatsZero(t *testing.T) {
+	e := newEnv(t)
+	if _, at, by, _ := e.c.SharedForSync(); !at.IsZero() || by != "" {
+		t.Fatalf("fixture: fresh stamp %v %q", at, by)
+	}
+	s, _ := e.c.Settings()
+	p := s.Shared()
+	p.LeadTimes = []time.Duration{30 * time.Minute}
+	if ok, err := e.c.ApplyRemoteShared(p, time.UnixMilli(1), "R"); err != nil || !ok {
+		t.Fatalf("legacy stamp not applied: %v %v", ok, err)
+	}
+	if got, _ := e.c.Settings(); len(got.LeadTimes) != 1 || got.LeadTimes[0] != 30*time.Minute {
+		t.Errorf("lead times %v", got.LeadTimes)
 	}
 }
 

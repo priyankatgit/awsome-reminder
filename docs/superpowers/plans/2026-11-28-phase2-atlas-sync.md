@@ -26,14 +26,14 @@
 - The URI is stored in the OS keychain (service `dev.awesome-reminder.app`, account `atlas-uri`) and falls back to the AES-256-GCM file (`<DataDir>/sync.key` + meta `sync_uri_enc`). It never appears in logs, events or error strings. The UI shows only the host (`atlas.Host`).
 - **LWW:** the newer `updated_at` (compared at millisecond precision) wins; on a tie the lexicographically greater `updated_by` (device ULID) wins. Deletes are tombstones, and nothing is purged in Phase 2.
 - **Push** writes Atlas with `$set` of the known fields plus `$currentDate: {_srv: {$type: "date"}}`, conditionally on LWW. It never replaces a document, so fields written by anything else (e.g. a newer app version) survive.
-- **Pull** reads by the server stamp `_srv`, ordered by `(_srv, _id)`, re-reading a 2 min overlap before the saved watermark. Page size is 200 items, or 8 attachments (attachments carry their bytes).
+- **Pull** reads by the server stamp `_srv`, ordered by `(_srv, _id)`, re-reading a 2 min overlap (as shipped: from 2 min before the start of the previous complete pull of that collection, in server time, or from the saved watermark when that is later, so a quiet collection is not re-read). Page size is 200 items, or 8 attachments (attachments carry their bytes).
 - **Cadence:**
   - poll every 30 s;
   - push 2 s after a local change;
   - Offline backoff 30 → 60 → 120 → 240 → 300 s (cap);
   - Error retry every 5 min;
   - "Sync now" runs immediately and resets the backoff.
-- **Mongo client:** `maxPoolSize 2`, `minPoolSize 0`, `maxConnIdleTime 90s`, `heartbeatInterval 60s`, `serverSelectionTimeout 10s`, `connectTimeout 10s`, `appName "awesome-reminder"`.
+- **Mongo client:** `maxPoolSize 2`, `minPoolSize 0`, `maxConnIdleTime 90s`, `heartbeatInterval 60s`, `serverSelectionTimeout 10s`, `connectTimeout 10s`, `timeout 30s` (client-side per-operation timeout, as shipped), `appName "awesome-reminder"`.
 - Idle RAM stays < 150 MB with sync on (Phase 1 measured 137 MB). Measure as in `docs/manual-test-checklist.md` row 6.
 - **Synced documents:**
   - **items:** `_id, kind, text, tags, due_at, tz, rrule, lead_times (ms array or null), status, done_at, snooze_until, created_at, updated_at, updated_by, priority, description, _srv`.
@@ -41,7 +41,7 @@
   - **settings:** `_id: "settings", lead_times, default_time, next_week_day, next_week_time, updated_at, updated_by, _srv`.
   - **Local only:** `unreferenced_since`, `notify_log`, `device_id`, the outbox, watermarks, the URI.
 - **Status vocabulary** (exact strings). The machine states are `off | syncing | synced | offline | error`.
-  - **Tray tooltip suffixes:** `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0), `Sync error: <reason>`; nothing when off.
+  - **Tray tooltip suffixes:** `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0), `Sync error` (as shipped: the reason shows in the pill and Settings; the whole tooltip is capped at 127 UTF-16 units with an ellipsis); nothing when off.
   - **List pill:** `All synced · just now` / `All synced · 2 min ago`, `Synced · N waiting`, `Syncing…`, `Offline · N changes waiting`, `Sync error`.
   - **Row marker** `aria-label`: `Not synced yet`.
 - Scope warning text (exact): `This Atlas user can reach other databases on your cluster. Limit it to readWrite on awesome_reminder (see the setup guide).`
@@ -295,7 +295,7 @@
   2. **Push:** loop `Outbox(100)` for at most 10 batches. For each entry, read it via `Item` / `AttachmentForSync` / `SharedForSync`, push it, then `Ack` it.
      - `ErrAttachmentFileMissing` and `store.ErrNotFound` → log and `Ack` (drop).
      - Any other error aborts the cycle.
-  3. **Pull** attachments, then items, then shared settings. Each collection starts from `saved.T − 2 min` (meta `sync_wm_attachments` / `sync_wm_items`, JSON) and pages until a short page. Each page goes through `ApplyRemote*`. Afterwards, save `max(saved, last returned)`. `OnApplied` receives the items' `Applied` lists.
+  3. **Pull** attachments, then shared settings, then items (as shipped, so restored items use the remote lead times). Each collection starts from `saved.T − 2 min` (meta `sync_wm_attachments` / `sync_wm_items`, JSON) and pages until a short page. Each page goes through `ApplyRemote*`. Afterwards, save `max(saved, last returned)`. `OnApplied` receives the items' `Applied` lists.
   4. On success: state `synced`, `LastSyncAt = now` (also meta `sync_last_at`), and `Pending = OutboxCount()`. On error: `Classify`, then schedule `nextDelay`. Emit status either way.
   - On the first cycle after `Start`, `ServerTime` vs `Now`: if `|skew| > 2 min`, add to Warnings `This computer's clock is N min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.` Also on the first cycle: `ScopeTooBroad` true → add the scope warning (Global Constraints); an error → log only.
 - `memsync` is an in-memory `Syncer` with the same LWW and `_srv` semantics: a server clock that strictly increases per write, plus `FailNext(err error, n int)`, `BeforePush(fn func())`, `PutRaw(doc map[string]any)` for malformed docs, and `SetScopeTooBroad(v bool, err error)`. Its `Classify` maps an injected `memsync.ErrNetwork` to offline and anything else to error.
@@ -503,7 +503,7 @@
 
 **Files:**
 - Create: `frontend/src/sync-status.ts`, `frontend/src/sync-status.test.ts`, `frontend/src/sync-pill.ts`
-- Modify: `frontend/src/list.ts` (header slot before the settings button; refresh the view when `pending` changes), `frontend/src/item-row.ts` (marker), `frontend/src/icons.ts` (`Cloud`, `CloudCheck`, `CloudOff`, `CloudAlert`, `RefreshCw`; check the names in the installed `lucide`), `frontend/src/tokens.css`, `frontend/src/style.css`, `frontend/src/list-demo.ts` (a state switcher for every status)
+- Modify: `frontend/src/list.ts` (header slot before the settings button; refresh the view when `pending` changes), `frontend/src/item-row.ts` (marker), `frontend/src/icons.ts` (`Cloud`, `CloudCheck`, `CloudOff`, `CloudAlert`, `RefreshCw`; check the names in the installed `lucide`; as shipped, `cloudAlert` renders Lucide `CloudExclamationPoint` (`cloud-exclamation-point`), the installed version has no `cloud-alert`), `frontend/src/tokens.css`, `frontend/src/style.css`, `frontend/src/list-demo.ts` (a state switcher for every status)
 
 **Interfaces:**
 - Consumes: Task 7 `SyncStatus`, `SyncNow`, `OpenSettings`, `onSyncStatus`; `View.pending` (Task 3).

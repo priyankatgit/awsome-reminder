@@ -97,6 +97,42 @@ func TestAddAttachmentRejects(t *testing.T) {
 	}
 }
 
+// TestSetDescriptionDoesNotQueueAttachment: UnreferencedSince never syncs,
+// so dropping and re-adding a reference must not restamp the attachment or
+// queue its whole image for upload again.
+func TestSetDescriptionDoesNotQueueAttachment(t *testing.T) {
+	e, _ := attEnv(t)
+	it := mustCapture(t, e, "a")
+	a, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustDesc(t, e, it.ID, "see ![x](att:"+a.ID+")")
+	entries, err := e.c.Outbox(-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, en := range entries {
+		if err := e.c.Ack(en); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.now = e.now.Add(time.Hour)
+	mustDesc(t, e, it.ID, "gone")
+	e.now = e.now.Add(time.Hour)
+	mustDesc(t, e, it.ID, "back: ![x](att:"+a.ID+")")
+	entries, _ = e.c.Outbox(-1)
+	for _, en := range entries {
+		if en.Kind == store.OutboxAttachment {
+			t.Errorf("attachment queued by a description edit: %+v", en)
+		}
+	}
+	g, err := e.st.GetAttachment(a.ID)
+	if err != nil || !g.UpdatedAt.Equal(a.UpdatedAt) || g.UpdatedBy != a.UpdatedBy || g.UnreferencedSince != nil {
+		t.Errorf("attachment %+v (%v), want its add stamp and referenced", g, err)
+	}
+}
+
 func TestSetDescriptionTracksReferences(t *testing.T) {
 	e, _ := attEnv(t)
 	it := mustCapture(t, e, "a")
@@ -113,8 +149,8 @@ func TestSetDescriptionTracksReferences(t *testing.T) {
 	if err != nil || got.Description == "" || unref() != nil {
 		t.Fatalf("referenced: %v %v", err, unref())
 	}
-	if g, _ := e.st.GetAttachment(a.ID); !g.UpdatedAt.Equal(e.now.UTC()) || g.UpdatedBy == "" {
-		t.Fatalf("stamp %+v", g)
+	if g, _ := e.st.GetAttachment(a.ID); !g.UpdatedAt.Equal(a.UpdatedAt) || g.UpdatedBy != a.UpdatedBy {
+		t.Fatalf("a reference change restamped the attachment: %+v", g)
 	}
 	e.now = e.now.Add(time.Hour)
 	if _, err := e.c.SetDescription(it.ID, "gone"); err != nil {

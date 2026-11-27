@@ -144,14 +144,13 @@ func (c *Core) SetDescription(id, md string) (model.Item, error) {
 			if referenced == (a.UnreferencedSince == nil) {
 				continue
 			}
-			if referenced {
-				a.UnreferencedSince = nil
-			} else {
+			var since *time.Time
+			if !referenced {
 				t := now
-				a.UnreferencedSince = &t
+				since = &t
 			}
-			a.UpdatedAt, a.UpdatedBy = nextStamp(now, a.UpdatedAt), c.st.DeviceID()
-			if err := c.st.PutAttachment(a); err != nil {
+			// UnreferencedSince is local: no new stamp, nothing to push.
+			if err := c.st.SetAttachmentUnreferenced(a.ID, since); err != nil {
 				return err
 			}
 		}
