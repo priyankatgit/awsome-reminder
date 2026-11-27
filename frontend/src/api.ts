@@ -2,12 +2,26 @@
 // import generated paths directly.
 import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
-import { Service } from "../bindings/awesome-reminder/internal/app/index.js";
+import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
+import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, Status } from "../bindings/awesome-reminder/internal/app/models.js";
 
-export type { Preview, Item, Status, TagGroup, View };
+export type { Preview, Item, Status, TagGroup, View, VoiceStatus };
+
+/** A binding call that can be cancelled (Esc while transcribing). */
+export type Cancellable<T> = Promise<T> & { cancel(): void };
+
+/** Base64 of 16-bit PCM in little-endian byte order (every platform we run on). */
+function pcmBase64(pcm: Int16Array): string {
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
 
 /** One card of the alert window (internal/app/alerts.go); tags never null. */
 export type AlertCard = Omit<GenAlertCard, "tags"> & { tags: string[] };
@@ -62,6 +76,14 @@ export const api = {
       Filters: [{ DisplayName: "Markdown (*.md)", Pattern: "*.md" }],
     });
   },
+  /** Voice dictation (internal/app/voice.go). */
+  voice: {
+    status: (): Promise<VoiceStatus> => VoiceService.Status(),
+    install: (): Promise<void> => VoiceService.Install(),
+    cancelInstall: (): Promise<void> => VoiceService.CancelInstall(),
+    warm: (): Cancellable<void> => VoiceService.Warm(),
+    transcribe: (pcm: Int16Array): Cancellable<string> => VoiceService.Transcribe(pcmBase64(pcm)),
+  },
   /** Closes the window this page runs in. */
   closeWindow: (): Promise<void> => Window.Close(),
 };
@@ -72,6 +94,7 @@ export const events = {
   alertsShow: "alerts:show",
   listFocus: "list:focus",
   captureOpen: "capture:open",
+  voiceStatus: "voice:status",
 } as const;
 
 const local = new Map<string, Set<(data: unknown) => void>>();
