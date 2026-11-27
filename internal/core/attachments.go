@@ -194,22 +194,27 @@ func (c *Core) SweepAttachments() (int, error) {
 		}
 		now := c.now().UTC()
 		dir := c.attachmentDir()
+		var errs []error
 		for _, a := range all {
 			if a.Deleted || !c.sweepable(a, now) {
 				continue
 			}
-			a.Deleted, a.UpdatedAt, a.UpdatedBy = true, now, c.st.DeviceID()
-			if err := c.st.PutAttachment(a); err != nil {
-				return err
-			}
-			n++
+			// Remove the file first; a failed removal leaves the row live so a
+			// later sweep retries it.
 			if dir != "" {
 				if err := os.Remove(filepath.Join(dir, a.ID+".webp")); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
+					errs = append(errs, err)
+					continue
 				}
 			}
+			a.Deleted, a.UpdatedAt, a.UpdatedBy = true, now, c.st.DeviceID()
+			if err := c.st.PutAttachment(a); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			n++
 		}
-		return nil
+		return errors.Join(errs...)
 	}()
 	c.opMu.Unlock()
 	if n > 0 {

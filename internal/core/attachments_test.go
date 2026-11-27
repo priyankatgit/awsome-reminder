@@ -126,11 +126,11 @@ func TestSetDescriptionTracksReferences(t *testing.T) {
 	}
 	first := *u
 	e.now = e.now.Add(time.Hour)
-	e.c.SetDescription(it.ID, "still gone")
+	mustDesc(t, e, it.ID, "still gone")
 	if u := unref(); u == nil || !u.Equal(first) {
 		t.Fatalf("since moved: %v", u)
 	}
-	e.c.SetDescription(it.ID, "att:"+a.ID)
+	mustDesc(t, e, it.ID, "att:"+a.ID)
 	if unref() != nil {
 		t.Fatal("re-add should clear")
 	}
@@ -150,7 +150,7 @@ func TestSweep(t *testing.T) {
 	it := mustCapture(t, e, "a")
 	old := add(it.ID) // unreferenced since base
 	ref := add(it.ID) // referenced, created long ago
-	e.c.SetDescription(it.ID, "att:"+ref)
+	mustDesc(t, e, it.ID, "att:"+ref)
 	e.now = base.Add(2 * day)
 	recent := add(it.ID) // unreferenced since base+2d
 
@@ -176,8 +176,11 @@ func TestSweep(t *testing.T) {
 func TestSweepDeletedItem(t *testing.T) {
 	e, dir := attEnv(t)
 	it := mustCapture(t, e, "a")
-	a, _ := e.c.AddAttachment(it.ID, tinyWebP(t))
-	e.c.SetDescription(it.ID, "att:"+a.ID)
+	a, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustDesc(t, e, it.ID, "att:"+a.ID)
 	if err := e.c.Delete(it.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +197,9 @@ func TestSweepDeletedItem(t *testing.T) {
 	if n, _ := e.c.SweepAttachments(); n != 0 || !fileExists(dir, a.ID) {
 		t.Fatalf("reopened item swept %d", n)
 	}
-	e.c.Delete(it.ID)
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
 	deletedAt = e.now
 	e.now = deletedAt.Add(31 * 24 * time.Hour)
 	if n, _ := e.c.SweepAttachments(); n != 1 || fileExists(dir, a.ID) {
@@ -205,7 +210,10 @@ func TestSweepDeletedItem(t *testing.T) {
 func TestAttachmentPathValidates(t *testing.T) {
 	e, dir := attEnv(t)
 	it := mustCapture(t, e, "a")
-	a, _ := e.c.AddAttachment(it.ID, tinyWebP(t))
+	a, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	p, err := e.c.AttachmentPath(a.ID)
 	if err != nil || p != filepath.Join(dir, a.ID+".webp") {
 		t.Fatalf("path %q %v", p, err)
@@ -218,7 +226,10 @@ func TestAttachmentPathValidates(t *testing.T) {
 	if _, err := e.c.AttachmentPath("01ARZ3NDEKTSV4RRFFQ69G5FAV"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown: %v", err)
 	}
-	a2, _ := e.c.AddAttachment(it.ID, tinyWebP(t))
+	a2, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	a2.Deleted = true
 	if err := e.st.PutAttachment(a2); err != nil {
 		t.Fatal(err)
@@ -229,5 +240,51 @@ func TestAttachmentPathValidates(t *testing.T) {
 	os.Remove(p)
 	if _, err := e.c.AttachmentPath(a.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing file: %v", err)
+	}
+}
+
+func mustDesc(t *testing.T, e *env, id, md string) {
+	t.Helper()
+	if _, err := e.c.SetDescription(id, md); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSweepRemoveFailureKeepsRowAndContinues(t *testing.T) {
+	e, dir := attEnv(t)
+	it := mustCapture(t, e, "a")
+	bad, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	good, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make bad's path a non-empty directory so os.Remove fails.
+	p := filepath.Join(dir, bad.ID+".webp")
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(p, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.now = e.now.Add(8 * 24 * time.Hour)
+	n, err := e.c.SweepAttachments()
+	if err == nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if g, _ := e.st.GetAttachment(bad.ID); g.Deleted {
+		t.Fatal("failed attachment was tombstoned")
+	}
+	if g, _ := e.st.GetAttachment(good.ID); !g.Deleted || fileExists(dir, good.ID) {
+		t.Fatal("other attachment not swept")
+	}
+	// a later sweep retries once the obstruction is gone
+	if err := os.RemoveAll(p); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.c.SweepAttachments(); err != nil || n != 1 {
+		t.Fatalf("retry n=%d err=%v", n, err)
 	}
 }
