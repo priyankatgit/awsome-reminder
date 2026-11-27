@@ -16,6 +16,7 @@ import (
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/parser"
 	"awesome-reminder/internal/recur"
+	"awesome-reminder/internal/reply"
 	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
@@ -142,6 +143,26 @@ func (c *Core) WithDue(input string, due time.Time) string {
 
 // Capture parses input and stores a new open item.
 func (c *Core) Capture(input string) (model.Item, error) {
+	return c.capture(input, nil)
+}
+
+// CaptureReply is Capture for a reply the user owes: the input is parsed the
+// same way, then the reply fields are set from m. A non-empty quote becomes
+// the description as a markdown block quote.
+func (c *Core) CaptureReply(input string, m reply.Meta) (model.Item, error) {
+	return c.capture(input, func(it *model.Item) {
+		it.Reply = true
+		it.OwedTo = strings.TrimSpace(m.OwedTo)
+		it.Source = strings.TrimSpace(m.Source)
+		if strings.TrimSpace(m.Quote) != "" {
+			it.Description = reply.QuoteMarkdown(m.Quote)
+		}
+	})
+}
+
+// capture parses input and stores a new open item, after adjust (if any)
+// has set extra fields on it.
+func (c *Core) capture(input string, adjust func(*model.Item)) (model.Item, error) {
 	r, _, err := c.parse(input)
 	if err != nil {
 		return model.Item{}, err
@@ -154,6 +175,9 @@ func (c *Core) Capture(input string) (model.Item, error) {
 		ID: ulid.Make().String(), Kind: kindFor(r.DueAt), Text: r.Text, Tags: withInbox(r.Tags),
 		DueAt: r.DueAt, TZ: c.loc.String(), RRule: r.RRule, Priority: r.Priority, Status: model.StatusOpen,
 		CreatedAt: now,
+	}
+	if adjust != nil {
+		adjust(&it)
 	}
 	if err := c.write(func() error { return c.save(&it, now) }); err != nil {
 		return model.Item{}, err
@@ -286,6 +310,9 @@ func (c *Core) DoneThrough(id string, through time.Time) (model.Item, error) {
 			return nil
 		}
 		it.Status = model.StatusDone
+		if it.Reply {
+			it.ReplyOutcome = model.ReplyReplied
+		}
 		return nil
 	})
 }
@@ -346,6 +373,7 @@ func (c *Core) advanceRecurringLocked(now time.Time) ([]string, time.Time, error
 func (c *Core) Reopen(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.Status, it.DoneAt, it.SnoozeUntil = model.StatusOpen, nil, nil
+		it.ReplyOutcome = ""
 		return nil
 	})
 	return err

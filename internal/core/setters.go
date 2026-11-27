@@ -34,6 +34,30 @@ func (c *Core) SetText(id, text string) (model.Item, error) {
 	})
 }
 
+// SetOwedTo sets who the reply is owed to. The value is trimmed; an empty one
+// is allowed and leaves the item a reply, listed under no person.
+func (c *Core) SetOwedTo(id, person string) (model.Item, error) {
+	person = strings.TrimSpace(person)
+	return c.mutate(id, func(it *model.Item, _ time.Time) error {
+		it.OwedTo = person
+		return nil
+	})
+}
+
+// DropReply closes a reply without answering it: done, with the outcome
+// "dropped". Any recurrence stops mattering since the item is closed.
+func (c *Core) DropReply(id string) (model.Item, error) {
+	return c.mutate(id, func(it *model.Item, now time.Time) error {
+		if !it.Reply {
+			return errors.New("Not a reply")
+		}
+		done := now
+		it.Status, it.DoneAt, it.SnoozeUntil = model.StatusDone, &done, nil
+		it.ReplyOutcome = model.ReplyDropped
+		return nil
+	})
+}
+
 // SetPriority sets the priority: "", "low", "medium" or "high".
 func (c *Core) SetPriority(id, p string) (model.Item, error) {
 	if !model.ValidPriority(p) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/reply"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
@@ -732,5 +733,149 @@ func TestSaveSettingsReplyScheduleIsShared(t *testing.T) {
 			t.Fatalf("%s: not stamped %v", name, got.SharedUpdatedAt)
 		}
 		before = got
+	}
+}
+
+func mustReply(t *testing.T, e *env, in, person string) model.Item {
+	t.Helper()
+	it, err := e.c.CaptureReply(in, reply.Meta{OwedTo: person, Source: "Teams"})
+	if err != nil {
+		t.Fatalf("capture reply %q: %v", in, err)
+	}
+	return it
+}
+
+func waitingPeople(v View) []string {
+	out := []string{}
+	for _, g := range v.Waiting {
+		out = append(out, g.Person)
+	}
+	return out
+}
+
+func TestCaptureReply(t *testing.T) {
+	e := newEnv(t)
+	n := 0
+	e.c.OnChange(func() { n++ })
+	it, err := e.c.CaptureReply("Reply to Priya: deploy? !high", reply.Meta{OwedTo: "Priya", Source: "Teams", Quote: "can you check\nthe deploy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !it.Reply || it.OwedTo != "Priya" || it.Source != "Teams" || it.Priority != "high" || it.Description != "> can you check\n> the deploy" {
+		t.Fatalf("got %+v", it)
+	}
+	if n != 1 {
+		t.Fatalf("onChange fired %d", n)
+	}
+	got, _ := e.st.Get(it.ID)
+	if !got.Reply || got.OwedTo != "Priya" {
+		t.Fatalf("stored %+v", got)
+	}
+	if _, err := e.c.CaptureReply("  ", reply.Meta{}); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("want ErrEmpty, got %v", err)
+	}
+}
+
+func TestReplyWithoutPersonStaysReply(t *testing.T) {
+	e := newEnv(t)
+	it := mustReply(t, e, "answer the thing", "")
+	v, _ := e.c.View()
+	if !reflect.DeepEqual(waitingPeople(v), []string{""}) {
+		t.Fatalf("waiting %v", waitingPeople(v))
+	}
+	for _, p := range []string{"Sam", ""} {
+		got, err := e.c.SetOwedTo(it.ID, "  "+p+" ")
+		if err != nil || !got.Reply || got.OwedTo != p {
+			t.Fatalf("SetOwedTo %q: %+v %v", p, got, err)
+		}
+		v, _ = e.c.View()
+		if len(v.Waiting) != 1 || v.Waiting[0].Person != p {
+			t.Fatalf("waiting %v", waitingPeople(v))
+		}
+	}
+}
+
+func TestViewWaitingGroups(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Date(2026, 11, 25, 10, 0, 0, 0, ny)
+	a := mustReply(t, e, "a", "Priya")
+	e.now = time.Date(2026, 11, 25, 9, 0, 0, 0, ny)
+	s := mustReply(t, e, "b", "Sam")
+	e.now = time.Date(2026, 11, 25, 11, 0, 0, 0, ny)
+	b := mustReply(t, e, "c", "priya")
+	e.now = time.Date(2026, 11, 25, 8, 0, 0, 0, ny)
+	n := mustReply(t, e, "d", "")
+	todo := mustCapture(t, e, "plain todo")
+	v, err := e.c.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Sam", "Priya", ""}; !reflect.DeepEqual(waitingPeople(v), want) {
+		t.Fatalf("groups %v want %v", waitingPeople(v), want)
+	}
+	if len(v.Waiting[0].Items) != 1 || v.Waiting[0].Items[0].ID != s.ID {
+		t.Fatalf("sam %+v", v.Waiting[0])
+	}
+	if ids := []string{v.Waiting[1].Items[0].ID, v.Waiting[1].Items[1].ID}; !reflect.DeepEqual(ids, []string{a.ID, b.ID}) {
+		t.Fatalf("priya order %v", ids)
+	}
+	if v.Waiting[2].Items[0].ID != n.ID {
+		t.Fatalf("empty group %+v", v.Waiting[2])
+	}
+	for _, g := range v.Tags {
+		for _, it := range g.Items {
+			if it.Reply {
+				t.Fatalf("reply %s in tag %s", it.ID, g.Tag)
+			}
+		}
+	}
+	if len(v.Tags) != 1 || v.Tags[0].Items[0].ID != todo.ID {
+		t.Fatalf("tags %+v", v.Tags)
+	}
+	if cnt, _ := e.c.PendingCount(); cnt != 5 {
+		t.Fatalf("pending count %d", cnt)
+	}
+	// Delete then Undelete restores to Waiting.
+	e.c.Delete(s.ID)
+	if v, _ = e.c.View(); len(v.Waiting) != 2 {
+		t.Fatalf("after delete %v", waitingPeople(v))
+	}
+	e.c.Undelete(s.ID)
+	if v, _ = e.c.View(); len(v.Waiting) != 3 {
+		t.Fatalf("after undelete %v", waitingPeople(v))
+	}
+}
+
+func TestViewWaitingNeverNil(t *testing.T) {
+	e := newEnv(t)
+	v, _ := e.c.View()
+	if v.Waiting == nil || len(v.Waiting) != 0 {
+		t.Fatalf("got %#v", v.Waiting)
+	}
+}
+
+func TestDoneAndDropReply(t *testing.T) {
+	e := newEnv(t)
+	r := mustReply(t, e, "x", "Priya")
+	got, err := e.c.Done(r.ID)
+	if err != nil || got.Status != model.StatusDone || got.ReplyOutcome != model.ReplyReplied {
+		t.Fatalf("done %+v %v", got, err)
+	}
+	if err := e.c.Reopen(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := e.st.Get(r.ID); st.ReplyOutcome != "" || st.Status != model.StatusOpen {
+		t.Fatalf("reopen %+v", st)
+	}
+	got, err = e.c.DropReply(r.ID)
+	if err != nil || got.Status != model.StatusDone || got.DoneAt == nil || got.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("drop %+v %v", got, err)
+	}
+	todo := mustCapture(t, e, "plain")
+	if _, err := e.c.DropReply(todo.ID); err == nil || err.Error() != "Not a reply" {
+		t.Fatalf("want Not a reply, got %v", err)
+	}
+	if got, _ := e.c.Done(todo.ID); got.ReplyOutcome != "" {
+		t.Fatalf("todo outcome %q", got.ReplyOutcome)
 	}
 }
