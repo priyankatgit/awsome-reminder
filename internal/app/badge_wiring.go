@@ -128,6 +128,11 @@ func (w *badgeWiring) refresh(tb taskbar) {
 		c, err := w.d.Count()
 		if err != nil {
 			log.Printf("badge: pending count: %v", err)
+			if !w.iconsSet {
+				// Nothing shown yet: still show the name and any hotkey
+				// error.
+				w.d.Tray.SetTooltip(pendingTooltip(w.shown, w.d.HotkeyErr()))
+			}
 			return
 		}
 		n = c

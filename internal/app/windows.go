@@ -69,6 +69,9 @@ type wailsWindows struct {
 	widen     listWidener
 	settings  *onDemand[*application.WebviewWindow]
 	alert     *alertPopup
+	// lastSettings is true while the settings window was focused more
+	// recently than the list (Activate brings it back).
+	lastSettings atomic.Bool
 
 	// Set by Run before the app starts.
 	onAlertsClosed   func() // the user closed the alert window (Alt+F4)
@@ -248,6 +251,14 @@ func (o *onDemand[W]) Get() (w W, created bool) {
 	return o.cur, true
 }
 
+// Current reports whether a window exists.
+func (o *onDemand[W]) Current() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var zero W
+	return o.cur != zero
+}
+
 // Drop forgets w if it is still the current window.
 func (o *onDemand[W]) Drop(w W) {
 	o.mu.Lock()
@@ -374,6 +385,9 @@ func (w *wailsWindows) newList() *application.WebviewWindow {
 		// The native taskbar window owns the app's one button.
 		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
 	})
+	win.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
+		w.lastSettings.Store(false)
+	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.list.Drop(win)
 		w.widen.Reset()
@@ -398,8 +412,12 @@ func (w *wailsWindows) newSettings() *application.WebviewWindow {
 		// The native taskbar window owns the app's one button.
 		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
 	})
+	win.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
+		w.lastSettings.Store(true)
+	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.settings.Drop(win)
+		w.lastSettings.Store(false)
 		log.Printf("settings: closed")
 		if w.onSettingsClosed != nil {
 			w.onSettingsClosed()
@@ -493,6 +511,19 @@ func (w *wailsWindows) OpenList(focusItemID string) {
 		w.app.Event.Emit(EventListFocus, focusItemID)
 	}
 	log.Printf("list: focused (focus %q)", focusItemID)
+}
+
+// Activate brings back the app window used last: Settings if it is open and
+// was focused after the list, else the list. The list and Settings windows
+// have no taskbar button or Alt+Tab entry of their own (HiddenOnTaskbar
+// makes them tool windows), so the native taskbar window's button and its
+// Alt+Tab entry come here.
+func (w *wailsWindows) Activate() {
+	if w.lastSettings.Load() && w.settings.Current() {
+		w.OpenSettings()
+		return
+	}
+	w.OpenList("")
 }
 
 // TakePendingFocus returns the item the list window should scroll to and

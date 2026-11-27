@@ -450,7 +450,9 @@ func (t *winTaskbar) applyCount(hwnd windows.HWND) {
 	// The taskbar keeps its own copy, so the icon is freed right away.
 	defer procDestroyIcon.Call(uintptr(icon))
 	desc, _ := windows.UTF16PtrFromString(fmt.Sprintf("%d pending", n))
-	if hr := comCall(t.list, vtSetOverlayIcon, uintptr(hwnd), uintptr(icon), uintptr(unsafe.Pointer(desc))); hr != 0 {
+	hr := comCall(t.list, vtSetOverlayIcon, uintptr(hwnd), uintptr(icon), uintptr(unsafe.Pointer(desc)))
+	runtime.KeepAlive(desc) // comCall's uintptr args do not keep it alive
+	if hr != 0 {
 		log.Printf("taskbar: SetOverlayIcon: 0x%08x", uint32(hr))
 	}
 }
@@ -480,8 +482,10 @@ func hiconFromImage(img image.Image) (windows.Handle, error) {
 		}
 	}
 	// A 32-bit colour bitmap carries its own alpha; the mask is unused but
-	// required.
-	mask, _, err := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 1, 0)
+	// required. It is all zeros (opaque), not left undefined: rows are
+	// WORD-aligned.
+	maskBits := make([]byte, (w+15)/16*2*h)
+	mask, _, err := procCreateBitmap.Call(uintptr(w), uintptr(h), 1, 1, uintptr(unsafe.Pointer(&maskBits[0])))
 	if mask == 0 {
 		return 0, fmt.Errorf("CreateBitmap: %w", err)
 	}

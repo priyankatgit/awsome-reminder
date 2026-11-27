@@ -260,3 +260,28 @@ func TestBadgeWiringStopWithoutStart(t *testing.T) {
 	nilWiring.StatusChanged()
 	nilWiring.Stop()
 }
+
+// A count that fails from the start still shows the name and a hotkey error.
+func TestBadgeWiringCountErrorAtStartSetsTooltip(t *testing.T) {
+	tray := &fakeBadgeTray{}
+	w := newBadgeWiring(badgeDeps{
+		Count:     func() (int, error) { return 0, errors.New("closed") },
+		Show:      func() bool { return true },
+		HotkeyErr: func() string { return "taken" },
+		Tray:      tray,
+		Debounce:  time.Millisecond,
+	})
+	w.Start(nil)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, tip, _ := tray.state(); tip == "Awesome Reminder — hotkey error: taken" {
+			break
+		}
+		if time.Now().After(deadline) {
+			_, tip, _ := tray.state()
+			t.Fatalf("tooltip %q", tip)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	w.Stop()
+}

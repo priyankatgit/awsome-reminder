@@ -233,7 +233,12 @@ func Run(opts Options) error {
 			}
 			syncAutostart(s.Autostart)
 		}
-		badges.Start(newTaskbar(func() { launches.Do(func() { win.OpenList("") }) }))
+		badges.Start(newTaskbar(func() {
+			if app.Context().Err() != nil {
+				return // shutting down: the windows are being torn down
+			}
+			launches.Do(win.Activate)
+		}))
 		sweepAttachments(c)
 		sched.Start(ctx)
 		// Bring the export up to date with the database at startup (it may
