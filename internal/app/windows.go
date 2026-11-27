@@ -66,6 +66,7 @@ type wailsWindows struct {
 	size      *heightKeeper
 	list      *onDemand[*application.WebviewWindow]
 	listFocus focusSlot
+	widen     listWidener
 	settings  *onDemand[*application.WebviewWindow]
 	alert     *alertPopup
 
@@ -372,6 +373,7 @@ func (w *wailsWindows) newList() *application.WebviewWindow {
 	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.list.Drop(win)
+		w.widen.Reset()
 		log.Printf("list: closed")
 	})
 	return win

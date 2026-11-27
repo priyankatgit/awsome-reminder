@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"time"
@@ -69,6 +70,7 @@ func Run(opts Options) error {
 	defer st.Close()
 
 	c := core.New(st, time.Now, time.Local)
+	c.SetAttachmentDir(filepath.Join(filepath.Dir(dbPath), "attachments")) // DBPath lives in DataDir
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -81,7 +83,10 @@ func Run(opts Options) error {
 		Name:        appName,
 		Description: "Hotkey quick-capture to-dos and reminders",
 		Logger:      opts.Logger,
-		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(opts.Assets)},
+		Assets: application.AssetOptions{
+			Handler:    application.AssetFileServerFS(opts.Assets),
+			Middleware: attMiddleware(c),
+		},
 		Mac: application.MacOptions{
 			// Tray-only app: keep running with no windows.
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
@@ -151,6 +156,7 @@ func Run(opts Options) error {
 		Export:        exp.Trigger,
 		StatusChanged: func() { tray.SetTooltip(tooltip(svc.Status())) },
 		Emit:          func(name string, data any) { emit(name, data) },
+		OpenURL:       app.Browser.OpenURL,
 	})
 	app.RegisterService(application.NewService(svc))
 	registerVoice(app)
@@ -182,6 +188,7 @@ func Run(opts Options) error {
 			syncAutostart(s.Autostart)
 		}
 		tray.SetTooltip(tooltip(svc.Status()))
+		sweepAttachments(c)
 		sched.Start(ctx)
 		switch args := os.Args[1:]; {
 		case slices.Contains(args, captureFlag):

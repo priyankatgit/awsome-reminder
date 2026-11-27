@@ -7,5 +7,6 @@ export {
 } from "./models.js";
 
 export type {
+    Attachment,
     Item
 } from "./models.js";

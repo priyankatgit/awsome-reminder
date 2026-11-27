@@ -25,6 +25,13 @@ import * as settings$0 from "../settings/models.js";
 import * as $models from "./models.js";
 
 /**
+ * AddAttachment stores a WebP image for an item.
+ */
+export function AddAttachment(itemID: string, data: string | null): $CancellablePromise<model$0.Attachment> {
+    return $Call.ByID(1380993410, itemID, data);
+}
+
+/**
  * Capture stores a new item parsed from input.
  */
 export function Capture(input: string): $CancellablePromise<model$0.Item> {
@@ -82,6 +89,13 @@ export function HideCapture(): $CancellablePromise<void> {
 }
 
 /**
+ * ItemDetail returns an item with its attachments.
+ */
+export function ItemDetail(id: string): $CancellablePromise<core$0.Detail> {
+    return $Call.ByID(2934582162, id);
+}
+
+/**
  * OpenList shows the list window, focusing focusItemID if not "".
  */
 export function OpenList(focusItemID: string): $CancellablePromise<void> {
@@ -93,6 +107,14 @@ export function OpenList(focusItemID: string): $CancellablePromise<void> {
  */
 export function OpenSettings(): $CancellablePromise<void> {
     return $Call.ByID(3910173393);
+}
+
+/**
+ * OpenURL opens a link in the system browser. Only http, https and mailto
+ * links are allowed.
+ */
+export function OpenURL(url: string): $CancellablePromise<void> {
+    return $Call.ByID(4655173, url);
 }
 
 /**
@@ -133,6 +155,13 @@ export function ResizeCapture(height: number): $CancellablePromise<void> {
 }
 
 /**
+ * RestoreListWidth undoes WidenList.
+ */
+export function RestoreListWidth(): $CancellablePromise<void> {
+    return $Call.ByID(4257031998);
+}
+
+/**
  * SaveSettings validates and saves st, then applies it: re-registers the
  * hotkey, sets autostart and triggers the export. Invalid settings return an
  * error and change nothing. If the hotkey or autostart cannot be applied the
@@ -144,12 +173,54 @@ export function SaveSettings(st: settings$0.Settings): $CancellablePromise<void>
 }
 
 /**
+ * SetDescription saves an item's Markdown description.
+ */
+export function SetDescription(id: string, md: string): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(257798798, id, md);
+}
+
+/**
+ * SetDue sets or (nil) clears an item's due time.
+ */
+export function SetDue(id: string, due: string | null): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(4207614494, id, due);
+}
+
+/**
  * SetHotkeyRecording releases the global hotkey while the settings window
  * records a new combo (so pressing the current combo reaches the recorder
  * instead of opening the capture box) and registers it again afterwards.
  */
 export function SetHotkeyRecording(on: boolean): $CancellablePromise<void> {
     return $Call.ByID(4270168469, on);
+}
+
+/**
+ * SetPriority sets an item's priority: "", "low", "medium" or "high".
+ */
+export function SetPriority(id: string, p: string): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(2752256460, id, p);
+}
+
+/**
+ * SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or "weekly".
+ */
+export function SetRepeat(id: string, repeat: string): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(1226512795, id, repeat);
+}
+
+/**
+ * SetTags replaces an item's tags.
+ */
+export function SetTags(id: string, tags: string[] | null): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(578381677, id, tags);
+}
+
+/**
+ * SetText replaces an item's text verbatim (no re-parse).
+ */
+export function SetText(id: string, text: string): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(3219633875, id, text);
 }
 
 /**
@@ -195,6 +266,13 @@ export function Update(id: string, input: string): $CancellablePromise<model$0.I
  */
 export function View(): $CancellablePromise<core$0.View> {
     return $Call.ByID(2650586165);
+}
+
+/**
+ * WidenList widens the list window for the detail panel.
+ */
+export function WidenList(minWidth: number): $CancellablePromise<void> {
+    return $Call.ByID(2080168671, minWidth);
 }
 
 /**

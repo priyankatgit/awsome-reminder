@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"awesome-reminder/internal/core"
@@ -27,6 +28,10 @@ type Windows interface {
 	ResizeAlerts(height int)
 	// DismissAlerts hides the alert window.
 	DismissAlerts()
+	// WidenList widens the open list window to minWidth (capped to the
+	// screen) while the detail panel is open; RestoreListWidth undoes it.
+	WidenList(minWidth int)
+	RestoreListWidth()
 }
 
 // Hotkey is the subset of *hotkey.Manager the Service uses.
@@ -50,6 +55,8 @@ type Deps struct {
 	StatusChanged func()
 	// Emit sends an event to the frontend (EventAlertsShow).
 	Emit func(name string, data any)
+	// OpenURL opens a link in the system browser (OpenURL binding).
+	OpenURL func(url string) error
 }
 
 // Status is app health shown in the tray tooltip and the settings window.
@@ -198,4 +205,60 @@ func (s *Service) SetHotkeyRecording(on bool) {
 	if s.d.StatusChanged != nil {
 		s.d.StatusChanged()
 	}
+}
+
+// SetText replaces an item's text verbatim (no re-parse).
+func (s *Service) SetText(id, text string) (model.Item, error) { return s.d.Core.SetText(id, text) }
+
+// SetPriority sets an item's priority: "", "low", "medium" or "high".
+func (s *Service) SetPriority(id, p string) (model.Item, error) {
+	return s.d.Core.SetPriority(id, p)
+}
+
+// SetDue sets or (nil) clears an item's due time.
+func (s *Service) SetDue(id string, due *time.Time) (model.Item, error) {
+	return s.d.Core.SetDue(id, due)
+}
+
+// SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or "weekly".
+func (s *Service) SetRepeat(id, repeat string) (model.Item, error) {
+	return s.d.Core.SetRepeat(id, repeat)
+}
+
+// SetTags replaces an item's tags.
+func (s *Service) SetTags(id string, tags []string) (model.Item, error) {
+	return s.d.Core.SetTags(id, tags)
+}
+
+// SetDescription saves an item's Markdown description.
+func (s *Service) SetDescription(id, md string) (model.Item, error) {
+	return s.d.Core.SetDescription(id, md)
+}
+
+// AddAttachment stores a WebP image for an item.
+func (s *Service) AddAttachment(itemID string, data []byte) (model.Attachment, error) {
+	return s.d.Core.AddAttachment(itemID, data)
+}
+
+// ItemDetail returns an item with its attachments.
+func (s *Service) ItemDetail(id string) (core.Detail, error) { return s.d.Core.ItemDetail(id) }
+
+// WidenList widens the list window for the detail panel.
+func (s *Service) WidenList(minWidth int) { s.d.Windows.WidenList(minWidth) }
+
+// RestoreListWidth undoes WidenList.
+func (s *Service) RestoreListWidth() { s.d.Windows.RestoreListWidth() }
+
+// OpenURL opens a link in the system browser. Only http, https and mailto
+// links are allowed.
+func (s *Service) OpenURL(url string) error {
+	if !allowedLink(url) {
+		return errors.New("unsupported link")
+	}
+	return s.d.OpenURL(url)
+}
+
+func allowedLink(url string) bool {
+	l := strings.ToLower(url)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "mailto:")
 }
