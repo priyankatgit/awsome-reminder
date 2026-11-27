@@ -20,6 +20,23 @@ const (
 	StatusDeleted Status = "deleted"
 )
 
+// Priority values. PriorityNone is the empty string.
+const (
+	PriorityNone   = ""
+	PriorityLow    = "low"
+	PriorityMedium = "medium"
+	PriorityHigh   = "high"
+)
+
+// ValidPriority reports whether p is one of the allowed priority values.
+func ValidPriority(p string) bool {
+	switch p {
+	case PriorityNone, PriorityLow, PriorityMedium, PriorityHigh:
+		return true
+	}
+	return false
+}
+
 // Item is a captured todo or reminder.
 type Item struct {
 	ID          string          `json:"id"` // ULID
@@ -36,4 +53,22 @@ type Item struct {
 	CreatedAt   time.Time       `json:"createdAt"`
 	UpdatedAt   time.Time       `json:"updatedAt"`
 	UpdatedBy   string          `json:"updatedBy"`
+	Priority    string          `json:"priority"`    // "", low, medium, high
+	Description string          `json:"description"` // Markdown
+}
+
+// Attachment is an image attached to an item's description.
+type Attachment struct {
+	ID                string     `json:"id"`
+	ItemID            string     `json:"itemId"`
+	Mime              string     `json:"mime"`
+	SHA256            string     `json:"sha256"`
+	Width             int        `json:"width"`
+	Height            int        `json:"height"`
+	Bytes             int        `json:"bytes"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+	UpdatedBy         string     `json:"updatedBy"`
+	Deleted           bool       `json:"deleted"`
+	UnreferencedSince *time.Time `json:"unreferencedSince"`
 }

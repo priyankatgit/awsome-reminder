@@ -46,6 +46,16 @@ export interface Item {
     "createdAt": string;
     "updatedAt": string;
     "updatedBy": string;
+
+    /**
+     * "", low, medium, high
+     */
+    "priority": string;
+
+    /**
+     * Markdown
+     */
+    "description": string;
 }
 
 /**
