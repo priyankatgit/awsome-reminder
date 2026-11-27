@@ -7,6 +7,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/wailsapp/wails/v3 v3.1.0
 	golang.design/x/hotkey v0.6.4
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.63.0
 )

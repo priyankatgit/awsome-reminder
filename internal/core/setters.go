@@ -46,7 +46,8 @@ func (c *Core) SetPriority(id, p string) (model.Item, error) {
 }
 
 // SetDue sets the due time and clears any snooze. A recurring item keeps its
-// rule, with the new due time as the series anchor. nil makes the item a
+// rule, with the new due time as the series anchor; a single-day weekly rule
+// re-anchors to the weekday of the new due time. nil makes the item a
 // to-do and clears its recurrence.
 func (c *Core) SetDue(id string, due *time.Time) (model.Item, error) {
 	var d *time.Time

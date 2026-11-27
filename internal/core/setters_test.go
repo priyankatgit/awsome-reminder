@@ -220,7 +220,9 @@ func TestSetDueReanchorsSingleDayWeekly(t *testing.T) {
 	// multi-day weekly is left alone
 	e := newEnv(t)
 	it := mustCapture(t, e, "tomorrow 9am standup")
-	e.c.mutate(it.ID, func(i *model.Item, _ time.Time) error { i.RRule = "FREQ=WEEKLY;BYDAY=MO,WE"; return nil })
+	if _, err := e.c.mutate(it.ID, func(i *model.Item, _ time.Time) error { i.RRule = "FREQ=WEEKLY;BYDAY=MO,WE"; return nil }); err != nil {
+		t.Fatal(err)
+	}
 	got, err := e.c.SetDue(it.ID, &thu)
 	if err != nil || got.RRule != "FREQ=WEEKLY;BYDAY=MO,WE" {
 		t.Fatalf("rrule %q err %v", got.RRule, err)

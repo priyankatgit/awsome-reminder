@@ -34,6 +34,7 @@ type Core struct {
 
 	mu       sync.Mutex
 	onChange func()
+	attDir   string // guarded by mu
 }
 
 // New creates a Core. loc is the user's local zone, used to parse input and
