@@ -2,12 +2,14 @@ package voice
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -149,7 +151,7 @@ func TestWakeInstallThenEnabled(t *testing.T) {
 	if kw, _ := os.ReadFile(filepath.Join(mdir, "wake_keywords.txt")); string(kw) != string(wakeKeywords) {
 		t.Error("keywords file differs from the embedded one")
 	}
-	if !w.helperRunning() {
+	if !waitFor(t, 5*time.Second, w.helperRunning) {
 		t.Error("helper should be running")
 	}
 	sawInstalling := false
@@ -169,7 +171,7 @@ func TestWakeInstallThenEnabled(t *testing.T) {
 	if w.helperRunning() || w.Status().State != "off" {
 		t.Errorf("after off: %+v running=%v", w.Status(), w.helperRunning())
 	}
-	if err := w.SetEnabled(true); err != nil || !w.helperRunning() {
+	if err := w.SetEnabled(true); err != nil || !waitFor(t, 5*time.Second, w.helperRunning) {
 		t.Errorf("re-enable: %v running=%v", err, w.helperRunning())
 	}
 	w.Close()
@@ -283,5 +285,469 @@ func TestWakeCloseDuringInstallStartsNoHelper(t *testing.T) {
 	_ = w.SetEnabled(true)
 	if w.helperRunning() {
 		t.Error("helper started by SetEnabled after Close")
+	}
+}
+
+// --- helper supervision (Task 4) ---
+
+func TestParseDetection(t *testing.T) {
+	other := strings.Replace(fakeDetectionJSON, "HEY_AWESOME", "OTHER", 1)
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"0:" + fakeDetectionJSON, true},
+		{"\r3:" + fakeDetectionJSON, true},
+		{"0:" + fakeDetectionJSON + "\r\n", true},
+		{fakeDetectionJSON, true},
+		{"0:" + other, false},
+		{"Invalid device index: 3", false},
+		{`0:{"start_time":0.00, "keyword": "HEY_AWESOME"`, false},
+		{"", false},
+	} {
+		if got := parseDetection(c.in); got != c.want {
+			t.Errorf("parseDetection(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestScanHelperOutput(t *testing.T) {
+	// Linux form through a pipe: the detection must arrive without a
+	// trailing newline, before EOF.
+	pr, pw := io.Pipe()
+	detected := make(chan string, 8)
+	var linesMu sync.Mutex
+	var lines []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanHelperOutput(pr, func(k string) { detected <- k }, func(l string) {
+			linesMu.Lock()
+			lines = append(lines, l)
+			linesMu.Unlock()
+		})
+	}()
+	write := func(s string) {
+		t.Helper()
+		if _, err := pw.Write([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantDetect := func(what string) {
+		t.Helper()
+		select {
+		case k := <-detected:
+			if k != "HEY_AWESOME" {
+				t.Errorf("%s: keyword %q", what, k)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: no detection before end of stream", what)
+		}
+	}
+	write(fakeKWSStartup)
+	write("\r0:" + fakeDetectionJSON)
+	wantDetect("first")
+	write("\n\r1:" + fakeDetectionJSON)
+	wantDetect("second")
+	write("\nInvalid device index: 3\r\n")
+	pw.Close()
+	<-done
+	select {
+	case k := <-detected:
+		t.Errorf("extra detection %q", k)
+	default:
+	}
+	want := []string{}
+	for _, l := range strings.Split(fakeKWSStartup, "\n") {
+		if l != "" {
+			want = append(want, l)
+		}
+	}
+	want = append(want, "Invalid device index: 3")
+	linesMu.Lock()
+	if strings.Join(lines, "|") != strings.Join(want, "|") {
+		t.Errorf("lines =\n%q\nwant\n%q", lines, want)
+	}
+	linesMu.Unlock()
+
+	// Windows form: one detection per line.
+	var got, other []string
+	scanHelperOutput(strings.NewReader("0:"+fakeDetectionJSON+"\r\n1:"+fakeDetectionJSON+"\n"),
+		func(k string) { got = append(got, k) }, func(l string) { other = append(other, l) })
+	if len(got) != 2 || got[0] != "HEY_AWESOME" || len(other) != 0 {
+		t.Errorf("windows form: detections %q, lines %q", got, other)
+	}
+
+	// Another keyword is not a HEY_AWESOME detection.
+	got = nil
+	scanHelperOutput(strings.NewReader("0:"+strings.Replace(fakeDetectionJSON, "HEY_AWESOME", "OTHER", 1)+"\n"),
+		func(k string) { got = append(got, k) }, func(string) {})
+	for _, k := range got {
+		if k == "HEY_AWESOME" {
+			t.Error("other keyword reported as HEY_AWESOME")
+		}
+	}
+}
+
+func TestWakeHelperCommand(t *testing.T) {
+	want := []string{
+		"--tokens=/m/tokens.txt",
+		"--encoder=/m/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		"--decoder=/m/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		"--joiner=/m/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		"--keywords-file=/m/wake_keywords.txt",
+		"--num-threads=1",
+		"--provider=cpu",
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		bin, args := helperCommand(goos, "/app/awesome", "/e", "/m", "/m/wake_keywords.txt")
+		if bin != "/e/sherpa-onnx-keyword-spotter-microphone" || strings.Join(args, " ") != strings.Join(want, " ") {
+			t.Errorf("%s: %s %q", goos, bin, args)
+		}
+	}
+	e, md := `C:\v\wake-v2.0.3`, `C:\v\models\kws`
+	bin, args := helperCommand("windows", `C:\app\awesome.exe`, e, md, md+`\wake_keywords.txt`)
+	wantWin := []string{
+		"--wake-helper", "--lib-dir", e,
+		`--encoder=C:\v\models\kws\encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+		`--decoder=C:\v\models\kws\decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+		`--joiner=C:\v\models\kws\joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+		`--tokens=C:\v\models\kws\tokens.txt`,
+		`--keywords-file=C:\v\models\kws\wake_keywords.txt`,
+		"--num-threads=1",
+	}
+	if bin != `C:\app\awesome.exe` || strings.Join(args, " ") != strings.Join(wantWin, " ") {
+		t.Errorf("windows: %s %q", bin, args)
+	}
+}
+
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+// installWakeFiles puts a complete (fake) engine and model in dir.
+func installWakeFiles(t *testing.T, dir string) {
+	t.Helper()
+	eng := filepath.Join(dir, "wake-"+WakeRelease)
+	mdir := filepath.Join(dir, "models", "kws-gigaspeech-3.3M")
+	for _, d := range []string{eng, mdir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{filepath.Join(eng, ".ok"): WakeRelease, filepath.Join(mdir, "wake_keywords.txt"): string(wakeKeywords)}
+	for _, f := range wakeModelFiles {
+		files[filepath.Join(mdir, f)] = "x"
+	}
+	for p, s := range files {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// newSupFixture is an installed wake word whose helper is the fake in the
+// given mode, with millisecond backoff and a fake wall clock. The counter
+// counts spawn attempts (Bin is asked once per attempt).
+func newSupFixture(t *testing.T, mode string) (*wakeFixture, *fakeClock, *atomic.Int32) {
+	t.Helper()
+	f := newWakeFixture(t, nil)
+	t.Setenv("FAKE_KWS", mode)
+	spawns := new(atomic.Int32)
+	f.cfg.Bin = func(string) string { spawns.Add(1); return os.Args[0] }
+	clk := &fakeClock{t: time.Date(2026, 11, 28, 9, 0, 0, 0, time.UTC)}
+	f.cfg.Now = clk.Now
+	f.cfg.Backoff = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 40 * time.Millisecond}
+	f.cfg.Tick = 20 * time.Millisecond
+	installWakeFiles(t, f.cfg.Dir)
+	return f, clk, spawns
+}
+
+// waitProc waits for a running helper whose PID is not notPID.
+func waitProc(t *testing.T, w *Wake, notPID int) *wakeProc {
+	t.Helper()
+	var p *wakeProc
+	ok := waitFor(t, 5*time.Second, func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		p = nil
+		if w.sup != nil && w.sup.proc != nil && w.sup.proc.cmd.Process.Pid != notPID {
+			p = w.sup.proc
+		}
+		return p != nil
+	})
+	if !ok {
+		t.Fatalf("no helper running (status %+v)", w.Status())
+	}
+	return p
+}
+
+func gaveUp(w *Wake) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sup != nil && w.sup.gaveUp
+}
+
+// say makes the fake "detect" helper report one detection.
+func say(t *testing.T, p *wakeProc) {
+	t.Helper()
+	if _, err := p.stdin.Write([]byte("hey awesome\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// exited reports whether the helper process has exited and been reaped.
+func exited(p *wakeProc) bool {
+	select {
+	case <-p.done:
+		return p.cmd.ProcessState != nil
+	default:
+		return false
+	}
+}
+
+func TestWakeReportsDetection(t *testing.T) {
+	f, clk, _ := newSupFixture(t, "detect")
+	var wakes atomic.Int32
+	f.cfg.OnWake = func() { wakes.Add(1) }
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	if st := w.Status(); st.State != "starting" {
+		t.Errorf("state before 2 s = %q, want starting", st.State)
+	}
+	say(t, p)
+	if !waitFor(t, 5*time.Second, func() bool { return wakes.Load() == 1 }) {
+		t.Fatalf("OnWake calls = %d, want 1", wakes.Load())
+	}
+	clk.Advance(2500 * time.Millisecond)
+	st := waitWake(t, w, func(s WakeStatus) bool { return s.State == "listening" })
+	if st.Error != "" {
+		t.Errorf("error = %q", st.Error)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := wakes.Load(); n != 1 {
+		t.Errorf("OnWake calls = %d, want 1", n)
+	}
+}
+
+func TestWakeSuppressed(t *testing.T) {
+	f, _, _ := newSupFixture(t, "detect")
+	var wakes, asked atomic.Int32
+	f.cfg.OnWake = func() { wakes.Add(1) }
+	f.cfg.Suppress = func() bool { asked.Add(1); return true }
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	say(t, waitProc(t, w, 0))
+	if !waitFor(t, 5*time.Second, func() bool { return asked.Load() == 1 }) {
+		t.Fatal("Suppress was never asked")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := wakes.Load(); n != 0 {
+		t.Errorf("OnWake calls = %d, want 0", n)
+	}
+}
+
+func TestWakeCooldowns(t *testing.T) {
+	f, clk, _ := newSupFixture(t, "detect")
+	// Large steps of the fake clock would look like a resume between 20 ms
+	// ticks; this test is about cooldowns only.
+	f.cfg.Tick = time.Hour
+	var wakes, seen atomic.Int32
+	f.cfg.OnWake = func() { wakes.Add(1) }
+	f.cfg.Suppress = func() bool { seen.Add(1); return false } // counts detections
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	detect := func(n, wantWakes int32) {
+		t.Helper()
+		say(t, p)
+		if !waitFor(t, 5*time.Second, func() bool { return seen.Load() == n }) {
+			t.Fatalf("detection %d never seen", n)
+		}
+		time.Sleep(30 * time.Millisecond)
+		if got := wakes.Load(); got != wantWakes {
+			t.Fatalf("after detection %d: OnWake calls = %d, want %d", n, got, wantWakes)
+		}
+	}
+	detect(1, 1)
+	clk.Advance(time.Second)
+	detect(2, 1) // 1 s after the last wake
+	clk.Advance(5 * time.Second)
+	w.SessionEnded()
+	clk.Advance(time.Second)
+	detect(3, 1) // 1 s after a session ended
+	clk.Advance(3 * time.Second)
+	detect(4, 2) // 4 s after it
+}
+
+func TestWakeRestartsWithBackoff(t *testing.T) {
+	f, clk, _ := newSupFixture(t, "idle")
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	killed := time.Now()
+	if err := p.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	p2 := waitProc(t, w, p.cmd.Process.Pid)
+	if d := time.Since(killed); d < 10*time.Millisecond {
+		t.Errorf("restarted after %v, want the 10 ms backoff first", d)
+	}
+	if !exited(p) {
+		t.Error("old helper not reaped")
+	}
+	clk.Advance(2500 * time.Millisecond)
+	waitWake(t, w, func(s WakeStatus) bool { return s.State == "listening" && s.Error == "" })
+	if !w.helperRunning() || exited(p2) {
+		t.Error("restarted helper should be running")
+	}
+}
+
+func TestWakeGivesUpAfterThreeExits(t *testing.T) {
+	f, _, spawns := newSupFixture(t, "die")
+	t.Setenv("FAKE_STDERR", "PortAudio error: Invalid device")
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return gaveUp(w) }) {
+		t.Fatalf("never gave up; spawns %d, status %+v", spawns.Load(), w.Status())
+	}
+	st := w.Status()
+	if st.State != "error" || !strings.Contains(st.Error, "Invalid device") || !st.Enabled {
+		t.Errorf("status = %+v", st)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := spawns.Load(); n != 3 {
+		t.Errorf("spawned %d helpers, want 3", n)
+	}
+	if w.helperRunning() {
+		t.Error("no helper after giving up")
+	}
+}
+
+func TestWakeEnableStartFailure(t *testing.T) {
+	f, _, _ := newSupFixture(t, "idle")
+	var bin atomic.Value
+	var spawns atomic.Int32
+	bin.Store(filepath.Join(t.TempDir(), "missing-helper"))
+	f.cfg.Bin = func(string) string { spawns.Add(1); return bin.Load().(string) }
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatalf("SetEnabled(true) = %v, want nil (failure goes to the state)", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(f.cfg.Dir, "wake.json"))
+	if !strings.Contains(string(b), `"enabled":true`) {
+		t.Errorf("wake.json = %s", b)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return gaveUp(w) }) {
+		t.Fatalf("never gave up: %+v", w.Status())
+	}
+	if st := w.Status(); st.State != "error" || !strings.Contains(st.Error, "Couldn't start the wake word") {
+		t.Errorf("status = %+v", st)
+	}
+	if n := spawns.Load(); n != 3 {
+		t.Errorf("%d start attempts, want 3", n)
+	}
+	// Off and on again starts afresh.
+	bin.Store(os.Args[0])
+	if err := w.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	waitProc(t, w, 0)
+	if st := w.Status(); st.State != "starting" || st.Error != "" {
+		t.Errorf("after off/on: %+v", st)
+	}
+	if n := spawns.Load(); n != 4 {
+		t.Errorf("%d start attempts, want 4", n)
+	}
+}
+
+func TestWakeOffKillsHelper(t *testing.T) {
+	f, _, _ := newSupFixture(t, "idle")
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	if err := w.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if !exited(p) {
+		t.Error("helper still running when SetEnabled(false) returned")
+	}
+	if st := w.Status(); st.State != "off" || w.helperRunning() {
+		t.Errorf("status = %+v running=%v", st, w.helperRunning())
+	}
+}
+
+func TestWakeRestartsAfterClockJump(t *testing.T) {
+	f, clk, spawns := newSupFixture(t, "idle")
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	clk.Advance(10 * time.Second)
+	waitProc(t, w, p.cmd.Process.Pid)
+	if !exited(p) {
+		t.Error("old helper still running")
+	}
+	if n := spawns.Load(); n != 2 {
+		t.Errorf("spawned %d, want 2", n)
+	}
+	if st := w.Status(); st.State == "error" {
+		t.Errorf("a resume restart is not a failure: %+v", st)
+	}
+}
+
+func TestWakeCloseKillsHelper(t *testing.T) {
+	f, _, spawns := newSupFixture(t, "idle")
+	w := NewWake(f.cfg)
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	p := waitProc(t, w, 0)
+	w.Close()
+	if !exited(p) || w.helperRunning() {
+		t.Error("Close must kill and reap the helper")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := spawns.Load(); n != 1 || w.helperRunning() {
+		t.Errorf("spawned %d after Close, want 1", n)
+	}
+	_ = w.SetEnabled(true)
+	time.Sleep(50 * time.Millisecond)
+	if w.helperRunning() {
+		t.Error("SetEnabled after Close started a helper")
 	}
 }

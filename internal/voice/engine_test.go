@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -19,9 +20,8 @@ import (
 // binary that dies at once ("crash"), so engine tests never need the real
 // engine.
 func TestMain(m *testing.M) {
-	if os.Getenv("FAKE_KWS") == "idle" {
-		// Fake wake helper: prints nothing, runs until killed or stdin closes.
-		_, _ = io.Copy(io.Discard, os.Stdin)
+	if mode := os.Getenv("FAKE_KWS"); mode != "" {
+		fakeKWS(mode)
 		os.Exit(0)
 	}
 	switch os.Getenv("FAKE_WHISPER") {
@@ -36,6 +36,45 @@ func TestMain(m *testing.M) {
 		os.Exit(3)
 	}
 	os.Exit(0)
+}
+
+// fakeDetectionJSON is a detection as the stock spotter prints it (Task 0
+// notes, section 10).
+const fakeDetectionJSON = `{"start_time":0.00, "keyword": "HEY_AWESOME", "timestamps": [3.28, 3.56, 3.84, 3.96, 4.00, 4.04, 4.08], "tokens":[" HE", "Y", " A", "W", "ES", "OM", "E"]}`
+
+// fakeKWSStartup is the stock microphone spotter's start-up output (stderr).
+const fakeKWSStartup = "/project/sherpa-onnx/csrc/parse-options.cc:Read:379 'sherpa-onnx-keyword-spotter-microphone --tokens=tokens.txt'\n" +
+	"\n" +
+	"KeywordSpotterConfig(feat_config=FeatureExtractorConfig(sampling_rate=16000, feature_dim=80), max_active_paths=4, num_trailing_blanks=1, keywords_score=1, keywords_threshold=0.25)\n" +
+	"Num devices: 1\n" +
+	" * 0 default\n" +
+	"Use device: 0\n" +
+	"  Name: default\n" +
+	"  Max input channels: 2\n"
+
+// fakeKWS is the fake wake helper. "idle" prints the start-up lines and runs
+// until stdin closes; "detect" also writes one detection to stderr, in the
+// Linux form (no trailing newline), per line read from stdin; "die" prints
+// $FAKE_STDERR and exits 1 at once.
+func fakeKWS(mode string) {
+	switch mode {
+	case "die":
+		fmt.Fprintln(os.Stderr, os.Getenv("FAKE_STDERR"))
+		os.Exit(1)
+	case "idle":
+		fmt.Fprint(os.Stderr, fakeKWSStartup)
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	case "detect":
+		fmt.Fprint(os.Stderr, fakeKWSStartup)
+		sc := bufio.NewScanner(os.Stdin)
+		for n := 0; sc.Scan(); n++ {
+			if n == 0 {
+				fmt.Fprintf(os.Stderr, "\r%d:%s", n, fakeDetectionJSON)
+			} else {
+				fmt.Fprintf(os.Stderr, "\n\r%d:%s", n, fakeDetectionJSON)
+			}
+		}
+	}
 }
 
 func argAfter(flag string) string {

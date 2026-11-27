@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -55,14 +53,19 @@ type WakeConfig struct {
 	GOOS, GOARCH string
 	Client       *http.Client
 	OnStatus     func(WakeStatus)
-	OnWake       func()      // used by the helper supervision (Task 4)
-	Suppress     func() bool // used by the helper supervision (Task 4)
-	Engine       *Asset      // test override for WakeEngineAsset(GOOS, GOARCH)
-	Model        *Asset      // test override for WakeModelAsset
-	// Bin is a test override for the helper program path.
+	// OnWake runs, on its own goroutine, for each reported "Hey Awesome".
+	OnWake func()
+	// Suppress is asked on every detection (on the helper's output reader)
+	// and returns true while a wake must not open the box. It must be quick
+	// and must not call SetEnabled or Close.
+	Suppress func() bool
+	Engine   *Asset // test override for WakeEngineAsset(GOOS, GOARCH)
+	Model    *Asset // test override for WakeModelAsset
+	// Bin is a test override for the helper program path (nil: the program
+	// helperCommand picks).
 	Bin     func(engineDir string) string
-	Backoff []time.Duration
-	Tick    time.Duration
+	Backoff []time.Duration // waits before restarts after unexpected exits
+	Tick    time.Duration   // clock-jump (resume) check interval
 	Now     func() time.Time
 }
 
@@ -73,6 +76,14 @@ type wakeConfigFile struct {
 
 // Wake owns the wake-word files, the consented install, the per-device
 // on/off and chime settings, and the helper process.
+//
+// Locking: mu is the only lock. It guards every field below it and the
+// fields of wakeSup and wakeProc marked as guarded by Wake.mu. It is never
+// held while waiting on a channel or a process, or while calling OnStatus,
+// OnWake or Suppress; spawn holds it across starting the process, so no
+// helper starts once Close or SetEnabled(false) has cleared sup. OnStatus
+// and Suppress must not call SetEnabled or Close (they would wait on the
+// goroutine that is calling them).
 type Wake struct {
 	c WakeConfig
 
@@ -83,7 +94,9 @@ type Wake struct {
 	prog       WakeStatus
 	lastErr    string
 	lastEmit   time.Time
-	helper     *wakeProc
+	sup        *wakeSup        // supervision for the current enabled period
+	supDone    <-chan struct{} // done of the newest supervisor (stopped or not)
+	lastWake   time.Time       // last reported wake
 	sessionEnd time.Time
 	closed     bool
 	installEnd chan struct{} // closed when the install goroutine ends
@@ -107,10 +120,7 @@ func NewWake(c WakeConfig) *Wake {
 		m := WakeModelAsset
 		c.Model = &m
 	}
-	if c.Bin == nil {
-		c.Bin = c.defaultBin
-	}
-	if c.Backoff == nil {
+	if len(c.Backoff) == 0 {
 		c.Backoff = []time.Duration{time.Second, 5 * time.Second, 30 * time.Second}
 	}
 	if c.Tick == 0 {
@@ -128,18 +138,6 @@ func NewWake(c WakeConfig) *Wake {
 		}
 	}
 	return w
-}
-
-// defaultBin is the helper program: on Windows our own executable (started
-// with --wake-helper), elsewhere the stock microphone spotter.
-func (c WakeConfig) defaultBin(engineDir string) string {
-	if c.GOOS == "windows" {
-		if exe, err := os.Executable(); err == nil {
-			return exe
-		}
-		return ""
-	}
-	return filepath.Join(engineDir, "sherpa-onnx-keyword-spotter-microphone")
 }
 
 func (w *Wake) engineDir() string { return filepath.Join(w.c.Dir, "wake-"+WakeRelease) }
@@ -189,7 +187,7 @@ func (w *Wake) statusLocked() WakeStatus {
 	case !w.cfg.Enabled:
 		st.State, st.Error = "off", ""
 	default:
-		st.State = "starting"
+		st.State, st.Error = w.helperStateLocked()
 	}
 	return st
 }
@@ -235,8 +233,9 @@ func (w *Wake) saveLocked() error {
 }
 
 // SetEnabled switches the wake word on or off for this device. Turning it on
-// needs the files (ErrWakeNotInstalled otherwise); turning it off stops the
-// helper.
+// needs the files (ErrWakeNotInstalled otherwise) and starts supervision; a
+// helper that fails to start shows up in the state (backoff, then "error"),
+// not as an error here. Turning it off returns once the helper is gone.
 func (w *Wake) SetEnabled(on bool) error {
 	w.mu.Lock()
 	if w.c.Engine == nil {
@@ -254,13 +253,17 @@ func (w *Wake) SetEnabled(on bool) error {
 		w.mu.Unlock()
 		return err
 	}
+	var wait <-chan struct{}
 	if on {
 		w.lastErr = ""
-		w.startHelperLocked()
+		w.startSupervisorLocked()
 	} else {
-		w.stopHelperLocked()
+		wait = w.stopSupervisorLocked()
 	}
 	w.mu.Unlock()
+	if wait != nil {
+		<-wait
+	}
 	w.emit(true)
 	return nil
 }
@@ -285,14 +288,14 @@ func (w *Wake) SetChime(on bool) error {
 func (w *Wake) Start() {
 	w.mu.Lock()
 	if w.cfg.Enabled && w.installed() {
-		w.startHelperLocked()
+		w.startSupervisorLocked()
 	}
 	w.mu.Unlock()
 	w.emit(true)
 }
 
-// SessionEnded tells the wake word a dictation session just ended, so the
-// helper supervision can suppress an echo of it.
+// SessionEnded tells the wake word a dictation session just ended; wakes in
+// the next 2 s are ignored (an echo of it).
 func (w *Wake) SessionEnded() {
 	w.mu.Lock()
 	w.sessionEnd = w.c.Now()
@@ -340,7 +343,7 @@ func (w *Wake) Install() error {
 				w.cfg.Enabled = false
 				w.lastErr = "Couldn't save the wake word setting: " + serr.Error()
 			} else {
-				w.startHelperLocked()
+				w.startSupervisorLocked()
 			}
 		case errors.Is(err, context.Canceled):
 			w.lastErr = ""
@@ -432,74 +435,19 @@ func (w *Wake) CancelInstall() {
 	}
 }
 
-// Close cancels an install and stops the helper.
+// Close cancels an install and stops the helper. When it returns, no helper
+// runs and none will start.
 func (w *Wake) Close() {
 	w.mu.Lock()
 	w.closed = true
 	cancel, end := w.cancel, w.installEnd
-	w.stopHelperLocked()
+	wait := w.stopSupervisorLocked()
 	w.mu.Unlock()
 	if cancel != nil {
 		cancel()
 		<-end // nothing touches files or starts a helper after Close returns
 	}
-}
-
-// wakeProc is one running helper process.
-type wakeProc struct {
-	cmd   *exec.Cmd
-	stdin io.Closer
-	done  chan struct{}
-}
-
-func (w *Wake) helperRunning() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.helper != nil
-}
-
-// startHelperLocked is the seam Task 4 replaces with real supervision
-// (arguments, output parsing, restart backoff). Here it just starts the
-// helper program and tracks it so Close and SetEnabled(false) can stop it.
-func (w *Wake) startHelperLocked() {
-	if w.helper != nil || w.closed {
-		return
+	if wait != nil {
+		<-wait
 	}
-	cmd := exec.Command(w.c.Bin(w.engineDir()))
-	hideAndContain(cmd)
-	switch w.c.GOOS {
-	case "linux":
-		cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+w.engineDir())
-	case "darwin":
-		cmd.Env = append(os.Environ(), "DYLD_LIBRARY_PATH="+w.engineDir())
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		w.lastErr = "Couldn't start the wake word: " + err.Error()
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		w.lastErr = "Couldn't start the wake word: " + err.Error()
-		log.Printf("voice: wake helper start: %v", err)
-		return
-	}
-	release := afterStart(cmd.Process)
-	p := &wakeProc{cmd: cmd, stdin: stdin, done: make(chan struct{})}
-	go func() {
-		_ = cmd.Wait()
-		release()
-		close(p.done)
-	}()
-	w.helper = p
-}
-
-func (w *Wake) stopHelperLocked() {
-	p := w.helper
-	if p == nil {
-		return
-	}
-	w.helper = nil
-	_ = p.stdin.Close()
-	_ = p.cmd.Process.Kill()
-	<-p.done
 }
