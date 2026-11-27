@@ -9,6 +9,7 @@ const h = vi.hoisted(() => {
     info: undefined as unknown as () => Promise<unknown>,
     now: undefined as unknown as () => Promise<void>,
     connect: undefined as unknown as (u: string) => Promise<unknown>,
+    disconnect: undefined as unknown as () => Promise<void>,
   };
 });
 vi.mock("./api", () => ({
@@ -18,7 +19,7 @@ vi.mock("./api", () => ({
       info: () => h.info(),
       now: () => h.now(),
       connect: (u: string) => h.connect(u),
-      disconnect: async () => {},
+      disconnect: () => h.disconnect(),
     },
     openURL: async () => {},
   },
@@ -77,6 +78,7 @@ describe("section behaviour", () => {
     h.info = async () => info;
     h.now = async () => {};
     h.connect = async () => st("syncing");
+    h.disconnect = async () => {};
   });
 
   it("keeps focus on Sync now while syncing and ignores a second press", async () => {
@@ -134,5 +136,35 @@ describe("section behaviour", () => {
     expect(host.querySelector<HTMLElement>("#sync-uri")!.closest<HTMLElement>("div.field")!.hidden).toBe(true);
     expect(button(host, "Sync now")).toBeTruthy();
     expect(host.textContent).toContain("Images in Atlas: unknown");
+  });
+
+  it("shows the connected view while a saved string is opened (status off, info connected)", async () => {
+    h.status = async () => st("off", { lastSyncAt: null });
+    const host = await mount();
+    expect(host.querySelector<HTMLElement>("#sync-uri")!.closest<HTMLElement>("div.field")!.hidden).toBe(true);
+    expect(button(host, "Sync now")).toBeTruthy();
+    expect(button(host, "Connect")).toBeUndefined();
+  });
+
+  it("shows a failed Disconnect's error above the connect form it flips to", async () => {
+    h.disconnect = async () => {
+      throw "access denied";
+    };
+    const host = await mount();
+    button(host, "Disconnect").click();
+    h.info = async () => ({ ...info, connected: false });
+    // The backend stops sync and reports off before the call fails.
+    h.push(st("off", { lastSyncAt: null }));
+    const yes = [...host.querySelectorAll<HTMLButtonElement>(".sync-confirm button")].find((b) => b.textContent === "Disconnect")!;
+    yes.click();
+    await tick();
+    await tick();
+    const form = host.querySelector<HTMLElement>("#sync-uri")!.closest<HTMLElement>("div.field")!;
+    expect(form.hidden).toBe(false);
+    const alerts = [...host.querySelectorAll<HTMLElement>("[role=alert]")].filter((a) => !a.hidden && !a.closest("[hidden]"));
+    expect(alerts.map((a) => a.textContent)).toEqual([
+      "Couldn't remove the saved connection string: access denied. Sync will start again next time the app opens.",
+    ]);
+    expect(form.contains(alerts[0])).toBe(true);
   });
 });

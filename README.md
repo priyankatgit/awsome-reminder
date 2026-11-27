@@ -219,7 +219,7 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete. Nothing leaves your machine unless you turn sync on (the one-time voice download is the only other network use, and only after you agree to it).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Nothing leaves your machine unless you turn sync on (the one-time voice download is the only other network use, and only after you agree to it).
 
 Planned, in order:
 

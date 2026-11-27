@@ -39,6 +39,11 @@ export function mountSyncSection(host: HTMLElement): void {
 
   // ----- Not connected -----
   const off = el("div", "field");
+  // A failed Disconnect still stops sync (the backend reports "off"), so its
+  // error shows here, above the form the section flips to.
+  const discError = el("p", "field-error");
+  discError.setAttribute("role", "alert");
+  discError.hidden = true;
   const uriLabel = el("label", "field-label", "Atlas connection string");
   uriLabel.htmlFor = "sync-uri";
   const box = el("div", "secret-box");
@@ -68,7 +73,7 @@ export function mountSyncSection(host: HTMLElement): void {
   connect.setAttribute("aria-disabled", "true");
   const connectRow = el("div", "field-row");
   connectRow.append(connect);
-  off.append(uriLabel, box, uriHelp, uriError, connectRow);
+  off.append(discError, uriLabel, box, uriHelp, uriError, connectRow);
 
   // ----- Connected -----
   const on = el("div", "field");
@@ -183,8 +188,9 @@ export function mountSyncSection(host: HTMLElement): void {
     } catch {
       info = info ? { ...info, attachmentBytes: -1 } : null;
     }
-    // Connected comes from the status; info only supplies the facts.
-    connected = status ? status.state !== "off" : (info?.connected ?? false);
+    // Connected comes from the status, or from info while a saved string is
+    // still being opened at startup (the status reads "off" until then).
+    connected = (status ? status.state !== "off" : false) || info?.connected === true;
     showView();
     renderInfo();
     renderStatusLine();
@@ -244,6 +250,7 @@ export function mountSyncSection(host: HTMLElement): void {
     }
     busy = false;
     uri.value = "";
+    setError(discError, "");
     resetEye();
     lastSeen = status.lastSyncAt ?? null;
     connected = true;
@@ -292,12 +299,12 @@ export function mountSyncSection(host: HTMLElement): void {
   });
   confirmYes.addEventListener("click", async () => {
     confirmYes.disabled = true;
+    let failed = "";
     try {
       await api.sync.disconnect();
     } catch (err) {
-      confirmYes.disabled = false;
-      setError(actionError, errorText(err));
-      return;
+      // Sync has stopped anyway; only the saved string could not be removed.
+      failed = `Couldn't remove the saved connection string: ${errorText(err)}. Sync will start again next time the app opens.`;
     }
     confirmYes.disabled = false;
     connected = false;
@@ -307,6 +314,7 @@ export function mountSyncSection(host: HTMLElement): void {
     confirm.hidden = true;
     actions.hidden = false;
     setError(actionError, "");
+    setError(discError, failed);
     showView();
     renderOff();
     uri.focus();
