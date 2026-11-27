@@ -15,7 +15,10 @@ type Manager struct {
 	mu    sync.Mutex
 	cur   string // canonical form of the registered combo, "" if none
 	unreg func()
-	err   error
+	// setErr is the last Set's error (the saved combo isn't registered);
+	// only Set changes it. resumeErr is the last failed Resume's error.
+	setErr    error
+	resumeErr error
 	// suspended: cur is released for now (the settings window is recording
 	// a new combo) and Resume registers it again.
 	suspended bool
@@ -37,22 +40,22 @@ func (m *Manager) Set(combo string) error {
 	defer m.mu.Unlock()
 	c, err := ParseCombo(combo)
 	if err != nil {
-		m.err = err
+		m.setErr = err
 		return err
 	}
 	if s := c.String(); m.unreg != nil && s == m.cur {
-		m.err = nil
+		m.setErr = nil
 		return nil
 	}
 	unreg, err := m.reg(c, m.onPress)
 	if err != nil {
-		m.err = err
+		m.setErr = err
 		return err
 	}
 	if m.unreg != nil {
 		m.unreg()
 	}
-	m.cur, m.unreg, m.err, m.suspended = c.String(), unreg, nil, false
+	m.cur, m.unreg, m.setErr, m.resumeErr, m.suspended = c.String(), unreg, nil, nil, false
 	return nil
 }
 
@@ -71,7 +74,9 @@ func (m *Manager) Suspend() {
 
 // Resume registers the suspended hotkey again. It does nothing unless
 // suspended. If registering fails the error is returned and recorded in
-// Err(), and the hotkey stays suspended so a later Resume can retry.
+// Err(), and the hotkey stays suspended so a later Resume can retry. A
+// successful Resume clears only that error: an earlier failed Set (the saved
+// combo is still not registered) stays reported.
 func (m *Manager) Resume() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -80,23 +85,26 @@ func (m *Manager) Resume() error {
 	}
 	c, err := ParseCombo(m.cur)
 	if err != nil {
-		m.err = err
+		m.resumeErr = err
 		return err
 	}
 	unreg, err := m.reg(c, m.onPress)
 	if err != nil {
-		m.err = err
+		m.resumeErr = err
 		return err
 	}
-	m.unreg, m.err, m.suspended = unreg, nil, false
+	m.unreg, m.resumeErr, m.suspended = unreg, nil, false
 	return nil
 }
 
-// Err returns the error from the last Set, or nil.
+// Err returns the error from the last Set, else from a failed Resume, or nil.
 func (m *Manager) Err() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.err
+	if m.setErr != nil {
+		return m.setErr
+	}
+	return m.resumeErr
 }
 
 // Close releases the registered hotkey, if any.
@@ -106,5 +114,5 @@ func (m *Manager) Close() {
 	if m.unreg != nil {
 		m.unreg()
 	}
-	m.cur, m.unreg, m.err, m.suspended = "", nil, nil, false
+	m.cur, m.unreg, m.setErr, m.resumeErr, m.suspended = "", nil, nil, nil, false
 }

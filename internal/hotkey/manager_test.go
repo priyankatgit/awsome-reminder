@@ -260,3 +260,30 @@ func TestHotkeyManagerResumeFailureReported(t *testing.T) {
 		t.Fatalf("retry: err=%v Err()=%v", err, m.Err())
 	}
 }
+
+// A failed Set's error must survive a recording session: Resume puts the
+// old combo back but the saved one is still not registered.
+func TestHotkeyManagerResumeKeepsSetError(t *testing.T) {
+	f := newFakeReg()
+	m := NewManager(f.reg, func() {})
+	if err := m.Set("Ctrl+Alt+A"); err != nil {
+		t.Fatal(err)
+	}
+	taken := errors.New("Ctrl+Alt+B is already used by another app")
+	f.fail["Ctrl+Alt+B"] = taken
+	if err := m.Set("Ctrl+Alt+B"); !errors.Is(err, taken) {
+		t.Fatalf("Set B err = %v", err)
+	}
+	m.Suspend()
+	if err := m.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(m.Err(), taken) {
+		t.Fatalf("Err() after Resume = %v, want B's error", m.Err())
+	}
+	// A later successful Set clears it.
+	delete(f.fail, "Ctrl+Alt+B")
+	if err := m.Set("Ctrl+Alt+B"); err != nil || m.Err() != nil {
+		t.Fatalf("Set B again: err=%v Err()=%v", err, m.Err())
+	}
+}

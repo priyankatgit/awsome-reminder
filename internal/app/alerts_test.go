@@ -1,12 +1,15 @@
 package app
 
 import (
+	"errors"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/settings"
 )
 
 // putReminder stores an open reminder due in an hour.
@@ -206,5 +209,22 @@ func TestServiceOpenSettingsAndResizeAlerts(t *testing.T) {
 	h.svc.ResizeAlerts(212)
 	if h.win.settings != 1 || !reflect.DeepEqual(h.win.alertHeights, []int{212}) {
 		t.Fatalf("settings %d heights %v", h.win.settings, h.win.alertHeights)
+	}
+}
+
+// Cancelling a recording must not hide a hotkey that failed to register on
+// save (tray tooltip and Settings read Status).
+func TestHotkeyErrorSurvivesRecordingCancel(t *testing.T) {
+	h := newHarness(t)
+	h.reg.fail["Alt+K"] = errors.New("Alt+K is already used by another app")
+	s := settings.Defaults(runtime.GOOS)
+	s.Hotkey = "Alt+K"
+	if err := h.svc.SaveSettings(s); err == nil {
+		t.Fatal("want hotkey error")
+	}
+	h.svc.SetHotkeyRecording(true)
+	h.svc.SetHotkeyRecording(false)
+	if st := h.svc.Status(); st.HotkeyErr != "Alt+K is already used by another app" {
+		t.Fatalf("HotkeyErr after cancel = %q", st.HotkeyErr)
 	}
 }

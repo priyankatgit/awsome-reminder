@@ -275,6 +275,11 @@ export function mountAlert(root: HTMLElement): void {
       const first = stack.querySelector<HTMLButtonElement>(".alert-card .btn-primary");
       (first ?? (foot.hidden ? null : more))?.focus({ preventScroll: true });
     }
+    // Report now: while the window is hidden, WebView2 runs no animation
+    // frames or ResizeObserver callbacks, and Go shows the window only after
+    // this report. getBoundingClientRect forces layout even when hidden.
+    // The next frame reports again in case fonts or styles settle late.
+    reportHeight();
     requestAnimationFrame(reportHeight);
   }
 
