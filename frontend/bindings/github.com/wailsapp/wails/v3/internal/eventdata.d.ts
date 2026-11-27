@@ -10,6 +10,9 @@ import type { Events } from "@wailsio/runtime";
 import type * as app$0 from "../../../../../awesome-reminder/internal/app/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import type * as cloudsync$0 from "../../../../../awesome-reminder/internal/cloudsync/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import type * as voice$0 from "../../../../../awesome-reminder/internal/voice/models.js";
 
 declare module "@wailsio/runtime" {
@@ -19,6 +22,7 @@ declare module "@wailsio/runtime" {
             "capture:open": void;
             "items:changed": void;
             "list:focus": string;
+            "sync:status": cloudsync$0.Status;
             "voice:status": voice$0.Status;
         }
     }

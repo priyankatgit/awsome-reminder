@@ -5,6 +5,7 @@
 import { api, errorText, isMac, isWindows, type Settings } from "./api";
 import { el, keycaps } from "./dom";
 import { icons } from "./icons";
+import { mountSyncSection } from "./sync-settings";
 
 const SEC = 1;
 const MIN = 60 * SEC;
@@ -123,6 +124,9 @@ interface Draft {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  // Go owns the shared-settings stamp; it is carried through untouched.
+  sharedUpdatedAt?: number;
+  sharedUpdatedBy?: string;
 }
 
 function toDraft(s: Settings): Draft {
@@ -135,6 +139,8 @@ function toDraft(s: Settings): Draft {
     exportPath: s.exportPath,
     autostart: s.autostart,
     showPendingCount: s.showPendingCount,
+    sharedUpdatedAt: s.sharedUpdatedAt,
+    sharedUpdatedBy: s.sharedUpdatedBy,
   };
 }
 
@@ -148,6 +154,8 @@ function toSettings(d: Draft): Settings {
     exportPath: d.exportPath.trim(),
     autostart: d.autostart,
     showPendingCount: d.showPendingCount,
+    sharedUpdatedAt: d.sharedUpdatedAt,
+    sharedUpdatedBy: d.sharedUpdatedBy,
   };
 }
 
@@ -270,6 +278,7 @@ const TEMPLATE = `
         <p class="field-help" id="pending-count-help">Shows how many items are open on the tray icon and the taskbar.</p>
       </div>
     </form>
+    <section class="settings-sync" id="sync-section"></section>
   </main>
   <footer class="settings-foot">
     <p class="field-error settings-form-error" id="form-error" role="alert" hidden></p>
@@ -629,6 +638,8 @@ export function mountSettings(root: HTMLElement): void {
       void api.closeWindow();
     }
   });
+
+  mountSyncSection($("sync-section"));
 
   hotkeyHelp.textContent = helpIdle;
   void (async () => {

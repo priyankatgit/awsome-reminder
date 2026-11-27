@@ -5,7 +5,7 @@ Binding for every frontend task (capture, list, alert, settings, and the later v
 ## Principles
 1. **Keyboard first, mouse friendly.** Every action has a key; every icon button has an accessible name and a visible focus ring.
 2. **Quiet until needed.** Neutral slate surfaces with one accent color. Color carries meaning: time, overdue, listening.
-3. **Instant.** No web fonts from the network, no animation libraries, no layout shift. Motion takes at most 180 ms and is skipped under `prefers-reduced-motion`.
+3. **Instant.** No web fonts from the network, no animation libraries, no layout shift. Motion never delays an action (the save, the done, the open happen first) and is skipped under `prefers-reduced-motion`. Plain eases stay at or under 180 ms; springs run up to 280 ms but cover 90% of the way in the first third (see **Motion**).
 4. **Native feel.** The floating windows use the OS translucent backdrop (Windows 11 Acrylic/Mica, macOS vibrancy) and fall back to a solid surface on Linux.
 
 ## Tokens (`frontend/src/tokens.css`, the only place raw values live)
@@ -42,6 +42,12 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--prio-low` | `#60A5FA` | `#1D4ED8` | Low priority |
 | `--panel-width` | `max(50%, 420px)` | same | details panel width (`--panel-share`, `--panel-min`); slide-in `--dur-panel` 180 ms |
 | `--shadow-menu` | `0 8px 24px rgba(0,0,0,.28)` + 1px `--border` | `0 8px 24px rgba(15,23,42,.12)` + 1px `--border` | row `⋯` menu (softer than the window shadow) |
+| `--sync-ok-fg` / `--sync-ok-bg` | `#4ADE80` / `#12301F` | `#166534` / `#DCFCE7` | "All synced" pill (8.21 dark, 6.49 light). The plan's light `#15803D` gave only 4.57:1 and was darkened to `#166534` |
+| `--sync-muted-fg` / `--sync-muted-bg` | `#A8B3C7` / `#272F42` | `#475569` / `#EEF2F7` | Offline pill (6.32 / 6.74) |
+| `--sync-danger-fg` / `--sync-danger-bg` | `#FCA5A5` / `#3A1C26` | `#B91C1C` / `#FEE2E2` | Sync error pill (8.05 / 5.30) |
+| `--sync-glow` | `0 0 10px 2px rgba(74,222,128,.6)` | `0 0 10px 2px rgba(22,163,74,.45)` | one glow of the pill when the last waiting change reaches Atlas |
+| `--sync-pill-height`, `--sync-popover-width` | `24px`, `296px` | same | pill and details popover size |
+| `--dur-sync-glow`, `--dur-marker-fade`, `--dur-sync-spin` | `600ms`, `180ms`, `1000ms` | same | glow, marker fade-out, spinner turn |
 
 Rule: text uses the `-text` / `-fg` variants, never the plain `--accent` / `--time` / `--danger`, so contrast holds on `--bg`, `--surface` and `--muted` in both themes. `frontend/src/tokens.css` is authoritative if this table drifts.
 
@@ -53,7 +59,39 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 
 **Icons:** Lucide SVG (`lucide` package, import individual icons), 18px, stroke 1.75. **No emoji as icons anywhere**; this overrides the ⏰/☐ in the plan text.
 
-**Motion:** enter 140 ms `cubic-bezier(.2,.8,.2,1)` (opacity + `scale(.98→1)`); exit 90 ms ease-in; hover 150 ms. Animate only opacity/transform.
+
+
+## Motion
+Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `frontend/src/motion.ts` (Web Animations API, no libraries).
+
+**Rules**
+- Animate only `opacity` and `transform`. The one place the browser would animate size, the View Transition title morph, is overridden with a translate (see below). Keyframe shapes (offsets, the ring's damping steps) live in `motion.ts`/`capture.ts`; every duration, distance, scale and curve is a token.
+- Exits run at about 60–70% of their entrance.
+- `prefers-reduced-motion`: CSS animations and transitions are off (global rule in `style.css`), and every `motion.ts` helper is a no-op, so springs, glides, the fly, the ring, confetti, the toast bar and the morph don't run. State changes stay instant.
+- Nothing loops or runs on a timer while idle. Each effect is started by a user action or a data change and ends on its own; the list's 60 s re-render measures rows but starts no animation when nothing moved.
+- Interruptible: animations are visual only, so a key or click acts at once. A new glide starts from where the row is on screen; any key or click skips the panel morph; reopening the capture box mid-flight shows a clean box.
+
+**Curves**
+- `--ease-enter` `cubic-bezier(.2,.8,.2,1)` and `--ease-exit` ease-in for plain enters/exits (enter 140 ms `--dur-enter`, exit 90 ms `--dur-exit`, hover 150 ms).
+- `--ease-spring`: a `linear()` sample of a damped spring (ζ 0.75, 2.8% overshoot, 90% of the way at 37% of the duration). Panel slide, alert entrance, row glides.
+- `--ease-spring-pop`: ζ 0.5, 16% overshoot, for small pops (bell, priority chips, the checkbox).
+- Engines without `linear()` (older WebKit) get cubic-bezier stand-ins: the `linear()` values are set inside `@supports (transition-timing-function: linear(0, 1))`, because a token that fails to parse would void the whole `transition` shorthand. `motion.ts` also checks `CSS.supports` before passing an easing to WAAPI.
+
+**What ships**
+
+| Effect | Where | Motion | Tokens |
+|---|---|---|---|
+| Fly to tray | capture, on save | after `Capture` succeeds, a copy of the line (scrolled like the input, for long lines) rises (`--fly-lift`), then dives to the bottom-right corner shrinking to `--fly-scale` and fading; the input goes blank and the box fades over the last 90 ms, so the window hides as the line lands | `--dur-fly` 220 ms, `--ease-fly` |
+| Bell pop + ring | capture, first detected time | bell pops on the spring, then rings once about its top (±`--ring-angle`, damped, `--ease-ring`) | `--dur-pop` 280 ms / exit `--dur-pop-exit` 180 ms, `--dur-ring` 420 ms after `--dur-ring-delay` 120 ms |
+| Priority chip pop | capture chips, panel segmented control | a chip turning on pops from `--chip-pop-scale` | `--dur-chip` 240 ms |
+| Done | list | the box pops (`--check-pop-scale`), the check draws left to right (an accent cover scales away), the strike follows `--done-stagger` later, then the row leaves as a fading ghost and the rows below glide up | `--dur-check` 240 ms, `--dur-done` 180 ms, `--dur-glide` 260 ms |
+| Reflow (FLIP) | list, on data changes and the Done toggle (not while typing a search) | rows and section headers glide from their old place; a row whose section changed glides across; new rows (Undo) fade in from `--row-enter-offset` | `--dur-glide`, `--dur-enter` |
+| Row grows into the panel | list → panel, opening (click or Enter) | same-document View Transition: the row title and the panel title share `view-transition-name: item-title`; the UA size morph is replaced by a translate while old and new titles cross-fade; the panel springs in as its own layer; the rest of the page switches at once. A narrow window widens first (a viewport resize mid-transition aborts it); a click mid-morph passes through the overlay (`::view-transition { pointer-events: none }`). Falls back to the slide where `startViewTransition` is missing (WebKitGTK, macOS before Safari 18), or when the transition is aborted other than by the user (no frames within `--dur-panel`, a resize); a key or click skips it to the open panel | `--dur-panel` 280 ms |
+| Panel slide | panel | spring in, ease-in out; a `--panel-overshoot-cover` strip of surface past the right edge hides the overshoot | `--dur-panel` 280 ms / `--dur-panel-exit` 180 ms |
+| Alert entrance | alert | spring slide/fade, several new cards cascade `--stagger-alert` apart; a card revealed while others close a gap waits `--alert-gap-wait` | `--dur-alert-enter` 260 ms / `--dur-alert-exit` 170 ms |
+| Alert gap close | alert, a card leaves | the other cards glide into the gap (FLIP); cards sit at the bottom of the window and the window shrink waits for the glide, since Go pins it bottom-right | `--dur-glide` |
+| Undo bar | list toast with an action | a `--toast-bar` line along the toast's bottom edge scales down over the 5 s undo window; it rests full while pointer or focus is on the toast and restarts after, and stays empty through the toast's fade-out | `--toast-bar`, `--toast-bar-opacity` |
+| Today is clear | list, completing the last open item due by the end of today (overdue counts) | `--confetti-count` (12) dots burst from the checkbox, drift down and fade; the layer leaves the DOM afterwards | `--dur-confetti` 700 ms, `--ease-burst`, `--confetti-*` |
 
 ## Capture box (Spotlight)
 ```
@@ -72,7 +110,7 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - Save feedback: input flashes an `--accent` underline for 120 ms, then the window hides.
 - Errors are shown inline under the input in `--danger`, never as alerts.
 - **Priority chips (Phase 1.6):** a row of `High` `Med` `Low` chips under the input (`--prio-chip-height` 24 px, an 8 px `--prio-*` dot plus the word, so it never relies on colour alone). Chips are buttons with `aria-pressed` and `aria-keyshortcuts`, and come after the input and the time picker in Tab order. `Alt+1/2/3` set the priority and `Alt+0` clears it. A chip edits the typed token (`!high` / `!med` / `!low`) in the input, which stays the single source of truth; the active chip follows the parse. The hint row adds `Alt+1–3 priority` and `Alt+0 clear`.
-- **Live reminder indicator (Phase 1.6):** when the preview has a due time, the lead icon becomes a `--remind` bell with a 160 ms pop (`--dur-pop`, `scale(--pop-scale → 1)` + opacity; no scale under reduced motion), and a `chip-remind` badge "Reminder · Thu 26 Nov, 17:00" (`--remind-text` on `--remind-tint`) leads the preview row. Removing the time words fades both out (90 ms). `role="status"` announces "Reminder detected for …" and "Reminder removed". The mic keeps the right action slot.
+- **Live reminder indicator (Phase 1.6):** when the preview has a due time, the lead icon becomes a `--remind` bell with a spring pop (`--dur-pop` 280 ms on `--ease-spring-pop`, `scale(--pop-scale → 1)` + opacity) and then rings once (see **Motion**; neither under reduced motion), and a `chip-remind` badge "Reminder · Thu 26 Nov, 17:00" (`--remind-text` on `--remind-tint`) leads the preview row. Removing the time words fades both out (`--dur-pop-exit`, 180 ms). `role="status"` announces "Reminder detected for …" and "Reminder removed". The mic keeps the right action slot.
 
 ### Listening state (voice phase, designed now)
 ```
@@ -106,7 +144,7 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - Times in mono `--time`; overdue rows prefix "overdue ·" in `--danger` (not color alone).
 - Keys: `/` focus search, `↑/↓` move, `Space` toggle done, `Enter` open the details panel (title focused), `F2` inline edit, `s` snooze menu, `Del` delete, `Esc` close the panel / clear search / close. A click on the row opens the panel once the double-click time has passed; a double-click on the text edits inline.
 - Priority (Phase 1.6): an 8 px `--prio-*` dot before the text with an `aria-label` ("High priority"). Tag sections sort High → Medium → Low → none, keeping creation order within each; Today/Upcoming stays in time order.
-- Done uses a 180 ms strike-through + fade, then the row moves to Done. Delete shows a bottom toast "Deleted · Undo" for 5 s (`role="status"`).
+- Done draws the check and a strike-through and fades the row (180 ms + 60 ms stagger), then the row moves to Done while the rows below glide up (see **Motion**). Delete shows a bottom toast "Deleted · Undo" for 5 s (`role="status"`) with a thin bar running down over the undo window.
 - Empty state: a centered `inbox` icon, "Nothing here. Press Ctrl+Shift+Space to capture." with the real hotkey shown as keycaps.
 
 ## Details panel (Phase 1.6)
@@ -125,7 +163,7 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 └────────────────────────────────┴─────────────────────────────────────────┘
 ```
 (The bracketed glyphs are Lucide icons in the real UI.)
-- An in-page drawer in the list window, never a new window. Width `--panel-width` (50% of the window, min 420 px). A window narrower than 1100 px widens to 1100 px (capped to the screen) while it is open and restores on close. It slides in from the right over `--dur-panel` (180 ms, transform only; no slide under reduced motion). The panel module and `marked` / `dompurify` load on first open.
+- An in-page drawer in the list window, never a new window. Width `--panel-width` (50% of the window, min 420 px). A window narrower than 1100 px widens to 1100 px (capped to the screen) while it is open and restores on close. It springs in from the right over `--dur-panel` (280 ms, transform only), with the clicked row's title growing into the panel title where View Transitions exist; no slide or morph under reduced motion. The panel module and `marked` / `dompurify` load on first open.
 - Field labels are `--panel-label` (10ch) wide, on `--surface` / `--bg` with the existing colour tokens. Errors show inline per field in `--danger-text`. Repeat is disabled, with the note "Set a due time first", until a due time exists.
 - No Save button. The footer status reads "Saving…", "✓ Saved" or "Couldn't save · Retry". Edits made elsewhere refresh the panel except for the field being edited.
 - Description toolbar: Bold, Italic, Heading, Bulleted list, Checklist, Code, Link, Image, then an Edit | Preview toggle. The toolbar is one tab stop with arrow keys between buttons. Each tooltip shows the shortcut and the Markdown it inserts. Preview typography uses `--md-h1` 18 px and `--md-h2` 16 px, a `--md-quote-bar` (3 px) quote bar, and code on `--muted`. Images are at most `--md-image-max` (320 px) tall and open a lightbox on `--lightbox-backdrop` (Esc closes it, and focus returns to the preview).
@@ -146,10 +184,10 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 │ [ ✓ Done ]  [ Snooze ▾ ]  [ Open ]        │
 └──────────────────────────────────────────┘
 ```
-- 380 px, glass surface, bottom-right with 16 px inset. Slides up 8 px + fades in 160 ms. Multiple alerts stack as cards inside the one window (max 3 visible, then "+N more").
+- 380 px, glass surface, bottom-right with 16 px inset. Slides up 8 px + fades in on a spring (260 ms; several cards cascade 40 ms apart). Multiple alerts stack as cards inside the one window (max 3 visible, then "+N more").
 - **Light-red reminder cards** (catch the eye; the list window and capture box stay neutral). Every card has an opaque `--remind-tint` fill, a 4 px `--remind` left edge bar (`--remind-bar`), a `--remind` Lucide `bell` at the start of the time line, and the time line ("in 10 min · 17:00", "now · 17:00", "snoozed · was due …") in `--remind-text`, mono 12px medium.
 - Missed and overdue cards ("missed · was due 14:00", "overdue 5m · 14:00") read more urgent: `--remind-tint-strong` fill and a 6 px bar (`--remind-bar-strong`). The words carry the state too, never color alone.
-- Entrance: besides the 160 ms slide/fade, the edge bar glows once (`--remind-glow`, opacity 0 → 1 → 0 over 600 ms on a `::after` layer). None under `prefers-reduced-motion`. Only opacity/transform animate; the bar and glow are absolutely positioned, so nothing shifts.
+- Entrance: besides the spring slide/fade, the edge bar glows once (`--remind-glow`, opacity 0 → 1 → 0 over 600 ms on a `::after` layer). None under `prefers-reduced-motion`. Only opacity/transform animate; the bar and glow are absolutely positioned, so nothing shifts.
 - Contrast on the tint (dark / light, base / strong tint): `--fg` 15.8 / 14.6 and 16.3 / 14.6; `--fg-muted` (repeats, "Snooze for", ghost-button hover is `--muted`) 6.4 / 6.0 and 6.9 / 6.2; `--danger-text` (inline error) 6.0 / 5.5 and 5.9 / 5.3. Tag chips keep their own opaque background, so their ratios are unchanged.
 - Done is the primary button (`--accent-fill`, green: actions stay distinct from the alert red); Snooze and Open are ghost buttons (border `--remind-border` on the tint). Buttons are 32 px tall with a 40 px hit area. Never steal focus.
 - **Shipped deviation:** Snooze does not open a dropdown. The Snooze button toggles an inline row ("Snooze for" + preset buttons) inside the same card, so the small alert window never needs a popup layer of its own and the choices stay keyboard reachable (`aria-expanded` / `aria-controls`).
@@ -161,11 +199,22 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - Save button at the bottom-right (accent); unsaved changes enable it.
 - "Show pending count" switch (Phase 1.6) after "Start at login"; its help text names the tray icon plus the taskbar (Windows) or the Dock (macOS).
 
+## Sync status (Phase 2)
+Only exists once the user has connected an Atlas cluster; with no connection string nothing below is drawn. Wording is in `internal/app/synctext.go` (tray) and `frontend/src/sync-status.ts` (pill); the two share one vocabulary.
+
+- **Pill** (list header, before the settings button, `--sync-pill-height` 24 px, radius pill): a 14 px Lucide icon and text, in the tone's `--sync-*` colors. States: `Syncing…` (`refresh-cw`, turning once per `--dur-sync-spin`, neutral), `All synced · just now` / `All synced · 2 min ago` (`cloud-check`, ok), `Synced · N waiting` (`cloud`, neutral), `Offline` / `Offline · N changes waiting` (`cloud-off`, muted), `Sync error` (`cloud-exclamation-point`, danger; the installed Lucide has no `cloud-alert`). Relative times re-render every 30 s: "just now", "N min ago", "N h ago", then "on 26 Nov". When the last waiting change reaches Atlas the pill glows once (`--sync-glow`, `--dur-sync-glow`); no glow under `prefers-reduced-motion`.
+- **Popover** (click the pill; `aria-expanded` / `aria-controls`): state line, "Last synced 14:32 (2 min ago)", "N changes waiting", the error text, warnings (clock off, scope too broad), "Cluster <host>" (never credentials), **Sync now** and **Sync settings**. Opening focuses Sync now; Esc closes and returns focus to the pill; a click or focus outside closes it. Sync now is `aria-disabled` while syncing so it keeps focus. A `role="status"` line announces state changes.
+- **Row marker:** a 14 px `cloud-off` icon after the row text in `--fg-muted` with `aria-label` and `title` "Not synced yet", shown on rows whose changes have not reached Atlas. Once synced it fades out over `--dur-marker-fade`; the slot stays reserved while sync is on, so nothing shifts.
+- **Settings section** "Sync across machines": a password-type field for the connection string with a show/hide eye, **Connect**; once connected, the same status line as the pill, cluster host, where the string is stored, "Images in Atlas: N MB of 512 MB", warnings, **Sync now** and **Disconnect** (with an inline confirm). It sits outside the Save flow: its buttons act at once.
+- **Tray dot:** drawn over the top-right quarter of the tray icon (diameter 40% of the icon, the glyph cleared 1 px around it). Synced is a solid green dot, syncing alternates a green ring and a solid green dot, offline is a grey ring, error is a red dot, off draws nothing. The tooltip appends `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0) or `Sync error` (the reason shows in the pill and Settings; the tooltip is capped at the 127 characters Windows allows, ending in an ellipsis).
+- **Shipped deviation (macOS template icon):** the macOS tray icon is a template image, which the system draws from alpha alone and tints itself, so colour cannot carry the state. There the dot is black and the state is its shape: synced is a filled dot, offline a ring, error a filled dot with a knocked-out bar, and syncing alternates ring and filled. Windows and Linux use the colours above. State is therefore never colour alone on any OS.
+- Contrast: popover text on `--surface`, `--fg-muted` 6.11 / 7.58 (dark / light), `--danger-text` 5.66 / 6.47, `--time-text` 7.30 / 7.09; the row marker on `--bg` 6.96 / 7.24.
+
 ## Pre-delivery checklist (every UI task)
 - [ ] No emoji icons; all icon buttons have `aria-label`
 - [ ] Visible focus ring on every interactive element; full keyboard path works
 - [ ] Text contrast ≥ 4.5:1 in dark **and** light (check tag chips)
-- [ ] `prefers-reduced-motion` disables pulses/slides
+- [ ] `prefers-reduced-motion` disables pulses/slides, and any new WAAPI effect goes through `motion.ts` (a no-op under it)
 - [ ] Only opacity/transform animated; no layout shift when the preview or toast appears
 - [ ] Raw hex/px only in `tokens.css`; components use variables
 - [ ] Fonts load from the bundle (works offline)

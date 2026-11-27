@@ -55,4 +55,9 @@ export interface View {
     "upcoming": model$0.Item[] | null;
     "tags": TagGroup[] | null;
     "done": model$0.Item[] | null;
+
+    /**
+     * Pending lists the items with local changes not yet synced; never null.
+     */
+    "pending": string[] | null;
 }

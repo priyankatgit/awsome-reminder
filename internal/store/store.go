@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
@@ -48,7 +49,54 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if _, err := s.StampLegacyShared(runtime.GOOS); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// legacySharedStamp is the stamp given to reminder defaults saved before
+// sync: later than the zero stamp of a machine that never saved settings,
+// earlier than any real edit.
+var legacySharedStamp = time.UnixMilli(1).UTC()
+
+// StampLegacyShared gives a settings row saved before sync existed (its
+// shared fields carry no stamp) the minimal real stamp legacySharedStamp from
+// this device, and queues it for sync. Without it the row would be pushed
+// with the zero stamp, which never wins over a fresh machine's defaults, so
+// the reminder defaults would never restore. A row whose shared fields are
+// the defaults, or are invalid, is left alone: stamping defaults could beat
+// another device's real choice in the device-id tie. It reports whether it
+// stamped the row.
+func (s *Store) StampLegacyShared(goos string) (bool, error) {
+	stamped := false
+	err := s.inTx(func(tx *sql.Tx) error {
+		var js string
+		err := tx.QueryRow(`SELECT json FROM settings WHERE id=1`).Scan(&js)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var st settings.Settings
+		if err := json.Unmarshal([]byte(js), &st); err != nil {
+			return nil // LoadSettings reports it; it must not stop Open
+		}
+		defaults := settings.Defaults(goos)
+		if !st.SharedUpdatedAt.IsZero() || st.Shared().Equal(defaults.Shared()) ||
+			defaults.WithShared(st.Shared()).Validate() != nil {
+			return nil
+		}
+		st.SharedUpdatedAt, st.SharedUpdatedBy = legacySharedStamp, s.deviceID
+		if err := saveSettings(tx, st); err != nil {
+			return err
+		}
+		stamped = true
+		return enqueue(tx, OutboxSettings, settingsOutboxID)
+	})
+	return stamped, err
 }
 
 func (s *Store) initDeviceID() error {
@@ -88,8 +136,17 @@ func fromMs(v sql.NullInt64) *time.Time {
 	return &t
 }
 
-// Put inserts or replaces an item by ID.
+// Put inserts or replaces an item by ID and queues it for sync.
 func (s *Store) Put(it model.Item) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := putItem(tx, it); err != nil {
+			return err
+		}
+		return enqueue(tx, OutboxItem, it.ID)
+	})
+}
+
+func putItem(db execer, it model.Item) error {
 	tags := it.Tags
 	if tags == nil {
 		tags = []string{}
@@ -111,7 +168,7 @@ func (s *Store) Put(it model.Item) error {
 		leads = string(b)
 	}
 	created, updated := it.CreatedAt.UnixMilli(), it.UpdatedAt.UnixMilli()
-	_, err = s.db.Exec(`INSERT INTO items
+	_, err = db.Exec(`INSERT INTO items
 		(id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -224,11 +281,25 @@ func (s *Store) LoadSettings(goos string) (settings.Settings, error) {
 
 // SaveSettings persists the settings (it does not validate them).
 func (s *Store) SaveSettings(st settings.Settings) error {
+	return saveSettings(s.db, st)
+}
+
+// SaveSettingsShared is SaveSettings plus queueing the settings for sync.
+func (s *Store) SaveSettingsShared(st settings.Settings) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := saveSettings(tx, st); err != nil {
+			return err
+		}
+		return enqueue(tx, OutboxSettings, settingsOutboxID)
+	})
+}
+
+func saveSettings(db execer, st settings.Settings) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO settings(id,json) VALUES(1,?)
+	_, err = db.Exec(`INSERT INTO settings(id,json) VALUES(1,?)
 		ON CONFLICT(id) DO UPDATE SET json=excluded.json`, string(b))
 	return err
 }

@@ -12,6 +12,10 @@ export interface RowModel {
   item: Item;
   /** The tag of the section holding the row; its chip is left out. */
   sectionTag?: string;
+  /** Sync is on: rows reserve a slot for the "not synced yet" marker. */
+  markers?: boolean;
+  /** This item has not reached Atlas yet (its id is in View.pending). */
+  unsynced?: boolean;
 }
 
 const MINUTE = 60_000;
@@ -200,6 +204,42 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
   parts.push(more);
 
   row.replaceChildren(...parts);
+  applyMarker(row, m);
+}
+
+/**
+ * Syncs the "not synced yet" marker with m, in place so that a marker that
+ * goes away fades instead of vanishing. While markers are on, every row keeps
+ * the slot (no layout shift); a synced row's marker is just transparent and
+ * hidden from assistive tech. list.ts calls this on every render, even when
+ * the row's content is unchanged.
+ */
+export function applyMarker(row: HTMLElement, m: RowModel): void {
+  let mark = row.querySelector<HTMLElement>(":scope > .row-sync");
+  if (!m.markers) {
+    mark?.remove();
+    return;
+  }
+  if (!mark) {
+    mark = el("span", "row-sync");
+    mark.innerHTML = icons.cloudOff;
+    const main = row.querySelector(".row-main");
+    if (main) main.after(mark);
+    else row.append(mark);
+  }
+  const pending = !!m.unsynced;
+  mark.classList.toggle("is-synced", !pending);
+  if (pending) {
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", "Not synced yet");
+    mark.title = "Not synced yet";
+    mark.removeAttribute("aria-hidden");
+  } else {
+    mark.removeAttribute("role");
+    mark.removeAttribute("aria-label");
+    mark.removeAttribute("title");
+    mark.setAttribute("aria-hidden", "true");
+  }
 }
 
 /**
@@ -218,7 +258,7 @@ export function editRow(row: HTMLElement, value: string): { input: HTMLInputElem
   error.setAttribute("role", "alert");
   error.hidden = true;
   const main = row.querySelector(".row-main");
-  row.querySelectorAll(".row-time, .row-repeat, .row-tags").forEach((n) => n.remove());
+  row.querySelectorAll(".row-time, .row-repeat, .row-tags, .row-sync").forEach((n) => n.remove());
   if (main) main.replaceWith(input);
   else row.append(input);
   row.append(error); // wraps onto its own line below the input

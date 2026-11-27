@@ -6,6 +6,7 @@ import type { Item } from "../api";
 import { el, tagChip } from "../dom";
 import { icons } from "../icons";
 import { effectiveDue } from "../item-row";
+import { pop } from "../motion";
 import { priorityLabel, type Priority } from "../priority";
 
 export type Repeat = "none" | "daily" | "weekdays" | "weekly";
@@ -123,7 +124,9 @@ export function priorityField(onPick: (p: Priority) => void) {
     if (value) b.append(el("span", "prio-dot"));
     b.append(el("span", undefined, short));
     b.addEventListener("click", () => {
-      if (b.getAttribute("aria-checked") !== "true") onPick(value);
+      if (b.getAttribute("aria-checked") === "true") return;
+      onPick(value);
+      pop(b, "--chip-pop-scale", "--dur-chip");
     });
     group.append(b);
     return b;

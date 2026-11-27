@@ -6,6 +6,7 @@ import { api, errorText, events, on, type AlertCard, type SnoozePreset } from ".
 import { el, motionMs, tagChip } from "./dom";
 import { icons } from "./icons";
 import { agoLabel, timeLabel } from "./item-row";
+import { canAnimate, easing, glide, measure, stopGlide } from "./motion";
 
 /** Cards shown before "+N more". */
 const MAX_VISIBLE = 3;
@@ -90,8 +91,27 @@ export function mountAlert(root: HTMLElement): void {
   let loaded = false;
   const views = new Map<string, CardView>();
 
+  let reported = 0; // the height last sent to Go
+  let holdShrinkUntil = 0; // performance.now() until which a shrink waits
+  let shrinkTimer: number | undefined;
+
+  /**
+   * Sends the content height to Go, which resizes the window and keeps it
+   * pinned bottom-right (so it grows and shrinks at its top edge). A shrink
+   * waits while cards glide into the gap a closed card left; the cards sit
+   * at the bottom of the window meanwhile, so the late resize moves nothing.
+   */
   const reportHeight = () => {
-    if (loaded) void api.resizeAlerts(Math.ceil(content.getBoundingClientRect().height));
+    if (!loaded) return;
+    const h = Math.ceil(content.getBoundingClientRect().height);
+    const wait = holdShrinkUntil - performance.now();
+    window.clearTimeout(shrinkTimer);
+    if (h < reported && wait > 0) {
+      shrinkTimer = window.setTimeout(reportHeight, wait);
+      return;
+    }
+    reported = h;
+    void api.resizeAlerts(h);
   };
 
   function buildCard(card: AlertCard): CardView {
@@ -202,7 +222,7 @@ export function mountAlert(root: HTMLElement): void {
       t.leaving = true;
       t.node.classList.add("is-leaving");
     });
-    const fade = new Promise((r) => window.setTimeout(r, motionMs("--dur-exit")));
+    const fade = new Promise((r) => window.setTimeout(r, motionMs("--dur-alert-exit")));
     try {
       await call();
       await fade;
@@ -234,9 +254,15 @@ export function mountAlert(root: HTMLElement): void {
   function render(restoreFocus = false): void {
     const app = root.querySelector("#alert-app")!;
     const focusWasIn = app.contains(document.activeElement);
+    // FLIP: where each card is now, so the others close a gap smoothly.
+    const before = canAnimate(stack) ? measure(Array.from(stack.children)) : null;
+    let removed = false;
+    let entering = 0; // new cards this render: their entrances cascade
+    const fresh: HTMLElement[] = [];
     const live = new Set(queue.map((c) => c.key));
     for (const [key, v] of views) {
       if (!live.has(key)) {
+        removed ||= v.node.isConnected;
         v.node.remove();
         views.delete(key);
       }
@@ -251,6 +277,8 @@ export function mountAlert(root: HTMLElement): void {
         v = buildCard(card);
         views.set(card.key, v);
         const node = v.node;
+        node.style.setProperty("--stagger-i", String(entering++));
+        fresh.push(node);
         node.classList.add("is-entering");
         // The edge-bar glow (on ::after) outlasts the slide-in; dropping the
         // class when the slide-in ends would cut the glow short.
@@ -272,7 +300,28 @@ export function mountAlert(root: HTMLElement): void {
     // doesn't replay their entrance.
     const shownKeys = new Set(shown.map((c) => c.key));
     for (const [key, v] of views) {
-      if (!shownKeys.has(key) && v.node.isConnected) v.node.remove();
+      if (!shownKeys.has(key) && v.node.isConnected) {
+        removed = true;
+        v.node.remove();
+      }
+    }
+    // Only a removal glides: the window keeps its size meanwhile (see
+    // reportHeight). An added card grows the window at its top edge, which
+    // already keeps the other cards still on screen.
+    if (before && removed) {
+      const cards = Array.from(stack.children) as HTMLElement[];
+      for (const c of cards) stopGlide(c);
+      const after = measure(cards);
+      let moved = false;
+      const timing = { duration: motionMs("--dur-glide"), easing: easing("--ease-spring") };
+      for (const c of cards) {
+        const first = before.get(c);
+        if (!first) continue;
+        glide(c, first, after.get(c), timing);
+        moved ||= Math.abs(first.top - after.get(c)!.top) >= 0.5;
+      }
+      if (moved) for (const n of fresh) n.classList.add("is-after-gap");
+      holdShrinkUntil = performance.now() + motionMs("--dur-glide");
     }
     const hidden = ordered.length - shown.length;
     foot.hidden = ordered.length < 2;

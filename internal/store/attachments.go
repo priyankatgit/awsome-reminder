@@ -10,13 +10,36 @@ import (
 
 const attCols = `id,item_id,mime,sha256,width,height,bytes,created_at,updated_at,updated_by,deleted,unreferenced_since`
 
-// PutAttachment inserts or replaces an attachment record by ID.
+// PutAttachment inserts or replaces an attachment record by ID and queues it for sync.
 func (s *Store) PutAttachment(a model.Attachment) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := putAttachment(tx, a); err != nil {
+			return err
+		}
+		return enqueue(tx, OutboxAttachment, a.ID)
+	})
+}
+
+// SetAttachmentUnreferenced sets only when the attachment stopped being
+// referenced (nil: it is referenced). The field is local bookkeeping that
+// never syncs, so the row is not restamped or queued.
+func (s *Store) SetAttachmentUnreferenced(id string, since *time.Time) error {
+	res, err := s.db.Exec(`UPDATE attachments SET unreferenced_since=? WHERE id=?`, toMs(since), id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func putAttachment(db execer, a model.Attachment) error {
 	del := 0
 	if a.Deleted {
 		del = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO attachments (`+attCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := db.Exec(`INSERT INTO attachments (`+attCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		item_id=excluded.item_id,mime=excluded.mime,sha256=excluded.sha256,width=excluded.width,
 		height=excluded.height,bytes=excluded.bytes,created_at=excluded.created_at,

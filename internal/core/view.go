@@ -34,6 +34,8 @@ type View struct {
 	Upcoming []model.Item `json:"upcoming"`
 	Tags     []TagGroup   `json:"tags"`
 	Done     []model.Item `json:"done"`
+	// Pending lists the items with local changes not yet synced; never null.
+	Pending []string `json:"pending"`
 }
 
 const (
