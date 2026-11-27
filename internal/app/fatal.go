@@ -52,7 +52,7 @@ func fatalText(err error, dataDir string) string {
 
 // appleScriptString quotes s as an AppleScript string literal.
 func appleScriptString(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\`, `"`, `\"`).Replace(s) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
 // osascriptCommand is the macOS dialog command.

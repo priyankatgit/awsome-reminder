@@ -41,8 +41,10 @@ func TestReportFatalFallsBackToStderr(t *testing.T) {
 }
 
 func TestAppleScriptString(t *testing.T) {
-	got := appleScriptString(`a "b" \c` + "\nd")
-	if want := `"a \"b\" \c` + "\n" + `d"`; got != want {
+	// A backslash must be doubled, or a path such as C:\new reads as an
+	// escape sequence; a trailing one would swallow the closing quote.
+	got := appleScriptString(`a "b" \c` + "\nd" + `\`)
+	if want := `"a \"b\" \\c` + "\n" + `d\\"`; got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }
