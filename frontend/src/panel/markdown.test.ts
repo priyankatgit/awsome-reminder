@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { renderMarkdown, toggleChecklistLine } from "./markdown";
 
 const ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -66,6 +66,8 @@ describe("renderMarkdown", () => {
 });
 
 describe("toggleChecklistLine", () => {
+  beforeAll(() => renderMarkdown("")); // it uses marked's lexer, loaded by the first render
+
   it("toggleChecklistLine flips only the nth item", () => {
     const md = "- [ ] a\n- [x] b\n- [ ] c";
     expect(toggleChecklistLine(md, 0)).toBe("- [x] a\n- [x] b\n- [ ] c");
@@ -94,5 +96,35 @@ describe("toggleChecklistLine", () => {
 
   it("keeps Windows line endings", () => {
     expect(toggleChecklistLine("- [ ] a\r\n- [ ] b", 1)).toBe("- [ ] a\r\n- [x] b");
+  });
+
+  /** Ticking box i in the rendered preview must flip box i, and only it. */
+  async function expectMatchesPreview(md: string, want: number): Promise<void> {
+    const states = async (src: string) =>
+      Array.from(dom(await renderMarkdown(src)).querySelectorAll<HTMLInputElement>("input[type=checkbox]"), (b) => b.checked);
+    const before = await states(md);
+    expect(before.length).toBe(want);
+    for (let i = 0; i < before.length; i++) {
+      const after = await states(toggleChecklistLine(md, i));
+      expect(after).toEqual(before.map((v, j) => (j === i ? !v : v)));
+    }
+  }
+
+  it("ignores task-like lines marked doesn't treat as tasks", async () => {
+    // A raw HTML block (stripped from the preview), then a real item.
+    await expectMatchesPreview("<div>\n- [ ] inside html\n</div>\n\n- [ ] real", 1);
+    // 4-space indented code outside a list.
+    await expectMatchesPreview("para\n\n    - [ ] code\n\n- [ ] real", 1);
+    // "2." can't interrupt a paragraph, so this is paragraph text.
+    await expectMatchesPreview("some text\n2. [ ] not a list\n\n- [x] real", 1);
+    // A fence line with an info string doesn't close the fence.
+    await expectMatchesPreview("```\n```js\n- [ ] still code\n```\n- [ ] real", 1);
+    // Same checkbox text twice in one item, tasks in a quote and nested.
+    await expectMatchesPreview("- [ ] a [ ] b\n> - [x] q\n- [ ] p\n  - [ ] n", 4);
+  });
+
+  it("returns md unchanged for an index that isn't there", () => {
+    expect(toggleChecklistLine("- [ ] a", 1)).toBe("- [ ] a");
+    expect(toggleChecklistLine("- [ ] a", -1)).toBe("- [ ] a");
   });
 });

@@ -41,6 +41,8 @@ interface Tool {
 }
 
 let mounted = 0;
+/** Per page load, so a placeholder left over from an earlier session never matches a new one. */
+const SESSION = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 /** A letter key by its character (any Latin layout), else by its position. */
 function keyName(e: KeyboardEvent): string {
@@ -309,7 +311,7 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): Description
     }
     showError("");
     // The marker is unique, so it is found again wherever later edits move it.
-    const marker = `![Uploading…](uploading:${uid}-${++uploadSeq})`;
+    const marker = `![Uploading…](uploading:${SESSION}-${uid}-${++uploadSeq})`;
     apply(fmt.insertText(state(), marker));
     void saver.flush(); // a refresh before the debounce must not drop the placeholder
     let replacement = "";
@@ -327,7 +329,11 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): Description
     if (itemId() === id) {
       const next = fmt.replaceMarker(state(), marker, replacement);
       if (!next) return; // the user deleted the placeholder
-      apply(next);
+      // A plain value set (caret kept), not an undoable edit: Ctrl+Z must
+      // never bring back a placeholder that nothing will resolve.
+      ta.value = next.value;
+      ta.setSelectionRange(next.selStart, next.selEnd);
+      changed();
       void saver.flush(); // so the stored image counts as referenced at once
       if (mode === "preview") void renderPreview();
       return;
@@ -361,31 +367,29 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): Description
     addImages(files);
   });
 
-  host.addEventListener("dragover", (e) => {
-    if (!hasFiles(e) || mode !== "edit") return;
+  // Files dragged over the editor are ours: stopPropagation keeps the Wails
+  // runtime's document-level handler (which shows "no drop" in a window
+  // without EnableFileDrop) from overriding the drop effect and the drop.
+  const takeFiles = (e: DragEvent) => {
+    if (!hasFiles(e) || mode !== "edit") return false;
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer!.dropEffect = "copy";
-    host.classList.add("is-drop");
-  });
+    return true;
+  };
+  host.addEventListener("dragenter", (e) => takeFiles(e) && host.classList.add("is-drop"));
+  host.addEventListener("dragover", (e) => takeFiles(e) && host.classList.add("is-drop"));
   host.addEventListener("dragleave", (e) => {
     if (!host.contains(e.relatedTarget as Node | null)) host.classList.remove("is-drop");
   });
   host.addEventListener("drop", (e) => {
     host.classList.remove("is-drop");
-    if (!hasFiles(e) || mode !== "edit") return;
-    e.preventDefault();
+    if (!takeFiles(e)) return;
     const files = imagesOf(e.dataTransfer?.files);
     if (files.length === 0) showError(checkImageType("") ?? "");
     else addImages(files);
   });
-
-  // A file dropped anywhere else must not navigate the webview to it.
-  document.addEventListener("dragover", (e) => {
-    if (e.defaultPrevented || !hasFiles(e)) return;
-    e.preventDefault();
-    e.dataTransfer!.dropEffect = "none";
-  });
-  document.addEventListener("drop", (e) => hasFiles(e) && e.preventDefault());
+  // Elsewhere, the runtime stops file drops and main.ts stops link drops.
 
   // ---------- lightbox ----------
 

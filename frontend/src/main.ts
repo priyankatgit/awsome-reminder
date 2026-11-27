@@ -15,6 +15,22 @@ const routes: Record<string, (root: HTMLElement) => void> = {
   settings: mountSettings,
 };
 
+// The webview never navigates: a link or text dragged in from outside (or
+// from our own page) and dropped anywhere but an editable field would
+// otherwise load it in place of the app. File drags are the Wails runtime's
+// (it stops those itself); the description editor takes its own drops first.
+const TEXT_FIELD =
+  "textarea, [contenteditable]:not([contenteditable='false']), " +
+  "input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=reset], [type=file], [type=range], [type=color], [type=image])";
+const editable = (t: EventTarget | null) => t instanceof Element && t.closest(TEXT_FIELD) !== null;
+for (const type of ["dragover", "drop"] as const) {
+  document.addEventListener(type, (e) => {
+    if (e.defaultPrevented || editable(e.target)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+  });
+}
+
 const root = document.getElementById("app");
 const route = routes[location.hash.replace(/^#/, "")];
 async function start(): Promise<void> {

@@ -56,6 +56,13 @@ async function load(): Promise<Render> {
   });
   const config = { ALLOWED_TAGS, ALLOWED_ATTR, ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false };
 
+  taskStates = (md) => {
+    const out: boolean[] = [];
+    marked.walkTokens(marked.lexer(md), (t) => {
+      if (t.type === "list_item" && t.task) out.push(t.checked === true);
+    });
+    return out;
+  };
   return (md) => purify.sanitize(marked.parse(md, { async: false }), config);
 }
 
@@ -68,36 +75,28 @@ export async function renderMarkdown(md: string): Promise<string> {
   return (await loading)(md);
 }
 
-// A task-list item as marked sees it: optional blockquote markers and indent,
-// a bullet or ordered marker, then [ ], [x] or [X] followed by text.
-const TASK = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)([ xX])(\][ \t]+\S)/;
-const FENCE = /^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})/;
+/** Checked state of every task-list item, in preview order; set once marked loads. */
+let taskStates: ((md: string) => boolean[]) | null = null;
 
 /**
- * Flips the index-th task-list item ([ ] ↔ [x]), counting items in the order
- * the preview shows their checkboxes; lines inside fenced code don't count.
- * Returns md unchanged when there is no such item.
+ * Flips the index-th task-list item ([ ] ↔ [x]), counting items exactly as
+ * the preview shows their checkboxes: marked's own lexer decides what is a
+ * task (not raw HTML, not code, not a paragraph continuation). Each [ ]/[x]
+ * in the source is tried in turn; the one whose flip changes only task
+ * index is the item's checkbox. Returns md unchanged when there is no such
+ * item, or when marked hasn't loaded yet (the preview loads it first).
  */
 export function toggleChecklistLine(md: string, index: number): string {
-  const lines = md.split("\n");
-  let fence: string | null = null; // the open fence's marker run
-  let n = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const f = FENCE.exec(lines[i]);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
-      continue;
-    }
-    if (f) {
-      fence = f[1];
-      continue;
-    }
-    const m = TASK.exec(lines[i]);
-    if (!m) continue;
-    if (n++ === index) {
-      lines[i] = lines[i].replace(TASK, (_all, pre: string, mark: string, post: string) => pre + (mark === " " ? "x" : " ") + post);
-      return lines.join("\n");
-    }
+  if (!taskStates) return md;
+  const base = taskStates(md);
+  if (index < 0 || index >= base.length) return md;
+  for (const m of md.matchAll(/\[[ xX]\]/g)) {
+    const at = m.index + 1;
+    const next = md.slice(0, at) + (md[at] === " " ? "x" : " ") + md.slice(at + 1);
+    const states = taskStates(next);
+    if (states.length !== base.length) continue;
+    const changed = states.flatMap((v, i) => (v !== base[i] ? [i] : []));
+    if (changed.length === 1 && changed[0] === index) return next;
   }
   return md;
 }
