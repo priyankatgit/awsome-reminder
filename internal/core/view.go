@@ -17,6 +17,7 @@ type Preview struct {
 	Tags     []string   `json:"tags"` // "inbox" if none
 	DueAt    *time.Time `json:"dueAt"`
 	RRule    string     `json:"rrule"`
+	Priority string     `json:"priority"`
 	Human    string     `json:"human"`  // e.g. "Thu 26 Nov, 17:00 · every Monday"
 	Alerts   []string   `json:"alerts"` // e.g. ["1h before", "10m before", "at time"]
 	Warnings []string   `json:"warnings"`
@@ -47,6 +48,19 @@ func effectiveTime(it model.Item) time.Time {
 		return *it.SnoozeUntil
 	}
 	return *it.DueAt
+}
+
+// priorityRank orders high before medium before low before none.
+func priorityRank(it model.Item) int {
+	switch it.Priority {
+	case model.PriorityHigh:
+		return 0
+	case model.PriorityMedium:
+		return 1
+	case model.PriorityLow:
+		return 2
+	}
+	return 3
 }
 
 // buildView groups open items. Upcoming holds open reminders whose effective
@@ -86,6 +100,7 @@ func buildView(open, done []model.Item, now time.Time) View {
 	})
 	for _, t := range names {
 		items := groups[t] // open is already ordered by created asc
+		sort.SliceStable(items, func(i, j int) bool { return priorityRank(items[i]) < priorityRank(items[j]) })
 		v.Tags = append(v.Tags, TagGroup{Tag: t, Items: items})
 	}
 	return v
