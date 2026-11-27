@@ -168,7 +168,10 @@ export const events = {
   alertsShow: "alerts:show",
   listFocus: "list:focus",
   captureOpen: "capture:open",
-  /** ReplyPrefill: open the capture box in reply mode (the reply hotkey or --reply). */
+  /**
+   * ReplyPrefill: open the capture box in reply mode (the reply hotkey or --reply).
+   * With keepText the box was already open: switch it to reply mode and keep its text (the other fields are empty).
+   */
   replyOpen: "reply:open",
   voiceStatus: "voice:status",
   syncStatus: "sync:status",

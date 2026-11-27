@@ -463,14 +463,14 @@ func TestHotkeyRecordingSuspendsBoth(t *testing.T) {
 // fakeReplyWindows records what the reply opener shows.
 type fakeReplyWindows struct {
 	mu    sync.Mutex
-	open  bool
+	mode  captureMode
 	shown []ReplyPrefill
 }
 
-func (w *fakeReplyWindows) isOpen() bool {
+func (w *fakeReplyWindows) captureMode() captureMode {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.open
+	return w.mode
 }
 
 func (w *fakeReplyWindows) show(p ReplyPrefill) {
@@ -496,7 +496,7 @@ func teamsGrab(calls *[][]grab.Key) func(context.Context, []grab.Key) grab.Resul
 func TestReplyPrefillFromGrab(t *testing.T) {
 	var calls [][]grab.Key
 	w := &fakeReplyWindows{}
-	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, isOpen: w.isOpen, show: w.show}
+	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, mode: w.captureMode, show: w.show}
 	o.Start(context.Background())
 	keys := []grab.Key{grab.KeyControl, grab.KeyAlt, 0x52}
 	o.Press(keys)
@@ -524,7 +524,7 @@ func TestReplyPrefillNeedsAccess(t *testing.T) {
 			return grab.Result{Text: "clipboard text", Process: "Slack"}
 		},
 		trusted: func() bool { return false },
-		isOpen:  w.isOpen,
+		mode:    w.captureMode,
 		show:    w.show,
 	}
 	o.Start(context.Background())
@@ -540,7 +540,7 @@ func TestReplyPrefillNeedsAccess(t *testing.T) {
 func TestReplyPressIgnoredBeforeStartAndAfterCancel(t *testing.T) {
 	var calls [][]grab.Key
 	w := &fakeReplyWindows{}
-	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, isOpen: w.isOpen, show: w.show}
+	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, mode: w.captureMode, show: w.show}
 	o.Press(nil)
 	if len(calls) != 0 || len(w.got()) != 0 {
 		t.Fatalf("pressed before Start: grabs %d shown %d", len(calls), len(w.got()))
@@ -558,12 +558,39 @@ func TestReplyPressIgnoredBeforeStartAndAfterCancel(t *testing.T) {
 // again (the copy would come from our own box).
 func TestReplyPressSkippedWhileOpen(t *testing.T) {
 	var calls [][]grab.Key
-	w := &fakeReplyWindows{open: true}
-	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, isOpen: w.isOpen, show: w.show}
+	w := &fakeReplyWindows{mode: captureReply}
+	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return true }, mode: w.captureMode, show: w.show}
 	o.Start(context.Background())
 	o.Press(nil)
 	if len(calls) != 0 || len(w.got()) != 0 {
 		t.Fatalf("pressed while open: grabs %d shown %d", len(calls), len(w.got()))
+	}
+}
+
+// A press while the normal capture box is open never grabs (the copy would
+// come from our own box: old clipboard text as the quote, our own window as
+// the source). The box switches to reply mode keeping what was typed: an
+// empty prefill with KeepText.
+func TestReplyPressWithCaptureOpenKeepsText(t *testing.T) {
+	var calls [][]grab.Key
+	w := &fakeReplyWindows{mode: captureNormal}
+	o := &replyOpener{grab: teamsGrab(&calls), trusted: func() bool { return false }, mode: w.captureMode, show: w.show}
+	o.Start(context.Background())
+	o.Press([]grab.Key{grab.KeyControl, grab.KeyAlt, 0x52})
+	if len(calls) != 0 {
+		t.Fatalf("grabbed %d times with the capture box open", len(calls))
+	}
+	if got := w.got(); !reflect.DeepEqual(got, []ReplyPrefill{{KeepText: true}}) {
+		t.Fatalf("shown %+v, want only KeepText", got)
+	}
+
+	// Once the box is hidden the hotkey grabs as before.
+	w.mu.Lock()
+	w.mode = captureHidden
+	w.mu.Unlock()
+	o.Press(nil)
+	if got := w.got(); len(calls) != 1 || len(got) != 2 || got[1].KeepText || got[1].Line != "Reply to Priya Sharma: deploy?" {
+		t.Fatalf("hidden box: grabs %d shown %+v", len(calls), got)
 	}
 }
 
@@ -581,7 +608,7 @@ func TestReplyOpenerStop(t *testing.T) {
 			return grab.Result{}
 		},
 		trusted: func() bool { return true },
-		isOpen:  w.isOpen,
+		mode:    w.captureMode,
 		show:    w.show,
 	}
 	o.Start(context.Background())
@@ -608,7 +635,7 @@ func TestReplyOpenerStop(t *testing.T) {
 	stuck := &replyOpener{
 		grab:    func(context.Context, []grab.Key) grab.Result { <-unstick; return grab.Result{} },
 		trusted: func() bool { return true },
-		isOpen:  w.isOpen,
+		mode:    w.captureMode,
 		show:    w.show,
 	}
 	stuck.Start(context.Background())

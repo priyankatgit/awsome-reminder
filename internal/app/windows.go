@@ -481,17 +481,30 @@ func (w *wailsWindows) ShowCapture() {
 }
 
 // ShowReply tells the frontend to open the capture box in reply mode with p,
-// then shows and focuses it like ShowCapture.
+// then shows and focuses it like ShowCapture. With p.KeepText the box is
+// already open: it is only focused, where it is.
 func (w *wailsWindows) ShowReply(p ReplyPrefill) {
 	w.replyOpen.Store(true)
 	w.app.Event.Emit(EventReplyOpen, p)
+	if p.KeepText {
+		w.capture.Focus()
+		log.Printf("capture: switched to reply mode")
+		return
+	}
 	w.showCapture()
 	log.Printf("capture: shown in reply mode")
 }
 
-// ReplyOpen reports whether the capture box is showing in reply mode.
-func (w *wailsWindows) ReplyOpen() bool {
-	return w.replyOpen.Load() && w.capture.IsVisible()
+// CaptureMode reports whether the capture box is hidden or showing, and in
+// which mode.
+func (w *wailsWindows) CaptureMode() captureMode {
+	switch {
+	case !w.capture.IsVisible():
+		return captureHidden
+	case w.replyOpen.Load():
+		return captureReply
+	}
+	return captureNormal
 }
 
 // showCapture centers the capture box on the screen under the mouse cursor

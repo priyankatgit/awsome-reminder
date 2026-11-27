@@ -21,6 +21,10 @@ const (
 // from and the message itself. Grabbed is false when Quote is the clipboard's
 // own text (or empty) rather than the selection. NeedsAccess is true when
 // macOS has not granted the Accessibility permission the grab needs.
+//
+// KeepText is true when the hotkey was pressed with the capture box already
+// open in normal mode: nothing was grabbed, every other field is empty, and
+// the box switches to reply mode keeping the text it holds.
 type ReplyPrefill struct {
 	Line        string `json:"line"`
 	OwedTo      string `json:"owedTo"`
@@ -28,6 +32,7 @@ type ReplyPrefill struct {
 	Quote       string `json:"quote"`
 	Grabbed     bool   `json:"grabbed"`
 	NeedsAccess bool   `json:"needsAccess"`
+	KeepText    bool   `json:"keepText"`
 }
 
 func init() {

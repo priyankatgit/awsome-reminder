@@ -204,11 +204,11 @@ func Run(opts Options) error {
 	}()
 
 	win = newWindows(app)
-	replies.isOpen, replies.show = win.ReplyOpen, win.ShowReply
-	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
+	replies.mode, replies.show = win.CaptureMode, win.ShowReply
+	hk := hotkey.NewManager(hotkey.Platform(captureFlag), win.ShowCapture)
 	// Each registration's press runs on its own goroutine (pumpPresses),
 	// never the main thread, and carries that combo's keys.
-	rhk := hotkey.NewManager(replyRegistrar(hotkey.Platform(), replies.Press), nil)
+	rhk := hotkey.NewManager(replyRegistrar(hotkey.Platform(replyFlag), replies.Press), nil)
 	// On the way out: no hotkey can start a grab, a grab in flight hands
 	// off its clipboard restore, and the restore finishes before the
 	// process exits.

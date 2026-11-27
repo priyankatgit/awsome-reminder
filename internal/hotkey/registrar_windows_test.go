@@ -92,8 +92,8 @@ func newestID(t *testing.T) uintptr {
 func TestWindowsTwoManagersAtOnce(t *testing.T) {
 	a := make(chan struct{}, 4)
 	b := make(chan struct{}, 4)
-	ma := NewManager(Platform(), func() { a <- struct{}{} })
-	mb := NewManager(Platform(), func() { b <- struct{}{} })
+	ma := NewManager(Platform("--capture"), func() { a <- struct{}{} })
+	mb := NewManager(Platform("--capture"), func() { b <- struct{}{} })
 	defer ma.Close()
 	defer mb.Close()
 	if err := ma.Set("Ctrl+Alt+Shift+F11"); err != nil {

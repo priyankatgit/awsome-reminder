@@ -34,12 +34,18 @@ func onMain(f func()) {
 	<-done
 }
 
-const waylandMsg = `global hotkeys aren't supported on Wayland; bind "awesome-reminder --capture" in your system keyboard settings`
+// Platform returns the real Registrar for the current OS. flag is the
+// command-line flag that does what the hotkey does ("--capture", "--reply"):
+// where global hotkeys are unavailable (Wayland) the registration error tells
+// the user to bind it in the system keyboard settings instead.
+func Platform(flag string) Registrar {
+	return platformFor(goos, os.Getenv("XDG_SESSION_TYPE"), flag)
+}
 
-// Platform returns the real Registrar for the current OS.
-func Platform() Registrar {
-	if goos == "linux" && os.Getenv("XDG_SESSION_TYPE") == "wayland" {
-		return func(Combo, func()) (func(), error) { return nil, errors.New(waylandMsg) }
+func platformFor(goos, session, flag string) Registrar {
+	if goos == "linux" && session == "wayland" {
+		msg := `global hotkeys aren't supported on Wayland; bind "awesome-reminder ` + flag + `" in your system keyboard settings`
+		return func(Combo, func()) (func(), error) { return nil, errors.New(msg) }
 	}
 	return register
 }

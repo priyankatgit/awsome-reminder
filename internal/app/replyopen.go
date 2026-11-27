@@ -21,9 +21,20 @@ const replyStopTimeout = 2 * time.Second
 // is injected: whatever modifiers the desktop shortcut that ran it held.
 var flagKeys = []grab.Key{grab.KeyControl, grab.KeyAlt, grab.KeyShift}
 
+// captureMode is the capture box's state when the reply hotkey is pressed.
+type captureMode int
+
+const (
+	captureHidden captureMode = iota
+	captureNormal             // showing in normal mode
+	captureReply              // showing in reply mode
+)
+
 // replyOpener runs the reply hotkey: it grabs the selected text from the
 // foreground app, guesses who is waiting on a reply and opens the capture box
-// in reply mode with that pre-fill.
+// in reply mode with that pre-fill. With the capture box already showing it
+// never grabs: the foreground window is our own box, so a copy would bring
+// back old clipboard text as the quote and our window as the source.
 //
 // Press runs on a hotkey goroutine, never the Wails main thread (grab.Grab
 // waits for the main queue on macOS and would deadlock there). It does
@@ -32,10 +43,11 @@ var flagKeys = []grab.Key{grab.KeyControl, grab.KeyAlt, grab.KeyShift}
 type replyOpener struct {
 	grab    func(ctx context.Context, keys []grab.Key) grab.Result
 	trusted func() bool // grab.AccessibilityTrusted
-	// isOpen reports whether the capture box is already showing in reply
-	// mode; a press then does nothing, so a double press doesn't grab twice.
-	isOpen func() bool
-	show   func(ReplyPrefill) // wailsWindows.ShowReply
+	// mode reports the capture box's state. In reply mode a press does
+	// nothing (a double press doesn't grab twice); in normal mode it switches
+	// the box to reply mode keeping its text (KeepText).
+	mode func() captureMode
+	show func(ReplyPrefill) // wailsWindows.ShowReply
 
 	mu      sync.Mutex
 	ctx     context.Context // nil until Start
@@ -84,8 +96,13 @@ func (o *replyOpener) Press(keys []grab.Key) {
 		return
 	}
 	defer o.busy.Store(false)
-	if o.isOpen() {
+	switch o.mode() {
+	case captureReply:
 		log.Printf("reply: already open; not grabbing again")
+		return
+	case captureNormal:
+		log.Printf("reply: capture box open; switching it to reply mode")
+		o.show(ReplyPrefill{KeepText: true})
 		return
 	}
 	res := o.grab(ctx, keys)
