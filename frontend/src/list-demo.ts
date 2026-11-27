@@ -5,6 +5,7 @@
 // Ctrl+Alt+K fails as "already used"). Loaded only when import.meta.env.DEV
 // and ?demo are both set, so production bundles never include it.
 import { api, emitLocal, events, type AlertCard, type Item, type Settings, type View } from "./api";
+import { effectiveDue } from "./item-row";
 
 function item(id: string, text: string, tags: string[], dueInMin: number | null, extra: Partial<Item> = {}): Item {
   const now = Date.now();
@@ -40,7 +41,7 @@ export function installDemo(): void {
   ];
   if (new URLSearchParams(location.search).get("demo") === "empty") items = [];
   const tagOf = (it: Item) => (it.tags && it.tags.length ? it.tags : ["inbox"]);
-  const eff = (it: Item) => new Date(it.snoozeUntil ?? it.dueAt ?? 0).getTime();
+  const eff = (it: Item) => effectiveDue(it, new Date())?.getTime() ?? 0;
 
   const view = (): View => {
     const open = items.filter((i) => i.status === "open");

@@ -40,18 +40,21 @@ const (
 	doneLimit      = 50
 )
 
-// effectiveTime is when an item next demands attention: SnoozeUntil if set,
-// otherwise DueAt.
-func effectiveTime(it model.Item) time.Time {
-	if it.SnoozeUntil != nil {
-		return *it.SnoozeUntil
+// effectiveTime is when an item next demands attention: SnoozeUntil while
+// it is still ahead of now and earlier than DueAt, otherwise DueAt. A snooze
+// that has passed (its alert fired) or that ends after the due time never
+// hides the due time. frontend/src/item-row.ts effectiveDue mirrors it.
+func effectiveTime(it model.Item, now time.Time) time.Time {
+	if s := it.SnoozeUntil; s != nil && s.After(now) && s.Before(*it.DueAt) {
+		return *s
 	}
 	return *it.DueAt
 }
 
 // buildView groups open items. Upcoming holds open reminders whose effective
 // time is before now+7d, sorted ascending (overdue items therefore come
-// first). Snoozed items sort by their snooze time, not their due time.
+// first). An item snoozed to before its due time sorts by its snooze time
+// until the snooze ends.
 func buildView(open, done []model.Item, now time.Time) View {
 	v := View{Upcoming: []model.Item{}, Tags: []TagGroup{}, Done: done}
 	if v.Done == nil {
@@ -60,7 +63,7 @@ func buildView(open, done []model.Item, now time.Time) View {
 	horizon := now.Add(upcomingWindow)
 	groups := map[string][]model.Item{}
 	for _, it := range open {
-		if it.Kind == model.KindReminder && it.DueAt != nil && effectiveTime(it).Before(horizon) {
+		if it.Kind == model.KindReminder && it.DueAt != nil && effectiveTime(it, now).Before(horizon) {
 			v.Upcoming = append(v.Upcoming, it)
 		}
 		tags := it.Tags
@@ -72,7 +75,7 @@ func buildView(open, done []model.Item, now time.Time) View {
 		}
 	}
 	sort.SliceStable(v.Upcoming, func(i, j int) bool {
-		return effectiveTime(v.Upcoming[i]).Before(effectiveTime(v.Upcoming[j]))
+		return effectiveTime(v.Upcoming[i], now).Before(effectiveTime(v.Upcoming[j], now))
 	})
 	names := make([]string, 0, len(groups))
 	for t := range groups {

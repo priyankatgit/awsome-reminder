@@ -17,10 +17,24 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** When an item next demands attention: its snooze time, else its due time. */
-export function effectiveDue(it: Item): Date | null {
-  const s = it.snoozeUntil ?? it.dueAt;
-  return s ? new Date(s) : null;
+/** Whether the item's snooze is still pending (its alert has not fired yet). */
+export function snoozePending(it: Item, now: Date): boolean {
+  return !!it.snoozeUntil && new Date(it.snoozeUntil).getTime() > now.getTime();
+}
+
+/**
+ * When an item next demands attention: its snooze time while that is still
+ * ahead and earlier than the due time, else its due time. Mirrors
+ * effectiveTime in internal/core/view.go.
+ */
+export function effectiveDue(it: Item, now: Date): Date | null {
+  if (!it.dueAt) return null;
+  const due = new Date(it.dueAt);
+  if (it.snoozeUntil && snoozePending(it, now)) {
+    const s = new Date(it.snoozeUntil);
+    if (s.getTime() < due.getTime()) return s;
+  }
+  return due;
 }
 
 export function isDone(it: Item): boolean {
@@ -73,14 +87,14 @@ export function agoLabel(d: Date, now: Date): string {
 
 /** Whether an open reminder is past its effective time. */
 export function isOverdue(it: Item, now: Date): boolean {
-  const d = effectiveDue(it);
+  const d = effectiveDue(it, now);
   return !isDone(it) && isReminder(it) && d !== null && d.getTime() < now.getTime();
 }
 
 /** Everything a row's content depends on; equal signatures need no refill. */
 export function rowSignature(m: RowModel, now: Date): string {
   const it = m.item;
-  const d = effectiveDue(it);
+  const d = effectiveDue(it, now);
   return JSON.stringify([
     it.text,
     it.tags,
@@ -92,6 +106,7 @@ export function rowSignature(m: RowModel, now: Date): string {
     m.sectionTag ?? "",
     d && isReminder(it) ? timeLabel(d, now) : "",
     isOverdue(it, now) && d ? agoLabel(d, now) : "",
+    snoozePending(it, now),
   ]);
 }
 
@@ -111,7 +126,7 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
   const done = isDone(it);
   const reminder = isReminder(it);
   const overdue = isOverdue(it, now);
-  const due = effectiveDue(it);
+  const due = effectiveDue(it, now);
 
   row.dataset.id = it.id;
   row.classList.toggle("is-done", done);
@@ -141,7 +156,7 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
   const main = el("span", "row-main");
   if (overdue && due) {
     main.append(el("span", "row-overdue", `overdue ${agoLabel(due, now)} · `));
-  } else if (it.snoozeUntil && !done) {
+  } else if (snoozePending(it, now) && !done) {
     main.append(el("span", "row-note", "snoozed · "));
   }
   const text = el("span", "row-text", it.text);

@@ -68,12 +68,55 @@ func TestPlanSnoozeOverrides(t *testing.T) {
 	it := rem("a", due, t0.Add(-24*time.Hour))
 	it.SnoozeUntil = &sn
 	fire, _, next := Plan([]model.Item{it}, leads, t0.Add(time.Hour), none)
-	if len(fire) != 1 || fire[0].Key != "a|snooze|"+strconv.FormatInt(sn.Unix(), 10) || fire[0].Lead != 0 {
+	if len(fire) != 1 || fire[0].Key != "a|snooze|"+strconv.FormatInt(sn.Unix(), 10) || fire[0].Lead != 0 || !fire[0].Snooze {
 		t.Fatalf("got %+v", fire)
 	}
 	_, _, next = Plan([]model.Item{it}, leads, t0, none)
 	if !next.Equal(sn) {
 		t.Fatalf("next=%v", next)
+	}
+}
+
+// A snooze that ends before the due time must not swallow the due-time
+// alert (C1): due T, the 1h lead shows at T-1h, the user snoozes 10 min.
+func TestPlanSnoozeBeforeDueKeepsAtTime(t *testing.T) {
+	due := t0
+	snoozedAt := due.Add(-time.Hour)
+	sn := due.Add(-50 * time.Minute)
+	it := rem("a", due, due.Add(-24*time.Hour))
+	it.UpdatedAt = snoozedAt
+	it.SnoozeUntil = &sn
+	notified := map[string]bool{}
+	mark := func(cov []string) {
+		for _, k := range cov {
+			notified[k] = true
+		}
+	}
+	seen := func(k string) bool { return notified[k] }
+
+	fire, cov, next := Plan([]model.Item{it}, leads, snoozedAt, seen)
+	if len(fire) != 0 || !next.Equal(sn) {
+		t.Fatalf("before snooze end: fire=%+v next=%v", fire, next)
+	}
+	fire, cov, next = Plan([]model.Item{it}, leads, sn, seen)
+	if len(fire) != 1 || !fire[0].Snooze || fire[0].Key != "a|snooze|"+strconv.FormatInt(sn.Unix(), 10) {
+		t.Fatalf("at snooze end: %+v", fire)
+	}
+	mark(cov)
+	if !next.Equal(due.Add(-10 * time.Minute)) {
+		t.Fatalf("after snooze alert next=%v, want the 10m lead", next)
+	}
+	fire, cov, next = Plan([]model.Item{it}, leads, due.Add(-10*time.Minute), seen)
+	if len(fire) != 1 || fire[0].Lead != 10*time.Minute || fire[0].Snooze {
+		t.Fatalf("10m lead: %+v", fire)
+	}
+	mark(cov)
+	if !next.Equal(due) {
+		t.Fatalf("next=%v, want due", next)
+	}
+	fire, _, _ = Plan([]model.Item{it}, leads, due, seen)
+	if len(fire) != 1 || fire[0].Lead != 0 || fire[0].Snooze || fire[0].Key != "a|"+strconv.FormatInt(due.Unix(), 10)+"|0" {
+		t.Fatalf("at due: %+v", fire)
 	}
 }
 

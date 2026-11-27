@@ -260,6 +260,47 @@ func TestViewGrouping(t *testing.T) {
 	}
 }
 
+func upcomingIDs(t *testing.T, e *env) []string {
+	t.Helper()
+	v, err := e.c.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, it := range v.Upcoming {
+		ids = append(ids, it.ID)
+	}
+	return ids
+}
+
+// C1: a snooze sorts the item only while it is pending and before the due
+// time; once it has passed the item sorts by its due time again.
+func TestViewSnoozeSortsOnlyWhilePending(t *testing.T) {
+	e := newEnv(t) // 10:00
+	a := mustCapture(t, e, "today 12:00 a")
+	b := mustCapture(t, e, "today 11:30 b")
+	if err := e.c.Snooze(a.ID, "1h"); err != nil { // until 11:00
+		t.Fatal(err)
+	}
+	if got := upcomingIDs(t, e); !reflect.DeepEqual(got, []string{a.ID, b.ID}) {
+		t.Fatalf("while snoozed: %v", got)
+	}
+	e.now = e.now.Add(70 * time.Minute) // 11:10, snooze over
+	if got := upcomingIDs(t, e); !reflect.DeepEqual(got, []string{b.ID, a.ID}) {
+		t.Fatalf("after snooze: %v", got)
+	}
+	it, _ := e.st.Get(a.ID)
+	if got := effectiveTime(it, e.now); !got.Equal(*it.DueAt) {
+		t.Fatalf("effective %v, want due %v", got, it.DueAt)
+	}
+	// A snooze past the due time never moves the item later than its due time.
+	late := it.DueAt.Add(time.Hour)
+	it.SnoozeUntil = &late
+	if got := effectiveTime(it, e.now); !got.Equal(*it.DueAt) {
+		t.Fatalf("snooze after due: effective %v", got)
+	}
+}
+
 func TestPreviewAlerts(t *testing.T) {
 	e := newEnv(t)
 	p := e.c.Preview("in 30 minutes call")

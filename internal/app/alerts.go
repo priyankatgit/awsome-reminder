@@ -36,7 +36,7 @@ type alertQueue struct {
 // card enriches a scheduler alert with the item's tags and recurrence. An
 // item that can't be read still gets a card from the alert alone.
 func (s *Service) card(a scheduler.Alert) AlertCard {
-	c := AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Tags: []string{}}
+	c := AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
 	if s.d.Core == nil {
 		return c
 	}
@@ -47,7 +47,6 @@ func (s *Service) card(a scheduler.Alert) AlertCard {
 	}
 	c.Tags = append(c.Tags, it.Tags...)
 	c.Recurring = it.RRule != ""
-	c.Snoozed = it.SnoozeUntil != nil
 	return c
 }
 
