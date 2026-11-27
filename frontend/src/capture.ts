@@ -304,6 +304,7 @@ export function mountCapture(root: HTMLElement): void {
       lineHeight: `${r.height}px`,
     });
     box.append(ghost);
+    ghost.scrollLeft = input.scrollLeft; // a long line shows the same part the input did
     box.classList.add("is-flying"); // the input's own text and caret go blank
     const g = ghost.getBoundingClientRect();
     const dx = window.innerWidth - g.right;

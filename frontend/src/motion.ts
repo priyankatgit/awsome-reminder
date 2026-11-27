@@ -110,9 +110,9 @@ export function enter(el: HTMLElement, offsetToken: string, rect?: DOMRect): voi
  * A fading copy of a removed element, left where it was (inside host, which
  * must be positioned) and dropped from the DOM when the fade ends.
  */
-export function ghost(old: HTMLElement, rect: DOMRect, host: HTMLElement): void {
+export function ghost(old: HTMLElement, rect: DOMRect, host: HTMLElement, hostRect?: DOMRect): void {
   if (!canAnimate(host) || offscreen(rect) || rect.height === 0) return;
-  const h = host.getBoundingClientRect();
+  const h = hostRect ?? host.getBoundingClientRect(); // callers with many ghosts pass it once
   const g = old.cloneNode(true) as HTMLElement;
   g.removeAttribute("id");
   g.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
@@ -128,7 +128,8 @@ export function ghost(old: HTMLElement, rect: DOMRect, host: HTMLElement): void 
     margin: "0",
   });
   host.append(g);
-  const a = g.animate([{ opacity: getComputedStyle(old).opacity || "1" }, { opacity: 0 }], {
+  const a = g.animate([{ opacity: 1 }, { opacity: 0 }], {
+    fill: "forwards", // stays invisible even if the finish event comes late (hidden window)
     duration: motionMs("--dur-exit"),
     easing: token("--ease-exit") || "ease-in",
   });
@@ -160,7 +161,7 @@ export function ring(el: Element): void {
   el.animate([turn(0), turn(1), turn(-0.75), turn(0.45), turn(-0.2), turn(0)], {
     duration: motionMs("--dur-ring"),
     delay: motionMs("--dur-ring-delay"),
-    easing: "ease-in-out",
+    easing: easing("--ease-ring"),
   });
 }
 

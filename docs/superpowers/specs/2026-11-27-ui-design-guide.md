@@ -59,7 +59,7 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `frontend/src/motion.ts` (Web Animations API, no libraries).
 
 **Rules**
-- Animate only `opacity` and `transform`. The one place the browser would animate size, the View Transition title morph, is overridden with a translate (see below).
+- Animate only `opacity` and `transform`. The one place the browser would animate size, the View Transition title morph, is overridden with a translate (see below). Keyframe shapes (offsets, the ring's damping steps) live in `motion.ts`/`capture.ts`; every duration, distance, scale and curve is a token.
 - Exits run at about 60–70% of their entrance.
 - `prefers-reduced-motion`: CSS animations and transitions are off (global rule in `style.css`), and every `motion.ts` helper is a no-op, so springs, glides, the fly, the ring, confetti, the toast bar and the morph don't run. State changes stay instant.
 - Nothing loops or runs on a timer while idle. Each effect is started by a user action or a data change and ends on its own; the list's 60 s re-render measures rows but starts no animation when nothing moved.
@@ -69,22 +69,22 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - `--ease-enter` `cubic-bezier(.2,.8,.2,1)` and `--ease-exit` ease-in for plain enters/exits (enter 140 ms `--dur-enter`, exit 90 ms `--dur-exit`, hover 150 ms).
 - `--ease-spring`: a `linear()` sample of a damped spring (ζ 0.75, 2.8% overshoot, 90% of the way at 37% of the duration). Panel slide, alert entrance, row glides.
 - `--ease-spring-pop`: ζ 0.5, 16% overshoot, for small pops (bell, priority chips, the checkbox).
-- Engines without `linear()` (older WebKit) fall back to the UA ease in CSS; `motion.ts` checks `CSS.supports` and falls back to `--ease-enter`.
+- Engines without `linear()` (older WebKit) get cubic-bezier stand-ins: the `linear()` values are set inside `@supports (transition-timing-function: linear(0, 1))`, because a token that fails to parse would void the whole `transition` shorthand. `motion.ts` also checks `CSS.supports` before passing an easing to WAAPI.
 
 **What ships**
 
 | Effect | Where | Motion | Tokens |
 |---|---|---|---|
-| Fly to tray | capture, on save | after `Capture` succeeds, a copy of the line rises (`--fly-lift`), then dives to the bottom-right corner shrinking to `--fly-scale` and fading; the input goes blank and the box fades over the last 90 ms, so the window hides as the line lands | `--dur-fly` 220 ms, `--ease-fly` |
-| Bell pop + ring | capture, first detected time | bell pops on the spring, then rings once about its top (±`--ring-angle`, damped) | `--dur-pop` 280 ms / exit `--dur-pop-exit` 180 ms, `--dur-ring` 420 ms after `--dur-ring-delay` 120 ms |
+| Fly to tray | capture, on save | after `Capture` succeeds, a copy of the line (scrolled like the input, for long lines) rises (`--fly-lift`), then dives to the bottom-right corner shrinking to `--fly-scale` and fading; the input goes blank and the box fades over the last 90 ms, so the window hides as the line lands | `--dur-fly` 220 ms, `--ease-fly` |
+| Bell pop + ring | capture, first detected time | bell pops on the spring, then rings once about its top (±`--ring-angle`, damped, `--ease-ring`) | `--dur-pop` 280 ms / exit `--dur-pop-exit` 180 ms, `--dur-ring` 420 ms after `--dur-ring-delay` 120 ms |
 | Priority chip pop | capture chips, panel segmented control | a chip turning on pops from `--chip-pop-scale` | `--dur-chip` 240 ms |
 | Done | list | the box pops (`--check-pop-scale`), the check draws left to right (an accent cover scales away), the strike follows `--done-stagger` later, then the row leaves as a fading ghost and the rows below glide up | `--dur-check` 240 ms, `--dur-done` 180 ms, `--dur-glide` 260 ms |
 | Reflow (FLIP) | list, on data changes and the Done toggle (not while typing a search) | rows and section headers glide from their old place; a row whose section changed glides across; new rows (Undo) fade in from `--row-enter-offset` | `--dur-glide`, `--dur-enter` |
-| Row grows into the panel | list → panel, opening (click or Enter) | same-document View Transition: the row title and the panel title share `view-transition-name: item-title`; the UA size morph is replaced by a translate while old and new titles cross-fade; the panel springs in as its own layer; the rest of the page switches at once. Falls back to the slide where `startViewTransition` is missing (WKWebView, WebKitGTK) or the window gets no frames within `--dur-panel` | `--dur-panel` 280 ms |
+| Row grows into the panel | list → panel, opening (click or Enter) | same-document View Transition: the row title and the panel title share `view-transition-name: item-title`; the UA size morph is replaced by a translate while old and new titles cross-fade; the panel springs in as its own layer; the rest of the page switches at once. A narrow window widens first (a viewport resize mid-transition aborts it); a click mid-morph passes through the overlay (`::view-transition { pointer-events: none }`). Falls back to the slide where `startViewTransition` is missing (WebKitGTK, macOS before Safari 18), or when the transition is aborted other than by the user (no frames within `--dur-panel`, a resize); a key or click skips it to the open panel | `--dur-panel` 280 ms |
 | Panel slide | panel | spring in, ease-in out; a `--panel-overshoot-cover` strip of surface past the right edge hides the overshoot | `--dur-panel` 280 ms / `--dur-panel-exit` 180 ms |
 | Alert entrance | alert | spring slide/fade, several new cards cascade `--stagger-alert` apart; a card revealed while others close a gap waits `--alert-gap-wait` | `--dur-alert-enter` 260 ms / `--dur-alert-exit` 170 ms |
 | Alert gap close | alert, a card leaves | the other cards glide into the gap (FLIP); cards sit at the bottom of the window and the window shrink waits for the glide, since Go pins it bottom-right | `--dur-glide` |
-| Undo bar | list toast with an action | a `--toast-bar` line along the toast's bottom edge scales down over the 5 s undo window; it rests full while pointer or focus is on the toast and restarts after | `--toast-bar`, `--toast-bar-opacity` |
+| Undo bar | list toast with an action | a `--toast-bar` line along the toast's bottom edge scales down over the 5 s undo window; it rests full while pointer or focus is on the toast and restarts after, and stays empty through the toast's fade-out | `--toast-bar`, `--toast-bar-opacity` |
 | Today is clear | list, completing the last open item due by the end of today (overdue counts) | `--confetti-count` (12) dots burst from the checkbox, drift down and fade; the layer leaves the DOM afterwards | `--dur-confetti` 700 ms, `--ease-burst`, `--confetti-*` |
 
 ## Capture box (Spotlight)

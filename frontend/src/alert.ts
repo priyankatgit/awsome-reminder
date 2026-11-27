@@ -6,7 +6,7 @@ import { api, errorText, events, on, type AlertCard, type SnoozePreset } from ".
 import { el, motionMs, tagChip } from "./dom";
 import { icons } from "./icons";
 import { agoLabel, timeLabel } from "./item-row";
-import { canAnimate, glide, measure, stopGlide } from "./motion";
+import { canAnimate, easing, glide, measure, stopGlide } from "./motion";
 
 /** Cards shown before "+N more". */
 const MAX_VISIBLE = 3;
@@ -313,10 +313,11 @@ export function mountAlert(root: HTMLElement): void {
       for (const c of cards) stopGlide(c);
       const after = measure(cards);
       let moved = false;
+      const timing = { duration: motionMs("--dur-glide"), easing: easing("--ease-spring") };
       for (const c of cards) {
         const first = before.get(c);
         if (!first) continue;
-        glide(c, first, after.get(c));
+        glide(c, first, after.get(c), timing);
         moved ||= Math.abs(first.top - after.get(c)!.top) >= 0.5;
       }
       if (moved) for (const n of fresh) n.classList.add("is-after-gap");

@@ -241,6 +241,9 @@ export function mountList(root: HTMLElement): void {
    */
   function render(animate = false): void {
     const before = animate && !reducedMotion() ? measure(reflowEls()) : null;
+    // A plain render (typing in search) must not leave a running glide
+    // translating rows by an offset measured against the old layout.
+    if (!before) for (const e of reflowEls()) stopGlide(e);
     rendering = true;
     try {
       renderNow();
@@ -254,35 +257,53 @@ export function mountList(root: HTMLElement): void {
     return Array.from(sectionsBox.querySelectorAll<HTMLElement>(".sec-head, .sec-rows:not([hidden]) > .row"));
   }
 
+  interface Gone {
+    el: HTMLElement;
+    rect: DOMRect;
+  }
+
   function reflow(before: Map<Element, DOMRect>): void {
     const els = reflowEls();
     for (const e of els) stopGlide(e);
     const after = measure(els); // one layout pass, then only writes
+    const timing = { duration: motionMs("--dur-glide"), easing: easing("--ease-spring") };
     const live = new Set<Element>(els);
-    const gone = new Map<string, { el: HTMLElement; rect: DOMRect }>(); // removed rows by item id
-    const goneHeads: { el: HTMLElement; rect: DOMRect }[] = [];
+    // Removed rows by item id: a reminder has two rows (Today / Upcoming and
+    // its tag), so completing it removes both.
+    const gone = new Map<string, Gone[]>();
+    const goneHeads: Gone[] = [];
     for (const [e, rect] of before) {
       if (live.has(e) || !(e instanceof HTMLElement)) continue;
       const id = e.dataset.id;
-      if (id && !gone.has(id)) gone.set(id, { el: e, rect });
-      else if (!id) goneHeads.push({ el: e, rect });
+      if (id) gone.set(id, [...(gone.get(id) ?? []), { el: e, rect }]);
+      else goneHeads.push({ el: e, rect });
     }
     for (const e of els) {
       const last = after.get(e)!;
       const first = before.get(e);
       if (first) {
-        glide(e, first, last);
+        glide(e, first, last, timing);
         continue;
       }
-      const from = e.dataset.id ? gone.get(e.dataset.id) : undefined;
-      if (from) {
-        gone.delete(e.dataset.id!); // moved to another section: carry it across
-        glide(e, from.rect, last);
-      } else {
-        enter(e, "--row-enter-offset", last);
-      }
+      const from = e.dataset.id ? takeClosest(gone.get(e.dataset.id), last) : undefined;
+      if (from) glide(e, from.rect, last, timing); // moved to another section: carry it across
+      else enter(e, "--row-enter-offset", last);
     }
-    for (const g of [...gone.values(), ...goneHeads]) ghost(g.el, g.rect, content);
+    const ghosts = [...[...gone.values()].flat(), ...goneHeads];
+    if (ghosts.length) {
+      const hostRect = content.getBoundingClientRect();
+      for (const g of ghosts) ghost(g.el, g.rect, content, hostRect);
+    }
+  }
+
+  /** Removes and returns the candidate nearest to rect (the shortest carry). */
+  function takeClosest(list: Gone[] | undefined, rect: DOMRect): Gone | undefined {
+    if (!list?.length) return undefined;
+    let best = 0;
+    list.forEach((g, i) => {
+      if (Math.abs(g.rect.top - rect.top) < Math.abs(list[best].rect.top - rect.top)) best = i;
+    });
+    return list.splice(best, 1)[0];
   }
 
   function renderNow(): void {
@@ -521,7 +542,7 @@ export function mountList(root: HTMLElement): void {
 
   function hideToast(): void {
     window.clearTimeout(toastTimer);
-    runToastBar(false);
+    // The bar stays empty through the fade; the next toast restarts it.
     toast.classList.remove("is-visible");
     toastRun = null;
   }
@@ -714,9 +735,13 @@ export function mountList(root: HTMLElement): void {
     const m = modelOf(row ?? null);
     if (!m || !row) return;
     const mod = await loadPanel();
-    if (!mod.isPanelOpen() && canMorph()) return morphOpen(mod, row, m.item.id, focus);
+    // Morph only from a fully closed panel: one still sliding out would sit
+    // in both snapshots and spring in from twice its width.
+    if (mod.panelIdle() && canMorph()) return morphOpen(mod, row, m.item.id, focus);
     await mod.openPanel(m.item.id, focus);
   }
+
+  let morph: ViewTransition | null = null; // the running panel morph
 
   /** Same-document View Transitions (Chromium/WebView2), motion allowed. */
   function canMorph(): boolean {
@@ -726,11 +751,16 @@ export function mountList(root: HTMLElement): void {
   /**
    * Opens the panel with the row's title growing into the panel's title: a
    * view transition in which both carry the name "item-title" (panel.css).
-   * Any key press or click skips it, so input acts at once.
+   * Any key press or click skips it, so input acts at once. If the engine
+   * aborts it any other way (no frames in time, a viewport change), the
+   * panel slides in instead.
    */
   async function morphOpen(mod: PanelModule, row: HTMLElement, id: string, focus?: "title"): Promise<void> {
+    // Openings widen a narrow window; a viewport resize mid-transition
+    // aborts it, so the window grows first.
+    await mod.widenForPanel();
     const src = row.querySelector<HTMLElement>(".row-text");
-    if (!src || !row.isConnected) return mod.openPanel(id, focus);
+    if (!src || !row.isConnected || !mod.panelIdle()) return mod.openPanel(id, focus);
     const dst = mod.panelTitle();
     const from = src.getBoundingClientRect();
     const html = document.documentElement;
@@ -741,23 +771,41 @@ export function mountList(root: HTMLElement): void {
       dst.style.viewTransitionName = "item-title";
       await mod.openPanel(id, focus);
     });
-    const skip = () => t.skipTransition();
-    document.addEventListener("keydown", skip, true);
-    document.addEventListener("pointerdown", skip, true);
+    morph = t;
+    let byUser = false;
+    const userSkip = () => {
+      byUser = true;
+      t.skipTransition();
+    };
+    document.addEventListener("keydown", userSkip, true);
+    document.addEventListener("pointerdown", userSkip, true);
     // A window that gets no frames (hidden, occluded) never captures the old
-    // state, and the panel would wait for the UA timeout: open it plainly.
-    const stall = window.setTimeout(skip, motionMs("--dur-panel"));
+    // state, and the panel would wait for the UA timeout: skip to the slide.
+    const stall = window.setTimeout(() => t.skipTransition(), motionMs("--dur-panel"));
     void t.updateCallbackDone.finally(() => window.clearTimeout(stall)).catch(() => undefined);
-    t.ready.then(() => slideTitle(from, dst)).catch(() => undefined);
-    void t.finished
-      .catch(() => undefined)
-      .finally(() => {
-        src.style.viewTransitionName = "";
-        dst.style.viewTransitionName = "";
-        delete html.dataset.vt;
-        document.removeEventListener("keydown", skip, true);
-        document.removeEventListener("pointerdown", skip, true);
-      });
+    const cleanup = () => {
+      src.style.viewTransitionName = "";
+      document.removeEventListener("keydown", userSkip, true);
+      document.removeEventListener("pointerdown", userSkip, true);
+      if (morph !== t) return; // a newer morph owns the shared names
+      morph = null;
+      dst.style.viewTransitionName = "";
+      delete html.dataset.vt;
+    };
+    t.ready.then(
+      () => slideTitle(from, dst),
+      () =>
+        // Aborted: the panel is open without its slide (data-vt turned the
+        // CSS transition off). Give it the slide unless the user skipped.
+        void t.updateCallbackDone
+          .catch(() => undefined)
+          .then(() => {
+            const current = morph === t;
+            cleanup();
+            if (!byUser && current && mod.panelItemId() === id) mod.slideIn();
+          }),
+    );
+    void t.finished.catch(() => undefined).finally(cleanup);
     await t.updateCallbackDone.catch(() => undefined);
   }
 
@@ -765,18 +813,23 @@ export function mountList(root: HTMLElement): void {
    * Replaces the UA's morph of the title group (which animates width and
    * height) with a translate from the row's title to the panel's: only
    * transform moves, while the old and new title cross-fade at their own size.
+   * The UA morph is cancelled only once the replacement is running, so an
+   * engine that can't animate the pseudo-element keeps its own.
    */
   function slideTitle(from: DOMRect, dst: HTMLElement): void {
     const pseudo = "::view-transition-group(item-title)";
     const html = document.documentElement;
-    for (const a of html.getAnimations({ subtree: true })) {
-      if ((a.effect as KeyframeEffect | null)?.pseudoElement === pseudo) a.cancel();
-    }
+    const ua = html.getAnimations({ subtree: true }).filter((a) => (a.effect as KeyframeEffect | null)?.pseudoElement === pseudo);
     const to = dst.getBoundingClientRect();
-    html.animate(
-      [{ transform: `translate(${from.left}px, ${from.top}px)` }, { transform: `translate(${to.left}px, ${to.top}px)` }],
-      { duration: motionMs("--dur-panel"), easing: easing("--ease-spring"), pseudoElement: pseudo },
-    );
+    try {
+      html.animate(
+        [{ transform: `translate(${from.left}px, ${from.top}px)` }, { transform: `translate(${to.left}px, ${to.top}px)` }],
+        { duration: motionMs("--dur-panel"), easing: easing("--ease-spring"), pseudoElement: pseudo },
+      );
+    } catch {
+      return;
+    }
+    for (const a of ua) a.cancel();
   }
 
   /** After a keyboard move: an open panel follows the selection. */

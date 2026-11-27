@@ -300,14 +300,23 @@
    x(t) = 1 - e^(-z w t)(cos(wd t) + (z w / wd) sin(wd t)), envelope 0.2% at
    the end). --ease-spring: z 0.75, 2.8% overshoot, 90% of the way at 37% of
    the duration, so a 280 ms spring reads as fast as a 160 ms ease-out.
-   --ease-spring-pop: z 0.5, 16% overshoot, for small pops. Without linear()
-   support (older WebKit) the declarations fall back to the UA ease; JS reads
-   them through motion.ts, which checks CSS.supports first.
+   --ease-spring-pop: z 0.5, 16% overshoot, for small pops. Engines without
+   linear() (older WebKit) get the cubic-bezier fallbacks below: a var()
+   that fails to parse would void the whole transition shorthand.
    Exits run at about 60-70% of their entrance. */
 :root {
-  --ease-spring: linear(0, 0.05, 0.167, 0.314, 0.465, 0.604, 0.723, 0.82, 0.894, 0.948, 0.985, 1.008, 1.021, 1.027, 1.028, 1.026, 1.023, 1.018, 1.014, 1.01, 1.007, 1.005, 1.003, 1.001, 1);
-  --ease-spring-pop: linear(0, 0.074, 0.251, 0.472, 0.691, 0.879, 1.019, 1.11, 1.154, 1.162, 1.145, 1.114, 1.077, 1.042, 1.013, 0.992, 0.98, 0.974, 0.974, 0.977, 0.983, 0.989, 0.994, 0.999, 1.002, 1.004, 1.004, 1.004, 1.003, 1.003, 1);
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.02);
+  --ease-spring-pop: cubic-bezier(0.3, 1.4, 0.5, 1);
+}
 
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --ease-spring: linear(0, 0.05, 0.167, 0.314, 0.465, 0.604, 0.723, 0.82, 0.894, 0.948, 0.985, 1.008, 1.021, 1.027, 1.028, 1.026, 1.023, 1.018, 1.014, 1.01, 1.007, 1.005, 1.003, 1.001, 1);
+    --ease-spring-pop: linear(0, 0.074, 0.251, 0.472, 0.691, 0.879, 1.019, 1.11, 1.154, 1.162, 1.145, 1.114, 1.077, 1.042, 1.013, 0.992, 0.98, 0.974, 0.974, 0.977, 0.983, 0.989, 0.994, 0.999, 1.002, 1.004, 1.004, 1.004, 1.003, 1.003, 1);
+  }
+}
+
+:root {
   /* Detail panel slide (--dur-panel above is the entrance). */
   --dur-panel-exit: 180ms;
   --panel-overshoot-cover: 32px; /* surface past the right edge while the spring overshoots */
@@ -317,6 +326,7 @@
   --dur-ring: 420ms;
   --dur-ring-delay: 120ms;
   --ring-angle: 14deg;
+  --ease-ring: ease-in-out;
 
   /* Priority chips: a small spring pop when one turns on. */
   --dur-chip: 240ms;

@@ -728,6 +728,11 @@ html[data-view="list"] body {
   pointer-events: none;
 }
 
+.row.is-ghost .check-box,
+.row.is-ghost .check-box::after {
+  animation: none;
+}
+
 .row-repeat {
   display: inline-flex;
   flex: none;
@@ -2026,7 +2031,6 @@ legend.field-label {
   font-family: var(--font-mono);
   font-size: var(--text-input);
   white-space: pre;
-  text-overflow: ellipsis;
   transform-origin: 100% 100%;
   pointer-events: none;
 }

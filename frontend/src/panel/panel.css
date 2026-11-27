@@ -59,6 +59,12 @@ html[data-vt] .panel {
   animation: none;
 }
 
+/* The overlay must not eat a click made mid-morph: it skips the morph
+   (list.ts) and lands on what is under it. */
+::view-transition {
+  pointer-events: none;
+}
+
 ::view-transition-new(detail-panel) {
   animation: panel-in var(--dur-panel) var(--ease-spring);
 }

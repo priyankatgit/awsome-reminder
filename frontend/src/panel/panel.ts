@@ -10,6 +10,7 @@
 import "./panel.css";
 import { api, errorText, events, on, type Item, type SnoozePreset } from "../api";
 import { el, motionMs } from "../dom";
+import { canAnimate, easing } from "../motion";
 import { icons } from "../icons";
 import { agoLabel, isDone, isReminder } from "../item-row";
 import { closeMenu, openMenu } from "../menu";
@@ -376,6 +377,40 @@ export function panelItemId(): string | null {
 /** The title input: where the row's title lands when the panel opens with a morph. */
 export function panelTitle(): HTMLElement {
   return title.input;
+}
+
+/** Whether the panel is fully put away (not open, not sliding out). */
+export function panelIdle(): boolean {
+  return openId === null && root.hidden;
+}
+
+/**
+ * Widens the list window as openPanel would, and resolves once the window
+ * has resized (or after --dur-panel-exit, if the screen caps it). A view
+ * transition must start after this: resizing the viewport mid-transition
+ * aborts it.
+ */
+export function widenForPanel(): Promise<void> {
+  if (window.innerWidth >= Math.min(WIDEN_TO, window.screen.availWidth)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      window.removeEventListener("resize", done);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(done, motionMs("--dur-panel-exit"));
+    window.addEventListener("resize", done);
+    quiet(() => api.widenList(WIDEN_TO));
+  });
+}
+
+/** Springs the (open) panel in from the right: the slide when a morph could not run. */
+export function slideIn(): void {
+  if (!canAnimate(root)) return;
+  root.animate([{ transform: "translateX(100%)" }, { transform: "none" }], {
+    duration: motionMs("--dur-panel"),
+    easing: easing("--ease-spring"),
+  });
 }
 
 /**
