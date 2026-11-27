@@ -286,7 +286,7 @@ func (m *Manager) install(ctx context.Context, s setup) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		err := Extract(archive, a.Archive, dir)
+		err := Extract(archive, a.Archive, dir, WhisperFile)
 		os.Remove(archive)
 		if err != nil {
 			return fmt.Errorf("voice: unpack speech engine: %w", err)

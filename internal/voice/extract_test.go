@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -58,7 +59,7 @@ func TestExtractZipKeepsEngineFilesOnly(t *testing.T) {
 		"Release/whisper-cli.exe":      "cli",
 	})
 	dir := t.TempDir()
-	if err := Extract(arc, "zip", dir); err != nil {
+	if err := Extract(arc, "zip", dir, WhisperFile); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
 	got := listDir(t, dir)
@@ -84,7 +85,7 @@ func TestExtractZipSlip(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Extract(arc, "zip", dir); err != nil {
+	if err := Extract(arc, "zip", dir, WhisperFile); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "ggml-evil.dll")); !os.IsNotExist(err) {
@@ -120,7 +121,7 @@ func TestExtractTarGzWithSymlinks(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := Extract(arc, "tar.gz", dir); err != nil {
+	if err := Extract(arc, "tar.gz", dir, WhisperFile); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "libwhisper.so.1"))
@@ -139,5 +140,45 @@ func TestExtractTarGzWithSymlinks(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && st.Mode().Perm()&0o100 == 0 {
 		t.Errorf("whisper-server mode = %v, want executable", st.Mode())
+	}
+}
+
+func keepBinLib(p string) bool {
+	return strings.Contains(p, "/bin/") || strings.Contains(p, "/lib/")
+}
+
+func TestExtractTarBz2(t *testing.T) {
+	dir := t.TempDir()
+	if err := Extract(filepath.Join("testdata", "tiny.tar.bz2"), "tar.bz2", dir, keepBinLib); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	got := listDir(t, dir)
+	want := []string{"kws-mic", "libonnxruntime.so.1"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+	st, err := os.Stat(filepath.Join(dir, "kws-mic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && st.Mode().Perm()&0o100 == 0 {
+		t.Errorf("kws-mic mode = %v, want executable", st.Mode())
+	}
+}
+
+func TestExtractKeepFilterReceivesPath(t *testing.T) {
+	var seen []string
+	keep := func(p string) bool { seen = append(seen, p); return false }
+	if err := Extract(filepath.Join("testdata", "tiny.tar.bz2"), "tar.bz2", t.TempDir(), keep); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	found := false
+	for _, p := range seen {
+		if p == "x/lib/libonnxruntime.so.1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("keep saw %v, want x/lib/libonnxruntime.so.1", seen)
 	}
 }
