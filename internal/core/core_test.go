@@ -510,3 +510,65 @@ func TestUndeleteRestoresState(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 }
+
+// A recurring item marked done once carries DoneAt. Once it stops repeating
+// it is a plain open item, so the stale DoneAt must go: otherwise Delete then
+// Undelete would restore it as done.
+func TestStopRepeatingClearsDoneAt(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every monday 10am standup")
+	if _, err := e.c.Done(it.ID); err != nil { // advances, stays open, DoneAt set
+		t.Fatal(err)
+	}
+	if err := e.c.StopRepeating(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.DoneAt != nil || got.Status != model.StatusOpen {
+		t.Fatalf("after stop repeating: %+v", got)
+	}
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.Status != model.StatusOpen {
+		t.Fatalf("after undo delete: status %s, want open", got.Status)
+	}
+}
+
+func TestUpdateRemovingRuleClearsDoneAt(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every monday 10am standup")
+	if _, err := e.c.Done(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Editing a still-recurring item keeps its DoneAt.
+	if _, err := e.c.Update(it.ID, "every monday 11am standup"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.DoneAt == nil {
+		t.Fatalf("recurring edit dropped DoneAt: %+v", got)
+	}
+	got, err := e.c.Update(it.ID, "monday 10am standup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RRule != "" || got.DoneAt != nil || got.Status != model.StatusOpen {
+		t.Fatalf("after removing the rule: %+v", got)
+	}
+}
+
+func TestUndeleteNotDeletedIsNoOp(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "tomorrow 5pm deploy")
+	changes := 0
+	e.c.OnChange(func() { changes++ })
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.st.Get(it.ID)
+	if changes != 0 || !got.UpdatedAt.Equal(it.UpdatedAt) || got.Status != model.StatusOpen {
+		t.Fatalf("changes=%d item %+v", changes, got)
+	}
+}

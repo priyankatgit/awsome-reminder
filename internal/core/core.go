@@ -22,6 +22,10 @@ import (
 // ErrEmpty is returned when the input has no text left after parsing.
 var ErrEmpty = errors.New("empty input")
 
+// errUnchanged, returned by a write or mutate function, ends it successfully
+// without saving or notifying listeners.
+var errUnchanged = errors.New("unchanged")
+
 // Core implements the domain operations on top of a store.
 type Core struct {
 	st  *store.Store
@@ -161,11 +165,15 @@ func (c *Core) Capture(input string) (model.Item, error) {
 }
 
 // write runs fn under the operation lock and, if it succeeded, notifies
-// listeners after the lock is released.
+// listeners after the lock is released. fn returning errUnchanged is a
+// success that notifies no one.
 func (c *Core) write(fn func() error) error {
 	c.opMu.Lock()
 	err := fn()
 	c.opMu.Unlock()
+	if errors.Is(err, errUnchanged) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -181,7 +189,7 @@ func (c *Core) save(it *model.Item, now time.Time) error {
 }
 
 // mutate loads an item, applies fn, and saves it, all under the operation
-// lock.
+// lock. If fn returns errUnchanged the item is returned as loaded, unsaved.
 func (c *Core) mutate(id string, fn func(it *model.Item, now time.Time) error) (model.Item, error) {
 	var it model.Item
 	err := c.write(func() error {
@@ -216,7 +224,8 @@ func (c *Core) EditText(id string) (string, error) {
 }
 
 // Update re-parses input for an existing item. ID, CreatedAt, LeadTimes, TZ
-// and Status are kept; any snooze is cleared.
+// and Status are kept; any snooze is cleared. An open item left without a
+// rule drops the DoneAt it kept from being marked done while recurring.
 func (c *Core) Update(id, input string) (model.Item, error) {
 	r, _, err := c.parse(input)
 	if err != nil {
@@ -228,6 +237,7 @@ func (c *Core) Update(id, input string) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.Kind, it.Text, it.Tags = kindFor(r.DueAt), r.Text, withInbox(r.Tags)
 		it.DueAt, it.RRule, it.SnoozeUntil = r.DueAt, r.RRule, nil
+		clearStaleDone(it)
 		return nil
 	})
 }
@@ -311,12 +321,24 @@ func (c *Core) Reopen(id string) error {
 }
 
 // StopRepeating clears the recurrence; the item keeps its current due time.
+// An open item also drops the DoneAt it kept from being marked done while
+// recurring.
 func (c *Core) StopRepeating(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.RRule = ""
+		clearStaleDone(it)
 		return nil
 	})
 	return err
+}
+
+// clearStaleDone drops DoneAt from an open item with no rule. Done keeps
+// DoneAt on a recurring item that stays open; once it stops recurring that
+// DoneAt is stale, and Undelete would read it as "was done".
+func clearStaleDone(it *model.Item) {
+	if it.Status == model.StatusOpen && it.RRule == "" {
+		it.DoneAt = nil
+	}
 }
 
 // Snooze postpones a reminder: "10m", "1h" or "tomorrow" (tomorrow at the
@@ -363,11 +385,11 @@ func (c *Core) Delete(id string) error {
 // Undelete undoes Delete, restoring the status the item had: done for a
 // completed one-off item (DoneAt set, no recurrence), open otherwise. DoneAt
 // and SnoozeUntil are kept as they were, unlike Reopen. An item that is not
-// deleted is left as it is.
+// deleted is left as it is: not saved, and listeners are not notified.
 func (c *Core) Undelete(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		if it.Status != model.StatusDeleted {
-			return nil
+			return errUnchanged
 		}
 		it.Status = model.StatusOpen
 		if it.DoneAt != nil && it.RRule == "" {
