@@ -147,12 +147,6 @@ func Run(opts Options) error {
 		}
 		return wake, err
 	})
-	// On the way out, stop the scheduler and wait for a plan in flight, so it
-	// never reaches a closed store (st.Close is deferred above, so runs after).
-	defer func() {
-		cancel()
-		sched.Wait()
-	}()
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {
@@ -167,6 +161,13 @@ func Run(opts Options) error {
 		return s.ExportPath
 	}, c.View, time.Local, exportDebounce)
 	defer exp.Close() // writes a pending export; runs before st.Close
+	// On the way out, stop the scheduler and wait for a plan in flight, so it
+	// never reaches a closed store and its last change still reaches the
+	// export (deferred after exp.Close and st.Close, so it runs before them).
+	defer func() {
+		cancel()
+		sched.Wait()
+	}()
 
 	win = newWindows(app)
 	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
