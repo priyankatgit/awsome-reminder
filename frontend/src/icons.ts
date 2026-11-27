@@ -7,6 +7,10 @@ import {
   Bold,
   CalendarClock,
   Check,
+  Cloud,
+  CloudCheck,
+  CloudExclamationPoint,
+  CloudOff,
   Code,
   ChevronDown,
   ChevronRight,
@@ -23,6 +27,7 @@ import {
   Mic,
   Pencil,
   Plus,
+  RefreshCw,
   Repeat,
   RepeatOff,
   Search,
@@ -88,6 +93,12 @@ export const icons = {
   link: render(Link as IconNode),
   image: render(ImagePlus as IconNode),
   preview: render(Eye as IconNode),
+  // Sync (Phase 2)
+  cloud: render(Cloud as IconNode),
+  cloudCheck: render(CloudCheck as IconNode),
+  cloudOff: render(CloudOff as IconNode),
+  cloudAlert: render(CloudExclamationPoint as IconNode),
+  refresh: render(RefreshCw as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

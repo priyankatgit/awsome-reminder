@@ -1922,3 +1922,205 @@ legend.field-label {
 .row-prio[data-prio="high"] { background: var(--prio-high); }
 .row-prio[data-prio="medium"] { background: var(--prio-med); }
 .row-prio[data-prio="low"] { background: var(--prio-low); }
+
+/* ---------- Phase 2: sync status pill, details, row markers ---------- */
+
+.sync {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.sync[hidden] {
+  display: none;
+}
+
+/* With the pill showing, the search stays put at the left so the changing
+   pill text never moves it. */
+.list-header-inner:has(.sync:not([hidden])) .list-search {
+  margin-right: auto;
+}
+
+.sync-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  height: var(--sync-pill-height);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-small);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity var(--dur-hover);
+}
+
+.sync-pill:hover {
+  opacity: var(--hover-opacity);
+}
+
+.sync-pill[data-tone="ok"] {
+  background: var(--sync-ok-bg);
+  color: var(--sync-ok-fg);
+}
+
+.sync-pill[data-tone="muted"] {
+  background: var(--sync-muted-bg);
+  color: var(--sync-muted-fg);
+}
+
+.sync-pill[data-tone="danger"] {
+  background: var(--sync-danger-bg);
+  color: var(--sync-danger-fg);
+}
+
+.sync-pill-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.sync-pill .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.sync-pill-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-pill.is-spin .icon {
+  animation: sync-spin var(--dur-sync-spin) linear infinite;
+}
+
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* One glow when the last waiting change lands: a shadow layer whose opacity
+   pulses (shadows themselves are not animated). */
+.sync-pill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--sync-glow);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sync-pill.is-glow::after {
+  animation: sync-glow var(--dur-sync-glow) ease-out;
+}
+
+@keyframes sync-glow {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.sync-pop {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: var(--sync-popover-width);
+  max-width: calc(100vw - 2 * var(--space-4));
+  margin-top: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+  color: var(--fg);
+  transform-origin: top right;
+  animation: menu-enter var(--dur-enter) var(--ease-enter);
+}
+
+.sync-pop[hidden] {
+  display: none;
+}
+
+.sync-pop:focus {
+  outline: none;
+}
+
+.sync-pop p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sync-pop-state {
+  font-weight: var(--weight-semibold);
+}
+
+.sync-pop-row {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.sync-pop-row[hidden] {
+  display: none;
+}
+
+.sync-pop .sync-pop-error {
+  color: var(--danger-text);
+}
+
+.sync-pop .sync-pop-warning {
+  color: var(--time-text);
+}
+
+.sync-pop-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sync-pop-warnings:empty {
+  display: none;
+}
+
+.sync-pop-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* "Not synced yet": reserves its slot while sync is on, so fading it out
+   moves nothing. */
+.row-sync {
+  display: inline-flex;
+  flex: none;
+  color: var(--fg-muted);
+  opacity: 1;
+  transition: opacity var(--dur-marker-fade);
+}
+
+.row-sync.is-synced {
+  opacity: 0;
+}
+
+.row-sync .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
