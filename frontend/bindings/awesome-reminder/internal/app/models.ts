@@ -49,3 +49,28 @@ export interface Status {
      */
     "hotkeyErr": string;
 }
+
+/**
+ * SyncInfo is the sync section of Settings.
+ */
+export interface SyncInfo {
+    /**
+     * a connection string is saved
+     */
+    "connected": boolean;
+
+    /**
+     * its host, "" when none
+     */
+    "host": string;
+
+    /**
+     * secret.Store.Kind()
+     */
+    "secretStore": string;
+
+    /**
+     * -1 when unknown (offline / not connected)
+     */
+    "attachmentBytes": number;
+}

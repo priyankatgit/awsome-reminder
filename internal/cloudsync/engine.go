@@ -177,6 +177,16 @@ func nextDelay(st State, failures int, o Options) time.Duration {
 	return o.Poll
 }
 
+// RetryDelay is nextDelay for the app, which retries a failed connect on the
+// same schedule as a failed cycle.
+func RetryDelay(st State, failures int, o Options) time.Duration {
+	return nextDelay(st, failures, o)
+}
+
+// WatermarkKeys are the meta keys of the pull watermarks. Deleting them makes
+// the next cycle pull everything (a new sync target).
+func WatermarkKeys() []string { return []string{metaWMItems, metaWMAttachments} }
+
 func (e *Engine) delay() time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()

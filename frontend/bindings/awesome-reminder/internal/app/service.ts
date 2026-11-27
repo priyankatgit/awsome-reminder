@@ -12,6 +12,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as cloudsync$0 from "../cloudsync/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as core$0 from "../core/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -249,6 +252,44 @@ export function Status(): $CancellablePromise<$models.Status> {
  */
 export function StopRepeating(id: string): $CancellablePromise<void> {
     return $Call.ByID(113615805, id);
+}
+
+/**
+ * SyncConnect checks and saves an Atlas connection string and starts sync. It
+ * returns without waiting for the first sync; progress arrives as
+ * EventSyncStatus. The error text is user-facing and never holds the string.
+ */
+export function SyncConnect(uri: string): $CancellablePromise<cloudsync$0.Status> {
+    return $Call.ByID(1575938099, uri);
+}
+
+/**
+ * SyncDisconnect stops sync and forgets the connection string; local data
+ * stays.
+ */
+export function SyncDisconnect(): $CancellablePromise<void> {
+    return $Call.ByID(2081370613);
+}
+
+/**
+ * SyncInfo describes the connection for Settings.
+ */
+export function SyncInfo(): $CancellablePromise<$models.SyncInfo> {
+    return $Call.ByID(2646937883);
+}
+
+/**
+ * SyncNow syncs at once ("Sync now").
+ */
+export function SyncNow(): $CancellablePromise<void> {
+    return $Call.ByID(2989323705);
+}
+
+/**
+ * SyncStatus returns the sync status (state off when not connected).
+ */
+export function SyncStatus(): $CancellablePromise<cloudsync$0.Status> {
+    return $Call.ByID(1731135033);
 }
 
 /**
