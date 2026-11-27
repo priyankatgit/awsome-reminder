@@ -241,7 +241,7 @@ func Run(opts Options) error {
 	// Recurring reminders not marked done move on to their latest occurrence
 	// before each plan (ruling R15); the scheduler wakes at the next one.
 	sched.SetBeforePlan(svc.advanceRecurring)
-	registerVoice(app, win)
+	vs := registerVoice(app, win)
 	win.onAlertsClosed = svc.alertsClosed
 	// A settings window closed while recording a hotkey must not leave the
 	// global hotkey released.
@@ -258,7 +258,7 @@ func Run(opts Options) error {
 	tray = app.SystemTray.New()
 	setTrayIcons(tray, opts)
 	tray.SetTooltip(appName)
-	tray.SetMenu(trayMenu(app, win))
+	tray.SetMenu(trayMenu(app, win, vs))
 	tray.OnClick(func() { go win.OpenList("") })
 	badges = newBadgeWiring(badgeDeps{
 		Count: c.PendingCount,
@@ -309,10 +309,11 @@ func Run(opts Options) error {
 	return app.Run()
 }
 
-func trayMenu(app *application.App, win *wailsWindows) *application.Menu {
+func trayMenu(app *application.App, win *wailsWindows, vs *VoiceService) *application.Menu {
 	menu := app.NewMenu()
 	menu.Add("Open List").OnClick(func(*application.Context) { go win.OpenList("") })
 	menu.Add("Settings").OnClick(func(*application.Context) { go win.OpenSettings() })
+	addWakeTray(menu, win, vs)
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 	return menu

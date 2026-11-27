@@ -26,6 +26,8 @@ func init() {
 type VoiceService struct {
 	m *voice.Manager
 	w *voice.Wake // "Hey Awesome" (wake.go)
+
+	wakeSubs wakeSubs // wake status listeners (the tray)
 }
 
 // Status reports whether voice is ready, downloadable or unsupported.
@@ -62,7 +64,7 @@ func (v *VoiceService) ServiceShutdown() error {
 
 // registerVoice binds VoiceService to app and starts the wake word if it is
 // on and installed. A wake opens win's capture box without focus.
-func registerVoice(app *application.App, win *wailsWindows) {
+func registerVoice(app *application.App, win *wailsWindows) *VoiceService {
 	dir, err := paths.VoiceDir()
 	if err != nil {
 		log.Printf("voice dir: %v", err)
@@ -72,7 +74,9 @@ func registerVoice(app *application.App, win *wailsWindows) {
 		Dir:      dir,
 		OnStatus: func(s voice.Status) { app.Event.Emit(EventVoiceStatus, s) },
 	})
-	w := newWake(app, win, dir)
-	app.RegisterService(application.NewService(&VoiceService{m: m, w: w}))
-	w.Start()
+	vs := &VoiceService{m: m}
+	vs.w = newWake(app, win, dir, vs.wakeSubs.emit)
+	app.RegisterService(application.NewService(vs))
+	vs.w.Start()
+	return vs
 }

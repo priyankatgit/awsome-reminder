@@ -26,10 +26,13 @@ func init() {
 // newWake builds the "Hey Awesome" wake word for dir. A detection opens the
 // capture box without focus; while the box is showing (any mode, reply
 // included) detections are suppressed. It starts nothing (Wake.Start does).
-func newWake(app *application.App, win *wailsWindows, dir string) *voice.Wake {
+func newWake(app *application.App, win *wailsWindows, dir string, also func(voice.WakeStatus)) *voice.Wake {
 	return voice.NewWake(voice.WakeConfig{
-		Dir:      dir,
-		OnStatus: func(s voice.WakeStatus) { app.Event.Emit(EventWakeStatus, s) },
+		Dir: dir,
+		OnStatus: func(s voice.WakeStatus) {
+			app.Event.Emit(EventWakeStatus, s)
+			also(s)
+		},
 		OnWake: func() {
 			log.Printf("wake: detected") // the time only: never audio or text
 			go win.ShowCaptureForWake()
