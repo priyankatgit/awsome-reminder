@@ -48,7 +48,7 @@ No product code. The result is pinned values, a keywords file and measurements, 
 - Modify: `docs/superpowers/specs/2026-11-28-hands-free-voice-design.md` (add a "Measurements" section)
 
 - [ ] **Step 1:** Pick the current sherpa-onnx release (v2.0.3 or newer). For each of windows/amd64 (`*-win-x64-shared.tar.bz2`), linux/amd64 (`*-linux-x64-shared.tar.bz2`), linux/arm64 (`*-linux-aarch64-shared-cpu.tar.bz2`), darwin/arm64 (`*-osx-arm64-shared.tar.bz2`) and darwin/amd64 (`*-osx-x64-shared.tar.bz2`, or universal2 if that is what is published), plus `kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2`, record the URL, the size and the SHA-256 (download into the scratchpad; ask the user first if your harness requires it). Expected: 6 rows in the notes file.
-- [ ] **Step 2:** List each archive and record the microphone keyword-spotter program's exact name (expected `bin/sherpa-onnx-keyword-spotter-microphone[.exe]`), the shared libraries it loads (Windows: `dumpbin /dependents` or `objdump -p`; Linux: `ldd`; macOS: `otool -L`, from the archive listing if no Mac is at hand), and the model files (int8 and fp32 encoder/decoder/joiner, `tokens.txt`). **If any desktop archive has no microphone spotter, stop and report to the user** (spec fallback approach 2).
+- [ ] **Step 2:** List each archive and record the microphone keyword-spotter program's exact name (expected `bin/sherpa-onnx-keyword-spotter-microphone[.exe]`), the shared libraries it loads (Windows: `dumpbin /dependents` or `objdump -p`; Linux: `ldd`; macOS: `otool -L`, from the archive listing if no Mac is at hand), and the model files (int8 and fp32 encoder/decoder/joiner, `tokens.txt`). **Ruling during execution (2026-11-28):** the v2.0.3 Windows archives ship no microphone spotter (Linux and macOS do). Windows therefore uses our own helper (Task 4b, spec fallback approach 2). For Windows, Task 0 pins the smallest MT `-lib` archive (DLLs only), records the C API declarations and the stock program's stdout format, and estimates CPU from the file-based spotter's real-time factor.
 - [ ] **Step 3:** In a scratch venv, `pip install sherpa-onnx sentencepiece`, then run `sherpa-onnx-cli text2token --tokens tokens.txt --tokens-type bpe --bpe-model bpe.model` on the input line `HEY AWESOME :2.0 #0.25 @HEY_AWESOME` (boost and threshold are starting values). Write the output line to `internal/voice/wake_keywords.txt`.
 - [ ] **Step 4:** Run the Windows program from the extracted folder with the int8 model, `--keywords-file`, `--num-threads=1`, `--provider=cpu`. Record its exact argument list and three sample stdout lines for a detection (and anything printed at start-up), plus its stderr and exit code when the mic is blocked (Settings › Privacy › Microphone off).
 - [ ] **Step 5:** Measure on the user's machine and record: working set (`Get-Process` every 5 s) and CPU (`(Get-Counter '\Process(<name>)\% Processor Time')` every 5 s, divided by 100 for "of one core") over 5 min in a quiet room and 5 min with speech or music; 10 "Hey Awesome" at normal voice from 1 m; false wakes over 1 h of podcast/meeting audio through the speakers. Tune the boost/threshold in `wake_keywords.txt` and the int8/fp32/`-mobile` choice until the spec gates pass: ≤ 80 MB, ≤ 3 % (quiet), ≤ 10 % (speech), ≥ 9/10 hits, ≤ 1 false wake/h.
@@ -142,14 +142,19 @@ No product code. The result is pinned values, a keywords file and measurements, 
 **Interfaces:**
 - Consumes: `hideAndContain`, `afterStart`, `WakeConfig` (Task 3), the Task 0 argument list and stdout format.
 - Produces:
-  - `func helperArgs(engineDir, modelDir, keywords string) []string` (the exact Task 0 list with `--num-threads=1`, `--provider=cpu`).
-  - `func parseDetection(line string) bool` (true for a detection line in the Task 0 format).
+  - `func helperCommand(goos, exe, engineDir, modelDir, keywords string) (bin string, args []string)`: on linux/darwin, `bin` is the stock spotter in `engineDir` and `args` is the exact Task 0 list with `--num-threads=1` and `--provider=cpu`. On windows, `bin` is `exe` (the app's own `os.Executable()`) and `args` is `--wake-helper --lib-dir <engineDir>` followed by the same model, keyword and thread flags (Task 4b).
+  - `func scanHelperOutput(r io.Reader, onDetect func(keyword string), onLine func(line string))`. Task 0 found that the stock program writes detections to **stderr** as `<n>:{json}`, and on Linux/macOS with no trailing newline (`0:{json}`, then `
+1:{json}`). So this function scans the byte stream, not lines. Each `{"start_time": … }` object (single line, no nested braces) is parsed with `encoding/json`, and `onDetect` gets its `keyword`. Every other complete line (split on `
+` or ``, empty lines dropped) goes to `onLine`. It runs on stderr (detections and the last error line) and on stdout (stdout lines are logged only).
+  - `func parseDetection(s string) bool`: true when `s` contains a detection object whose keyword is `HEY_AWESOME`. Used by Task 4b's test.
   - Behaviour: the helper runs iff `Enabled && installed`. Each detection calls `OnWake` unless `Suppress()` is true, or the last wake was < 3 s ago, or `SessionEnded` was < 2 s ago. Restart and give-up follow Global Constraints. The `error` state carries the helper's last non-empty stderr line. A wall jump > 5 s between `Tick`s restarts the helper. `SetEnabled(false)` and `Close()` kill it and wait for it to exit.
-  - State: `starting` from spawn until the first stdout line or 2 s alive, then `listening`.
-- Fake helper: `FAKE_KWS=detect` prints a start line, then a detection line every time a line arrives on its stdin (tests write to it), using the Task 0 format; `FAKE_KWS=die` prints `$FAKE_STDERR` to stderr and exits 1 at once; `FAKE_KWS=idle` prints the start line and blocks.
+  - State: `starting` from spawn until 2 s alive (the stock program prints no ready line), then `listening`.
+- Fake helper: `FAKE_KWS=detect` writes the stock start-up lines to stderr, then for every line that arrives on its stdin (tests write to it) writes a detection to stderr in the Linux form (`0:{json}` with no trailing newline, then `
+1:{json}`, …), using the JSON from the Task 0 notes; `FAKE_KWS=die` prints `$FAKE_STDERR` to stderr and exits 1 at once; `FAKE_KWS=idle` prints the start line and blocks.
 
 - [ ] **Step 1: Write the failing tests** (`Backoff: {10ms, 20ms, 40ms}`, `Tick: 20ms`, injectable `Now`):
-  - `TestParseDetection`: the three Task 0 sample lines → true; the start-up lines → false.
+  - `TestScanHelperOutput`: the Linux form without a trailing newline → `onDetect("HEY_AWESOME")` fires before EOF (use an `io.Pipe` and check before closing); the Windows form `0:{json}
+` → fires; start-up lines and `Invalid device index: 3` → `onLine` only; a JSON object for another keyword → no `HEY_AWESOME` detection.
   - `TestWakeReportsDetection`: enabled + `detect` → one stdin line → `OnWake` called once; state `listening`.
   - `TestWakeSuppressed`: `Suppress` returns true → no `OnWake`.
   - `TestWakeCooldowns`: two detections 1 s apart (fake clock) → one `OnWake`; a detection 1 s after `SessionEnded()` → none; one 4 s after → called.
@@ -162,6 +167,41 @@ No product code. The result is pinned values, a keywords file and measurements, 
 - [ ] **Step 3:** Implement. One supervisor goroutine per enabled period, owning the `exec.Cmd`. Stdout and stderr are read by line; stderr keeps the last line (cap 512 bytes).
 - [ ] **Step 4:** `go test -race ./internal/voice/` → PASS.
 - [ ] **Step 5:** Commit `feat(voice): supervise the wake-word helper with backoff, cooldowns and resume restart`.
+
+### Task 4b: Windows wake helper (our own, because the release has no Windows mic spotter)
+
+**Files:**
+- Create: `internal/wakehelper/helper.go` (flag parsing, the loop, output lines), `internal/wakehelper/gate.go` (pure RMS gate), `internal/wakehelper/gate_test.go`, `internal/wakehelper/kws_windows.go` (sherpa-onnx C API through `golang.org/x/sys/windows`), `internal/wakehelper/mic_windows.go` (winmm waveIn), `internal/wakehelper/helper_windows_test.go`, `internal/wakehelper/helper_other.go` (`//go:build !windows`: `Run` prints `wake helper: not supported on this OS` to stderr and returns 2), `internal/wakehelper/testdata/hey-awesome.wav` and `testdata/negative.wav` (16 kHz mono s16 TTS clips from Task 0, each under 200 KB)
+- Modify: `main.go` (the first statement in `main`), `internal/voice/wake_proc.go` (`helperCommand` windows branch, if Task 4 left it as a stub)
+
+**Interfaces:**
+- Consumes: the Task 0 notes (C API DLL name and declarations, the stock stdout format, the keyword file), `voice.parseDetection` (Task 4).
+- Produces:
+  - `main.go`: `if len(os.Args) > 1 && os.Args[1] == "--wake-helper" { os.Exit(wakehelper.Run(os.Args[2:])) }` before any Wails, single-instance or logging setup. Helper mode never touches the app's lock, database or windows.
+  - `func Run(args []string) int`. Flags: `--lib-dir`, `--encoder`, `--decoder`, `--joiner`, `--tokens`, `--keywords-file`, `--num-threads` (default 1), and test-only `--wav <file>`, which feeds a WAV file at full speed instead of the mic and exits 0 at its end.
+    - Loads the C API DLL from `--lib-dir`, so `onnxruntime.dll` resolves from the same folder (`windows.LoadLibraryEx` with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS`).
+    - Prints each detection to stderr as `<n>:<json>
+` (n counts from 0, json is the C API result's `json` field) and flushes, which is the stock program's MSVC form.
+    - A mic open failure prints `wake helper: microphone: <winmm error text>` to stderr and exits 3. A model load failure prints `wake helper: model: <detail>` and exits 4.
+    - Exits 0 when stdin reaches EOF, so it dies if the app's pipe closes. The job object already covers a crash.
+  - `type Gate struct`; `func NewGate(rate int) *Gate`; `func (g *Gate) Push(block []int16) (feed []int16, reset bool)`. Uses the same speech test as `voice.ts`: RMS of 30 ms windows normalised to [0,1], noise floor `rms < floor ? rms : floor*0.995 + rms*0.005` starting at 0.003, speech when RMS > `max(0.015, floor*3)`.
+    - While quiet it feeds nothing and keeps the last 500 ms in a ring.
+    - On speech it returns the pre-roll plus the block, and keeps feeding until 1.5 s without speech.
+    - It then returns `reset == true` once, and the caller resets the keyword stream.
+  - Mic: `waveInOpen(WAVE_MAPPER, {WAVE_FORMAT_PCM, 1 ch, 16000 Hz, 16-bit}, CALLBACK_EVENT)`, 4 buffers of 100 ms, re-queued as they complete. `waveInReset` and `waveInClose` on exit.
+  - C API structs are mirrored with the exact field order and C types from the Task 0 header (`uintptr` for `const char*`, `int32`, `float32`). Strings are kept alive for the spotter's lifetime.
+- Pinned Windows asset: `sherpa-onnx-v2.0.3-win-x64-shared-MT-Release-no-tts-lib.tar.bz2` (Task 0 notes). `wakeEngineFile` keeps `sherpa-onnx-c-api.dll`, `onnxruntime.dll` and `onnxruntime_providers_shared.dll` on windows. They import only system DLLs, so the wake word needs no VC++ runtime check on Windows (dictation still does).
+
+- [ ] **Step 1: Write the failing tests:**
+  - `TestGateQuietFeedsNothing`: 2 s of ±50 noise → never feeds, never resets.
+  - `TestGateOpensWithPreRoll`: 0.6 s quiet, then a loud 30 ms block → the first feed has 500 ms (8000 samples) of pre-roll plus the block.
+  - `TestGateClosesAfterQuietAndResets`: loud, then 1.5 s quiet → `reset` true exactly once, then no feed.
+  - `TestHelperDetectsFromWav` (windows; skipped unless `AR_KWS_DIR` points at an installed engine and model): `Run` with `--wav testdata/hey-awesome.wav` → stderr has one line for which `voice.parseDetection` is true. With `negative.wav` → no detection line.
+  - `TestHelperMicFailureExitCode` cannot be automated without breaking the mic. Instead, test the error-text function: `micErrorText(MMSYSERR_BADDEVICEID)` contains "device".
+- [ ] **Step 2:** `go test ./internal/wakehelper/` → FAIL.
+- [ ] **Step 3:** Implement.
+- [ ] **Step 4:** `go test ./internal/wakehelper/ ./internal/voice/` → PASS; with `AR_KWS_DIR` set to the Task 0 extraction → `TestHelperDetectsFromWav` PASS. `go vet ./...` clean; `GOOS=linux go vet ./internal/wakehelper/` clean. Manual measurement (sherpa only, the app is not started): run the helper through a `go test -run TestManualMic` that is skipped unless `AR_KWS_MIC=1` and runs the mic loop for 300 s while sampling its own process CPU and working set → record quiet-room CPU and RAM in the spec's Measurements section.
+- [ ] **Step 5:** Commit `feat(voice): Windows wake helper on the sherpa-onnx C API with an RMS gate`.
 
 ### Task 5: App wiring — services, events, show without focus
 
