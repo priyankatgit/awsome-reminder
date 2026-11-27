@@ -365,6 +365,25 @@ func (m *Manager) Warm(ctx context.Context) error {
 // Transcribe turns base64 16 kHz mono Int16 PCM into one cleaned capture
 // line ("" when nothing was said).
 func (m *Manager) Transcribe(ctx context.Context, pcmB64 string) (string, error) {
+	raw, err := m.transcribeRaw(ctx, pcmB64, "")
+	if err != nil {
+		return "", err
+	}
+	return CleanTranscript(raw), nil
+}
+
+// TranscribeSegment is Transcribe for one piece of a continuous dictation:
+// prompt (recent text) biases whisper, and a short piece (speechMs of
+// speech) that is only a known silence hallucination comes back "".
+func (m *Manager) TranscribeSegment(ctx context.Context, pcmB64, prompt string, speechMs int) (string, error) {
+	raw, err := m.transcribeRaw(ctx, pcmB64, prompt)
+	if err != nil {
+		return "", err
+	}
+	return DropHallucination(CleanTranscript(raw), speechMs), nil
+}
+
+func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, prompt string) (string, error) {
 	pcm, err := DecodePCM(pcmB64)
 	if err != nil {
 		return "", err
@@ -374,12 +393,12 @@ func (m *Manager) Transcribe(ctx context.Context, pcmB64 string) (string, error)
 		return "", err
 	}
 	start := time.Now()
-	raw, err := e.Transcribe(ctx, EncodeWAV(pcm))
+	raw, err := e.Transcribe(ctx, EncodeWAV(pcm), prompt)
 	if err != nil {
 		return "", err
 	}
 	log.Printf("voice: transcribed %.1f s of audio in %v", float64(len(pcm))/SampleRate, time.Since(start).Round(time.Millisecond))
-	return CleanTranscript(raw), nil
+	return raw, nil
 }
 
 // Close cancels an install and stops the engine.

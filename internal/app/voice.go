@@ -45,6 +45,12 @@ func (v *VoiceService) Transcribe(ctx context.Context, pcm string) (string, erro
 	return v.m.Transcribe(ctx, pcm)
 }
 
+// TranscribeSegment transcribes one piece of a continuous dictation; prompt
+// is the recent text and speechMs the speech in the piece.
+func (v *VoiceService) TranscribeSegment(ctx context.Context, pcm, prompt string, speechMs int) (string, error) {
+	return v.m.TranscribeSegment(ctx, pcm, prompt, speechMs)
+}
+
 // ServiceShutdown stops the engine and any download when the app quits.
 func (v *VoiceService) ServiceShutdown() error {
 	v.m.Close()

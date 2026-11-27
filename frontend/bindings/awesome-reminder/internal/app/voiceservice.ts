@@ -46,6 +46,14 @@ export function Transcribe(pcm: string): $CancellablePromise<string> {
 }
 
 /**
+ * TranscribeSegment transcribes one piece of a continuous dictation; prompt
+ * is the recent text and speechMs the speech in the piece.
+ */
+export function TranscribeSegment(pcm: string, prompt: string, speechMs: number): $CancellablePromise<string> {
+    return $Call.ByID(2537243540, pcm, prompt, speechMs);
+}
+
+/**
  * Warm starts the speech engine while the user speaks.
  */
 export function Warm(): $CancellablePromise<void> {

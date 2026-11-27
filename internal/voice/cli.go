@@ -24,7 +24,7 @@ func NewCLIEngine(c EngineConfig) *CLIEngine { return &CLIEngine{c: c} }
 func (e *CLIEngine) Warm(context.Context) error { return nil }
 
 // Transcribe writes wav to a temp file and runs whisper-cli on it.
-func (e *CLIEngine) Transcribe(ctx context.Context, wav []byte) (string, error) {
+func (e *CLIEngine) Transcribe(ctx context.Context, wav []byte, prompt string) (string, error) {
 	f, err := os.CreateTemp("", "awesome-reminder-*.wav")
 	if err != nil {
 		return "", err
@@ -38,13 +38,17 @@ func (e *CLIEngine) Transcribe(ctx context.Context, wav []byte) (string, error) 
 		return "", werr
 	}
 
-	cmd := newCmd(ctx, e.c,
+	args := []string{
 		"-m", e.c.Model,
 		"-t", strconv.Itoa(e.c.Threads),
 		"-l", "en",
 		"-nt", "-np",
 		"-f", f.Name(),
-	)
+	}
+	if prompt != "" {
+		args = append(args, "--prompt", prompt)
+	}
+	cmd := newCmd(ctx, e.c, args...)
 	var out bytes.Buffer
 	stderr := &tail{max: 4096}
 	cmd.Stdout = &out

@@ -69,6 +69,10 @@ func fakeServer() {
 			http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 			return
 		}
+		if os.Getenv("FAKE_ECHO_PROMPT") == "1" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"text": r.FormValue("prompt")})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"text": " hello world"})
 	})
 	_ = http.ListenAndServe(argAfter("--host")+":"+argAfter("--port"), mux)
@@ -79,6 +83,10 @@ func fakeCLI() {
 	if err != nil || !bytes.HasPrefix(b, []byte("RIFF")) || argAfter("-m") == "" {
 		fmt.Fprintln(os.Stderr, "bad input")
 		os.Exit(2)
+	}
+	if os.Getenv("FAKE_ECHO_PROMPT") == "1" {
+		fmt.Println(argAfter("--prompt"))
+		return
 	}
 	fmt.Println(" hello world")
 }
@@ -106,7 +114,7 @@ func TestServerEngineTranscribes(t *testing.T) {
 	c, _ := fakeConfig(t, "server")
 	e := NewServerEngine(c)
 	defer e.Close()
-	got, err := e.Transcribe(context.Background(), testWAV)
+	got, err := e.Transcribe(context.Background(), testWAV, "")
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
@@ -129,7 +137,7 @@ func TestServerEngineWarmReusesProcess(t *testing.T) {
 	if err := e.Warm(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Transcribe(ctx, testWAV); err != nil {
+	if _, err := e.Transcribe(ctx, testWAV, ""); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(pids(t, pidfile)); n != 1 {
@@ -154,7 +162,7 @@ func TestServerEngineIdleExit(t *testing.T) {
 	c.Idle = 300 * time.Millisecond
 	e := NewServerEngine(c)
 	defer e.Close()
-	if _, err := e.Transcribe(context.Background(), testWAV); err != nil {
+	if _, err := e.Transcribe(context.Background(), testWAV, ""); err != nil {
 		t.Fatal(err)
 	}
 	base := e.lastBase()
@@ -171,11 +179,11 @@ func TestServerEngineRestartsAfterCrash(t *testing.T) {
 	e := NewServerEngine(c)
 	defer e.Close()
 	ctx := context.Background()
-	if _, err := e.Transcribe(ctx, testWAV); err != nil {
+	if _, err := e.Transcribe(ctx, testWAV, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.killForTest()
-	got, err := e.Transcribe(ctx, testWAV)
+	got, err := e.Transcribe(ctx, testWAV, "")
 	if err != nil || got != " hello world" {
 		t.Fatalf("after crash: %q, %v", got, err)
 	}
@@ -220,7 +228,7 @@ func TestServerEngineStartTimeout(t *testing.T) {
 func TestServerEngineClose(t *testing.T) {
 	c, _ := fakeConfig(t, "server")
 	e := NewServerEngine(c)
-	if _, err := e.Transcribe(context.Background(), testWAV); err != nil {
+	if _, err := e.Transcribe(context.Background(), testWAV, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.Close()
@@ -235,7 +243,7 @@ func TestCLIEngineTranscribes(t *testing.T) {
 	t.Setenv("TMP", tmp)
 	t.Setenv("TMPDIR", tmp)
 	e := NewCLIEngine(c)
-	got, err := e.Transcribe(context.Background(), testWAV)
+	got, err := e.Transcribe(context.Background(), testWAV, "")
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
@@ -252,5 +260,40 @@ func TestThreads(t *testing.T) {
 		if got := DefaultThreads(c[0]); got != c[1] {
 			t.Errorf("DefaultThreads(%d) = %d, want %d", c[0], got, c[1])
 		}
+	}
+}
+
+func TestServerEngineSendsPrompt(t *testing.T) {
+	c, _ := fakeConfig(t, "server", "FAKE_ECHO_PROMPT=1")
+	e := NewServerEngine(c)
+	defer e.Close()
+	got, err := e.Transcribe(context.Background(), testWAV, "new task")
+	if err != nil || got != "new task" {
+		t.Errorf("with prompt: %q, %v", got, err)
+	}
+	// No prompt: no prompt part at all.
+	got, err = e.Transcribe(context.Background(), testWAV, "")
+	if err != nil || got != "" {
+		t.Errorf("empty prompt: %q, %v", got, err)
+	}
+	c2, _ := fakeConfig(t, "server")
+	e2 := NewServerEngine(c2)
+	defer e2.Close()
+	got, err = e2.Transcribe(context.Background(), testWAV, "")
+	if err != nil || got != " hello world" {
+		t.Errorf("plain: %q, %v", got, err)
+	}
+}
+
+func TestCLIEngineSendsPrompt(t *testing.T) {
+	c, _ := fakeConfig(t, "cli", "FAKE_ECHO_PROMPT=1")
+	e := NewCLIEngine(c)
+	got, err := e.Transcribe(context.Background(), testWAV, "new task")
+	if err != nil || strings.TrimSpace(got) != "new task" {
+		t.Errorf("with prompt: %q, %v", got, err)
+	}
+	got, err = e.Transcribe(context.Background(), testWAV, "")
+	if err != nil || strings.TrimSpace(got) != "" {
+		t.Errorf("empty prompt: %q, %v", got, err)
 	}
 }
