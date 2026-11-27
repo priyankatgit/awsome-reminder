@@ -2778,3 +2778,35 @@ legend.field-label {
   color: var(--fg);
   font-weight: var(--weight-medium);
 }
+
+/* ===== Settings: Voice section (voice-settings.ts) ===== */
+.settings-voice .field-help[hidden],
+.settings-voice .voice-consent[hidden],
+.settings-voice .voice-status[hidden] {
+  display: none;
+}
+
+.voice-consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.voice-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.voice-status-text {
+  margin: 0;
+  color: var(--fg);
+}
+
+.voice-status-text.is-error {
+  color: var(--danger-text);
+}

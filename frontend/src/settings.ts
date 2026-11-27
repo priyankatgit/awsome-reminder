@@ -6,6 +6,7 @@ import { api, errorText, isMac, isWindows, type Settings } from "./api";
 import { el, keycaps } from "./dom";
 import { icons } from "./icons";
 import { mountSyncSection } from "./sync-settings";
+import { mountVoiceSection } from "./voice-settings";
 
 const SEC = 1;
 const MIN = 60 * SEC;
@@ -350,6 +351,7 @@ const TEMPLATE = `
       </div>
     </form>
     <section class="settings-sync" id="sync-section"></section>
+    <section class="settings-sync settings-voice" id="voice-section"></section>
   </main>
   <footer class="settings-foot">
     <p class="field-error settings-form-error" id="form-error" role="alert" hidden></p>
@@ -799,6 +801,7 @@ export function mountSettings(root: HTMLElement): void {
   });
 
   mountSyncSection($("sync-section"));
+  mountVoiceSection($("voice-section"));
 
   hotkeyHelp.textContent = helpIdle;
   replyHelp.textContent = replyHelpIdle;
