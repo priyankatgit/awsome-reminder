@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Meta is what we could infer about a message someone is waiting on.
@@ -14,7 +15,7 @@ type Meta struct{ OwedTo, Source, Quote string }
 const quoteRunes = 200
 
 var (
-	fromLineRe = regexp.MustCompile(`(?mi)^\s*From:\s*([^<\r\n]+?)\s*(?:<[^>\r\n]*>)?\s*$`)
+	fromLineRe = regexp.MustCompile(`^From:\s*([^<]+?)\s*(?:<[^>]*>)?$`)
 	// "Name  10:42 AM", "Name, 10:42", "Name — 10:42".
 	chatHeaderRe = regexp.MustCompile(`^([^\r\n:]{1,60}?)(?:\s{2,}|\s*,\s*|\s+[—–-]\s+)\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?\s*$`)
 
@@ -54,20 +55,35 @@ func Guess(text, process, title string) Meta {
 }
 
 func personFromText(text string) string {
-	if m := fromLineRe.FindStringSubmatch(text); m != nil {
-		return strings.TrimSpace(m[1])
-	}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	var lines []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
 		}
-		if m := chatHeaderRe.FindStringSubmatch(line); m != nil {
+	}
+	// A From: line only counts near the top; later ones are quoted body text.
+	for i := 0; i < len(lines) && i < 3; i++ {
+		if m := fromLineRe.FindStringSubmatch(lines[i]); m != nil {
 			return strings.TrimSpace(m[1])
 		}
-		break // only the first non-empty line can be a header
+	}
+	// A chat header needs a message body under it and a name-like shape.
+	if len(lines) >= 2 {
+		if m := chatHeaderRe.FindStringSubmatch(lines[0]); m != nil {
+			if name := strings.TrimSpace(m[1]); nameLike(name) {
+				return name
+			}
+		}
 	}
 	return ""
+}
+
+func nameLike(s string) bool {
+	if len(strings.Fields(s)) > 4 || strings.ContainsAny(s, ".?!") {
+		return false
+	}
+	r := []rune(s)
+	return len(r) > 0 && unicode.IsLetter(r[0])
 }
 
 func personFromTitle(title string) string {

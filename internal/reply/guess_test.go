@@ -21,6 +21,10 @@ func TestGuess(t *testing.T) {
 		{"dash header", "Sam Lee — 10:42\nhi", "slack.exe", "", "Sam Lee", "Slack"},
 		{"teams bare title", "hi", "Teams.exe", "Priya Sharma | Microsoft Teams", "Priya Sharma", "Teams"},
 		{"slack channel title", "hi", "slack.exe", "Priya - acme - Slack", "Priya", "Slack"},
+		{"short text with time is not a header", "Sounds good, 5:30", "ms-teams.exe", "Chat | Priya Sharma | Microsoft Teams", "Priya Sharma", "Teams"},
+		{"short text with dash time, no title", "Call me - 10:30", "slack.exe", "", "", "Slack"},
+		{"body from line ignored", "Sam Lee  10:42 AM\nok\nsee notes\nmore\nfrom: staging", "ms-teams.exe", "Chat | Ops | Microsoft Teams", "Sam Lee", "Teams"},
+		{"late From line ignored, title wins", "deploy now\nok\nthanks\nFrom: staging", "ms-teams.exe", "Chat | Priya Sharma | Microsoft Teams", "Priya Sharma", "Teams"},
 		{"outlook message window", "hi", "OUTLOOK.EXE", "Budget review - Message (HTML)", "", "Outlook"},
 	}
 	for _, c := range cases {
