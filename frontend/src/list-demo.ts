@@ -512,7 +512,7 @@ function installSettingsDemo(): void {
   let hotkeyErr = "";
   Object.assign(api, {
     getSettings: async () => ({ ...saved, leadTimes: [...saved.leadTimes] }),
-    status: async () => ({ hotkeyErr }),
+    status: async () => ({ hotkeyErr, replyHotkeyErr: "" }),
     setHotkeyRecording: async (on: boolean) => console.info(`demo: hotkey recording ${on}`),
     chooseExportPath: async () => "C:\\Users\\demo\\Documents\\todo",
     saveSettings: async (s: Settings) => {
@@ -520,6 +520,9 @@ function installSettingsDemo(): void {
       if (!clock.test(s.defaultTime)) throw new Error(`defaultTime: invalid time "${s.defaultTime}", want HH:MM`);
       if (!clock.test(s.nextWeekTime)) throw new Error(`nextWeekTime: invalid time "${s.nextWeekTime}", want HH:MM`);
       if (s.leadTimes.length > 5) throw new Error("leadTimes: at most 5 allowed");
+      if (s.workDays.length === 0) throw new Error("workDays: pick at least one working day");
+      if (!clock.test(s.endOfDay)) throw new Error(`endOfDay: invalid time "${s.endOfDay}", want HH:MM`);
+      if (s.replyHotkey === s.hotkey) throw new Error("Pick a different key from the capture hotkey");
       saved = { ...s, leadTimes: [...s.leadTimes] };
       console.info("demo: saved", saved);
       hotkeyErr = s.hotkey === "Ctrl+Alt+K" ? "Ctrl+Alt+K is already used by another app" : "";

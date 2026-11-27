@@ -175,13 +175,33 @@ function same(a: Draft, b: Draft): boolean {
   return JSON.stringify({ ...a, exportPath: a.exportPath.trim() }) === JSON.stringify({ ...b, exportPath: b.exportPath.trim() });
 }
 
-type FieldKey = "hotkey" | "leads" | "defaultTime" | "nextWeek" | "exportPath" | "autostart" | "form";
+type FieldKey =
+  | "hotkey"
+  | "replyHotkey"
+  | "workDays"
+  | "endOfDay"
+  | "leads"
+  | "defaultTime"
+  | "nextWeek"
+  | "exportPath"
+  | "autostart"
+  | "form";
+
+/** Short labels for the work-day chips, Monday first (WEEKDAYS order). */
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const CLASH = "Pick a different key from the capture hotkey";
 
 /** Which field a Go error is about, from its "field: message" prefix. */
 export function fieldOf(msg: string): { field: FieldKey; text: string } {
-  const m = /^(\w+):\s*(.*)$/s.exec(msg.trim());
+  // Go's own wording for a clash with the capture hotkey has no prefix.
+  if (msg.trim() === CLASH) return { field: "replyHotkey", text: CLASH };
+  const m = /^([\w ]+):\s*(.*)$/s.exec(msg.trim());
   const map: Record<string, FieldKey> = {
     hotkey: "hotkey",
+    replyHotkey: "replyHotkey",
+    "reply hotkey": "replyHotkey",
+    workDays: "workDays",
+    endOfDay: "endOfDay",
     leadTimes: "leads",
     defaultTime: "defaultTime",
     nextWeekTime: "nextWeek",
@@ -227,6 +247,45 @@ const TEMPLATE = `
         <p class="field-help" id="hotkey-help" aria-live="polite"></p>
         <p class="field-error" id="hotkey-error" role="alert" hidden></p>
       </div>
+
+      <fieldset class="field-group" aria-labelledby="replies-title">
+        <legend class="group-title" id="replies-title">Replies</legend>
+
+        <div class="field">
+          <span class="field-label" id="reply-hotkey-label">Reply hotkey</span>
+          <div class="field-row">
+            <button class="hotkey-pill" id="reply-hotkey-btn" type="button"
+                    aria-labelledby="reply-hotkey-label reply-hotkey-btn" aria-describedby="reply-hotkey-help reply-hotkey-error"></button>
+          </div>
+          <p class="field-help" id="reply-hotkey-help" aria-live="polite"></p>
+          <p class="field-error" id="reply-hotkey-error" role="alert" hidden></p>
+        </div>
+
+        <fieldset class="field">
+          <legend class="field-label">Working days</legend>
+          <div class="day-chips" id="day-chips"></div>
+          <p class="field-help" id="workdays-help">Replies you snooze to tomorrow land on the next of these days.</p>
+          <p class="field-error" id="workdays-error" role="alert" hidden></p>
+        </fieldset>
+
+        <div class="field">
+          <label class="field-label" for="end-of-day">End of day</label>
+          <div class="field-row">
+            <input class="input input-time" id="end-of-day" type="time" step="60" required
+                   aria-describedby="end-of-day-help end-of-day-error" />
+          </div>
+          <p class="field-help" id="end-of-day-help">When the day's open replies are swept, on a working day.</p>
+          <p class="field-error" id="end-of-day-error" role="alert" hidden></p>
+        </div>
+
+        <div class="field">
+          <div class="field-row field-switch">
+            <label class="field-label" for="eod-sweep">End-of-day sweep</label>
+            <input class="switch" id="eod-sweep" type="checkbox" role="switch" aria-describedby="eod-sweep-help" />
+          </div>
+          <p class="field-help" id="eod-sweep-help">At the end of day, asks what to do with the replies still open.</p>
+        </div>
+      </fieldset>
 
       <div class="field">
         <span class="field-label" id="leads-label">Alerts before the due time</span>
@@ -306,6 +365,11 @@ export function mountSettings(root: HTMLElement): void {
   const form = $<HTMLFormElement>("settings-form");
   const hotkeyBtn = $<HTMLButtonElement>("hotkey-btn");
   const hotkeyHelp = $("hotkey-help");
+  const replyBtn = $<HTMLButtonElement>("reply-hotkey-btn");
+  const replyHelp = $("reply-hotkey-help");
+  const dayChips = $("day-chips");
+  const endOfDay = $<HTMLInputElement>("end-of-day");
+  const eodSweep = $<HTMLInputElement>("eod-sweep");
   const chips = $("lead-chips");
   const leadAdd = $<HTMLInputElement>("lead-add");
   const defaultTime = $<HTMLInputElement>("default-time");
@@ -319,6 +383,9 @@ export function mountSettings(root: HTMLElement): void {
   const status = $("settings-status");
   const errors: Record<FieldKey, HTMLElement | null> = {
     hotkey: $("hotkey-error"),
+    replyHotkey: $("reply-hotkey-error"),
+    workDays: $("workdays-error"),
+    endOfDay: $("end-of-day-error"),
     leads: $("leads-error"),
     defaultTime: $("default-time-error"),
     nextWeek: $("nw-error"),
@@ -328,6 +395,9 @@ export function mountSettings(root: HTMLElement): void {
   };
   const inputs: Partial<Record<FieldKey, HTMLElement>> = {
     hotkey: hotkeyBtn,
+    replyHotkey: replyBtn,
+    workDays: dayChips.querySelector<HTMLElement>("button") ?? undefined,
+    endOfDay,
     leads: leadAdd,
     defaultTime,
     nextWeek: nwTime,
@@ -349,10 +419,11 @@ export function mountSettings(root: HTMLElement): void {
   let saved: Draft | null = null; // what Go has; null until loaded
   let draft: Draft | null = null;
   let hotkeyErr = ""; // Status().hotkeyErr for the saved combo
-  let recording = false;
+  let replyHotkeyErr = ""; // Status().replyHotkeyErr for the saved reply combo
   let saving = false;
 
   const helpIdle = "Click, then press the new key combination.";
+  const replyHelpIdle = "Marks the selected message as a reply you owe. " + helpIdle;
 
   function setError(field: FieldKey, text: string): void {
     const box = errors[field];
@@ -370,19 +441,37 @@ export function mountSettings(root: HTMLElement): void {
     (Object.keys(errors) as FieldKey[]).forEach((k) => setError(k, ""));
   }
 
+  /** Redraws both hotkey pills (and their registration errors). */
   function renderHotkey(): void {
+    hotkeys.forEach((r) => r.render());
+  }
+
+  function renderDays(): void {
     if (!draft) return;
-    hotkeyBtn.replaceChildren();
-    hotkeyBtn.classList.toggle("is-recording", recording);
-    hotkeyBtn.setAttribute("aria-pressed", String(recording));
-    if (recording) {
-      hotkeyBtn.append(el("span", "hotkey-prompt", "Press keys…"));
-    } else {
-      hotkeyBtn.append(keycaps(draft.hotkey));
-    }
-    // The registration error is about the saved combo; hide it while a new
-    // one is drafted.
-    setError("hotkey", !recording && saved && draft.hotkey === saved.hotkey ? hotkeyErr : "");
+    dayChips.replaceChildren(
+      ...WEEKDAYS.map((day, i) => {
+        const on = draft!.workDays.includes(day);
+        const b = el("button", "day-chip", DAY_SHORT[i]);
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(on));
+        b.setAttribute("aria-label", day.charAt(0).toUpperCase() + day.slice(1));
+        b.addEventListener("click", () => {
+          if (!draft) return;
+          const set = new Set(draft.workDays);
+          if (set.has(day)) set.delete(day);
+          else set.add(day);
+          draft.workDays = WEEKDAYS.filter((d) => set.has(d));
+          setError("workDays", "");
+          renderDays();
+          changed();
+          (dayChips.children[i] as HTMLElement).focus();
+        });
+        return b;
+      }),
+    );
+    inputs.workDays = dayChips.querySelector("button") as HTMLElement;
+    // Mirrors Validate: at least one day stays selected.
+    if (draft.workDays.length === 0) setError("workDays", "Pick at least one working day");
   }
 
   function renderLeads(): void {
@@ -414,6 +503,9 @@ export function mountSettings(root: HTMLElement): void {
   function fill(): void {
     if (!draft) return;
     renderHotkey();
+    renderDays();
+    endOfDay.value = draft.endOfDay;
+    eodSweep.checked = draft.endOfDaySweep;
     renderLeads();
     defaultTime.value = draft.defaultTime;
     nwDay.value = draft.nextWeekDay;
@@ -428,7 +520,7 @@ export function mountSettings(root: HTMLElement): void {
   }
 
   function changed(): void {
-    save.disabled = saving || !dirty();
+    save.disabled = saving || !dirty() || (!!draft && draft.workDays.length === 0);
     if (dirty()) status.textContent = "";
   }
 
@@ -462,6 +554,8 @@ export function mountSettings(root: HTMLElement): void {
       setError(f, msg);
       first ??= f;
     };
+    if (draft.workDays.length === 0) fail("workDays", "Pick at least one working day");
+    if (!CLOCK.test(draft.endOfDay)) fail("endOfDay", "Enter a time, for example 17:30");
     if (!CLOCK.test(draft.defaultTime)) fail("defaultTime", "Enter a time, for example 09:00");
     if (!CLOCK.test(draft.nextWeekTime)) fail("nextWeek", "Enter a time, for example 09:00");
     const path = draft.exportPath.trim();
@@ -474,54 +568,103 @@ export function mountSettings(root: HTMLElement): void {
 
   // ----- Hotkey recorder -----
 
-  function startRecording(): void {
-    if (recording || !draft) return;
-    recording = true;
-    hotkeyHelp.textContent = "Press the new combination. Esc cancels.";
-    renderHotkey();
-    // Release the global hotkey so pressing the current combo reaches us
-    // instead of opening the capture box.
-    void api.setHotkeyRecording(true).catch(() => undefined);
+  interface Recorder {
+    render(): void;
+    isRecording(): boolean;
+    stop(): void;
   }
 
-  function stopRecording(combo?: string): void {
-    if (!recording || !draft) return;
-    recording = false;
-    void api.setHotkeyRecording(false).catch(() => undefined);
-    if (combo) draft.hotkey = combo;
-    hotkeyHelp.textContent = helpIdle;
-    renderHotkey();
-    changed();
-  }
-
-  hotkeyBtn.addEventListener("click", () => (recording ? stopRecording() : startRecording()));
-  hotkeyBtn.addEventListener("keydown", (e) => {
-    if (!recording) return;
-    if (e.key === "Escape") {
+  /**
+   * One hotkey field: a pill that records a combo. While it records, Go
+   * releases both global hotkeys, so pressing a current combo reaches us.
+   */
+  function recorder(o: {
+    btn: HTMLButtonElement;
+    help: HTMLElement;
+    idle: string;
+    field: "hotkey" | "replyHotkey";
+    get: (d: Draft) => string;
+    set: (d: Draft, v: string) => void;
+    registrationErr: () => string;
+  }): Recorder {
+    let recording = false;
+    const render = () => {
+      if (!draft) return;
+      o.btn.replaceChildren();
+      o.btn.classList.toggle("is-recording", recording);
+      o.btn.setAttribute("aria-pressed", String(recording));
+      o.btn.append(recording ? el("span", "hotkey-prompt", "Press keys…") : keycaps(o.get(draft)));
+      // The registration error is about the saved combo; hide it while a new
+      // one is drafted.
+      setError(o.field, !recording && saved && o.get(draft) === o.get(saved) ? o.registrationErr() : "");
+    };
+    const start = () => {
+      if (recording || !draft) return;
+      recording = true;
+      o.help.textContent = "Press the new combination. Esc cancels.";
+      render();
+      void api.setHotkeyRecording(true).catch(() => undefined);
+    };
+    const stop = (combo?: string) => {
+      if (!recording || !draft) return;
+      recording = false;
+      void api.setHotkeyRecording(false).catch(() => undefined);
+      if (combo) o.set(draft, combo);
+      o.help.textContent = o.idle;
+      render();
+      changed();
+    };
+    o.btn.addEventListener("click", () => (recording ? stop() : start()));
+    o.btn.addEventListener("keydown", (e) => {
+      if (!recording) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        stop();
+        return;
+      }
+      // Tab and Shift+Tab end recording and move focus as usual, so keyboard
+      // users can leave the field in either direction.
+      if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        stop(); // let focus move on
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
-      stopRecording();
-      return;
-    }
-    // Tab and Shift+Tab end recording and move focus as usual, so keyboard
-    // users can leave the field in either direction.
-    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      stopRecording(); // let focus move on
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.repeat) return;
-    const r = comboFor(e, mac);
-    if (r.combo) stopRecording(r.combo);
-    else hotkeyHelp.textContent = r.hint ?? "Press the new combination. Esc cancels.";
-  });
-  // Keep Alt/F10 from activating the window menu while recording.
-  hotkeyBtn.addEventListener("keyup", (e) => {
-    if (recording) e.preventDefault();
-  });
-  hotkeyBtn.addEventListener("blur", () => stopRecording());
-  window.addEventListener("blur", () => stopRecording());
+      if (e.repeat) return;
+      const r = comboFor(e, mac);
+      if (r.combo) stop(r.combo);
+      else o.help.textContent = r.hint ?? "Press the new combination. Esc cancels.";
+    });
+    // Keep Alt/F10 from activating the window menu while recording.
+    o.btn.addEventListener("keyup", (e) => {
+      if (recording) e.preventDefault();
+    });
+    o.btn.addEventListener("blur", () => stop());
+    window.addEventListener("blur", () => stop());
+    return { render, isRecording: () => recording, stop: () => stop() };
+  }
+
+  const hotkeys: Recorder[] = [
+    recorder({
+      btn: hotkeyBtn,
+      help: hotkeyHelp,
+      idle: helpIdle,
+      field: "hotkey",
+      get: (d) => d.hotkey,
+      set: (d, v) => (d.hotkey = v),
+      registrationErr: () => hotkeyErr,
+    }),
+    recorder({
+      btn: replyBtn,
+      help: replyHelp,
+      idle: replyHelpIdle,
+      field: "replyHotkey",
+      get: (d) => d.replyHotkey,
+      set: (d, v) => (d.replyHotkey = v),
+      registrationErr: () => replyHotkeyErr,
+    }),
+  ];
 
   // ----- Fields -----
 
@@ -560,6 +703,8 @@ export function mountSettings(root: HTMLElement): void {
   bind(nwDay, "nextWeek", (d) => (d.nextWeekDay = nwDay.value));
   bind(nwTime, "nextWeek", (d) => (d.nextWeekTime = nwTime.value));
   bind(exportPath, "exportPath", (d) => (d.exportPath = exportPath.value));
+  bind(endOfDay, "endOfDay", (d) => (d.endOfDay = endOfDay.value));
+  bind(eodSweep, "form", (d) => (d.endOfDaySweep = eodSweep.checked));
   bind(autostart, "autostart", (d) => (d.autostart = autostart.checked));
   bind(pendingCount, "form", (d) => (d.showPendingCount = pendingCount.checked));
 
@@ -584,9 +729,12 @@ export function mountSettings(root: HTMLElement): void {
 
   async function refreshStatus(): Promise<void> {
     try {
-      hotkeyErr = (await api.status()).hotkeyErr;
+      const st = await api.status();
+      hotkeyErr = st.hotkeyErr;
+      replyHotkeyErr = st.replyHotkeyErr ?? "";
     } catch {
       hotkeyErr = "";
+      replyHotkeyErr = "";
     }
   }
 
@@ -615,7 +763,7 @@ export function mountSettings(root: HTMLElement): void {
         .map(fieldOf);
       // Hotkey and autostart errors come after the save
       // (Service.SaveSettings); any other error means nothing was saved.
-      applied = failed.every((f) => f.field === "hotkey" || f.field === "autostart");
+      applied = failed.every((f) => f.field === "hotkey" || f.field === "autostart" || (f.field === "replyHotkey" && f.text !== CLASH));
     }
     saving = false;
     if (applied) {
@@ -625,7 +773,7 @@ export function mountSettings(root: HTMLElement): void {
     // A hotkey that couldn't be registered shows under the field from
     // Status (renderHotkey), the same text as the save error.
     renderHotkey();
-    for (const f of failed) if (f.field !== "hotkey" || !applied) setError(f.field, f.text);
+    for (const f of failed) if ((f.field !== "hotkey" && f.field !== "replyHotkey") || !applied) setError(f.field, f.text);
     if (failed.length) {
       status.textContent = applied ? "Saved, with a problem" : "";
       const first = failed[0].field;
@@ -642,7 +790,7 @@ export function mountSettings(root: HTMLElement): void {
       form.requestSubmit();
       return;
     }
-    if (e.key === "Escape" && !recording && !e.defaultPrevented) {
+    if (e.key === "Escape" && !hotkeys.some((r) => r.isRecording()) && !e.defaultPrevented) {
       if (dirty()) {
         status.textContent = "Unsaved changes: Save, or close the window to discard them";
         return;
@@ -654,6 +802,7 @@ export function mountSettings(root: HTMLElement): void {
   mountSyncSection($("sync-section"));
 
   hotkeyHelp.textContent = helpIdle;
+  replyHelp.textContent = replyHelpIdle;
   void (async () => {
     try {
       const s = await api.getSettings();

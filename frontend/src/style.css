@@ -1334,6 +1334,62 @@ legend.field-label {
   justify-content: space-between;
 }
 
+/* "Replies" group: a titled run of fields, set off by a hairline like the Sync section. */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-5) 0 0;
+  border: 0;
+  border-top: var(--hairline) solid var(--border);
+}
+
+.group-title {
+  float: left;
+  width: 100%;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+.group-title + * {
+  clear: both;
+}
+
+/* Working-day toggles: seven pill buttons, aria-pressed = a working day.
+   Pressed uses the primary-button pair (--on-accent on --accent-fill). */
+.day-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.day-chip {
+  min-width: var(--control-height);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-hover), border-color var(--dur-hover);
+}
+
+.day-chip:hover {
+  border-color: var(--fg-muted);
+}
+
+.day-chip[aria-pressed="true"] {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
 .input {
   height: var(--control-height);
   padding: 0 var(--space-2);
