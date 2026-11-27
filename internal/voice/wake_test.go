@@ -599,8 +599,22 @@ func TestWakeCooldowns(t *testing.T) {
 	detect(4, 2) // 4 s after it
 }
 
+// recordStates collects the states and errors pushed to OnStatus.
+func recordStates(cfg *WakeConfig) func() []WakeStatus {
+	var mu sync.Mutex
+	var seen []WakeStatus
+	cfg.OnStatus = func(s WakeStatus) { mu.Lock(); seen = append(seen, s); mu.Unlock() }
+	return func() []WakeStatus {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]WakeStatus(nil), seen...)
+	}
+}
+
 func TestWakeRestartsWithBackoff(t *testing.T) {
 	f, clk, _ := newSupFixture(t, "idle")
+	f.cfg.Backoff = []time.Duration{200 * time.Millisecond, time.Second, time.Second}
+	states := recordStates(&f.cfg)
 	w := NewWake(f.cfg)
 	defer w.Close()
 	if err := w.SetEnabled(true); err != nil {
@@ -611,9 +625,16 @@ func TestWakeRestartsWithBackoff(t *testing.T) {
 	if err := p.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
+	// While the restart is pending the state is "starting", without error.
+	if !waitFor(t, 5*time.Second, func() bool { return !w.helperRunning() }) {
+		t.Fatal("helper exit not noticed")
+	}
+	if st := w.Status(); st.State != "starting" || st.Error != "" {
+		t.Errorf("during backoff: %+v", st)
+	}
 	p2 := waitProc(t, w, p.cmd.Process.Pid)
-	if d := time.Since(killed); d < 10*time.Millisecond {
-		t.Errorf("restarted after %v, want the 10 ms backoff first", d)
+	if d := time.Since(killed); d < 200*time.Millisecond {
+		t.Errorf("restarted after %v, want the 200 ms backoff first", d)
 	}
 	if !exited(p) {
 		t.Error("old helper not reaped")
@@ -623,11 +644,17 @@ func TestWakeRestartsWithBackoff(t *testing.T) {
 	if !w.helperRunning() || exited(p2) {
 		t.Error("restarted helper should be running")
 	}
+	for _, s := range states() {
+		if s.State == "error" || s.Error != "" {
+			t.Errorf("emitted %+v before any give-up", s)
+		}
+	}
 }
 
 func TestWakeGivesUpAfterThreeExits(t *testing.T) {
 	f, _, spawns := newSupFixture(t, "die")
 	t.Setenv("FAKE_STDERR", "PortAudio error: Invalid device")
+	states := recordStates(&f.cfg)
 	w := NewWake(f.cfg)
 	defer w.Close()
 	if err := w.SetEnabled(true); err != nil {
@@ -646,6 +673,76 @@ func TestWakeGivesUpAfterThreeExits(t *testing.T) {
 	}
 	if w.helperRunning() {
 		t.Error("no helper after giving up")
+	}
+	// "error" is emitted only once given up: nothing else follows it.
+	seen := states()
+	if len(seen) == 0 || seen[len(seen)-1].State != "error" || !strings.Contains(seen[len(seen)-1].Error, "Invalid device") {
+		t.Fatalf("emitted %+v, want error last", seen)
+	}
+	first := len(seen) - 1
+	for first > 0 && seen[first-1].State == "error" {
+		first--
+	}
+	for _, s := range seen[:first] {
+		if s.Error != "" {
+			t.Errorf("emitted %+v before giving up", s)
+		}
+	}
+}
+
+func TestWakeBackoffSteps(t *testing.T) {
+	f, clk, _ := newSupFixture(t, "idle")
+	f.cfg.Tick = time.Hour // the fake clock moves in minutes; no resume here
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	// Exits 6 min apart: never 3 within 10 min, so it never gives up, and
+	// the backoff still walks 1st, 2nd, 3rd step, then stays at the last.
+	want := f.cfg.Backoff
+	want = append(want, want[2], want[2])
+	p := waitProc(t, w, 0)
+	for i, d := range want {
+		clk.Advance(6 * time.Minute)
+		if err := p.cmd.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		p = waitProc(t, w, p.cmd.Process.Pid)
+		w.mu.Lock()
+		got, up := w.sup.lastBackoff, w.sup.gaveUp
+		w.mu.Unlock()
+		if got != d || up {
+			t.Fatalf("exit %d: backoff %v (gave up %v), want %v", i+1, got, up, d)
+		}
+	}
+}
+
+func TestWakeResumeAfterGiveUp(t *testing.T) {
+	f, clk, spawns := newSupFixture(t, "die")
+	t.Setenv("FAKE_STDERR", "PortAudio error: Invalid device")
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return gaveUp(w) }) {
+		t.Fatalf("never gave up: %+v", w.Status())
+	}
+	clk.Advance(10 * time.Second) // resume
+	if !waitFor(t, 5*time.Second, func() bool { return spawns.Load() >= 4 }) {
+		t.Fatal("no spawn after a resume")
+	}
+	// A fresh period: three more exits before giving up again.
+	if !waitFor(t, 5*time.Second, func() bool { return spawns.Load() == 6 && gaveUp(w) }) {
+		t.Fatalf("spawns %d, gave up %v", spawns.Load(), gaveUp(w))
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := spawns.Load(); n != 6 {
+		t.Errorf("spawned %d, want 6", n)
+	}
+	if st := w.Status(); st.State != "error" || !strings.Contains(st.Error, "Invalid device") {
+		t.Errorf("status = %+v", st)
 	}
 }
 
