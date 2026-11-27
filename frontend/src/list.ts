@@ -37,7 +37,8 @@ interface EditState {
   original: string;
   input?: HTMLInputElement;
   setError?: (msg: string) => void;
-  saving: boolean;
+  /** The Update in flight, if any; resolves to whether it succeeded. */
+  saving: Promise<boolean> | null;
 }
 
 function loadDoneOpen(): boolean {
@@ -110,6 +111,7 @@ export function mountList(root: HTMLElement): void {
   root.innerHTML = TEMPLATE;
   const search = root.querySelector<HTMLInputElement>("#list-search")!;
   const settingsBtn = root.querySelector<HTMLButtonElement>("#list-settings")!;
+  const scroll = root.querySelector<HTMLElement>("#list-scroll")!;
   const sectionsBox = root.querySelector<HTMLElement>("#list-sections")!;
   const empty = root.querySelector<HTMLElement>("#list-empty")!;
   const emptyText = root.querySelector<HTMLElement>("#list-empty-text")!;
@@ -120,7 +122,7 @@ export function mountList(root: HTMLElement): void {
   const toastSep = root.querySelector<HTMLElement>("#list-toast-sep")!;
 
   let view: View | null = null; // null until the first fetch settles
-  let nextView: View | null = null; // fetched while an edit/animation held rendering
+  let nextView: View | null = null; // fetched while a done animation held rendering
   let query = "";
   let doneOpen = loadDoneOpen();
   let hotkey = DEFAULT_HOTKEY;
@@ -128,12 +130,14 @@ export function mountList(root: HTMLElement): void {
   let selectedIndex = 0;
   let edit: EditState | null = null;
   let holds = 0; // running done animations
+  let rendering = false; // render() is moving nodes: ignore the blurs that causes
   let fetchSeq = 0;
   let refreshTimer: number | undefined;
   let focusAfterLoad: string | null = null; // item to focus once the first view renders
   let selectIdAfterRefresh: string | null = null;
 
   const sectionEls = new Map<string, SectionEls>();
+  let sectionSeq = 0; // monotonic: section ids never repeat, even after a section is dropped
   const rowEls = new Map<string, HTMLElement>();
   const rowSigs = new Map<string, string>();
   const rowModels = new Map<string, RowModel>();
@@ -172,13 +176,13 @@ export function mountList(root: HTMLElement): void {
     if (s) return s;
     const rootEl = el("section", "sec");
     rootEl.dataset.key = m.key;
+    const n = ++sectionSeq;
     const head = el("h2", "sec-head");
-    const headId = `sec-${sectionEls.size}-head`;
-    head.id = headId;
+    head.id = `sec-${n}-head`;
     const rowsEl = el("div", "sec-rows");
     rowsEl.setAttribute("role", "list");
-    rowsEl.setAttribute("aria-labelledby", headId);
-    rowsEl.id = `sec-${sectionEls.size}-rows`;
+    rowsEl.setAttribute("aria-labelledby", head.id);
+    rowsEl.id = `sec-${n}-rows`;
     let title: HTMLElement;
     if (m.key === "done") {
       const btn = el("button", "sec-toggle");
@@ -221,10 +225,22 @@ export function mountList(root: HTMLElement): void {
   }
 
   function render(): void {
+    rendering = true;
+    try {
+      renderNow();
+    } finally {
+      rendering = false;
+    }
+  }
+
+  function renderNow(): void {
     const now = new Date();
-    // A row that is moved or removed loses focus; give it back afterwards.
+    // A row (or the edit input) that is moved or removed loses focus; give it
+    // back afterwards.
     const active = document.activeElement;
     const rowHadFocus = active instanceof HTMLElement && active.classList.contains("row");
+    const editInput = edit?.input && active === edit.input ? edit.input : null;
+    const caret = editInput ? [editInput.selectionStart ?? 0, editInput.selectionEnd ?? 0] : null;
 
     const models = buildSections();
     const wantedSections: HTMLElement[] = [];
@@ -269,6 +285,16 @@ export function mountList(root: HTMLElement): void {
     }
     const liveSections = new Set(models.map((m) => m.key));
     for (const k of Array.from(sectionEls.keys())) if (!liveSections.has(k)) sectionEls.delete(k);
+
+    // The edited item was deleted or moved elsewhere: its row is gone.
+    if (edit && !liveKeys.has(edit.key)) {
+      const lost = edit;
+      edit = null;
+      if (lost.input && lost.input.value !== lost.original) showToast("Edit discarded: the item changed elsewhere");
+    } else if (editInput && edit?.input === editInput && document.activeElement !== editInput) {
+      editInput.focus({ preventScroll: true });
+      if (caret) editInput.setSelectionRange(caret[0], caret[1]);
+    }
 
     const loaded = view !== null;
     empty.hidden = !loaded || query !== "" || hasOpenItems();
@@ -359,9 +385,12 @@ export function mountList(root: HTMLElement): void {
     applyIfIdle();
   }
 
-  /** Applies a fetched view unless an edit or a done animation is running. */
+  /**
+   * Applies a fetched view unless a done animation is running. An open edit
+   * does not hold rendering: render() leaves the edited row's content alone.
+   */
   function applyIfIdle(): void {
-    if (edit || holds > 0) return;
+    if (holds > 0) return;
     const first = view === null;
     if (nextView) {
       view = nextView;
@@ -467,8 +496,9 @@ export function mountList(root: HTMLElement): void {
   }
 
   async function toggleDone(row: HTMLElement): Promise<void> {
+    if (!(await settleEdit())) return;
     const m = modelOf(row);
-    if (!m || edit) return;
+    if (!m) return;
     const it = m.item;
     if (isDone(it)) {
       selectIdAfterRefresh = it.id;
@@ -492,9 +522,10 @@ export function mountList(root: HTMLElement): void {
     }
   }
 
-  function remove(row: HTMLElement): void {
+  async function remove(row: HTMLElement): Promise<void> {
+    if (!(await settleEdit())) return;
     const m = modelOf(row);
-    if (!m || edit) return;
+    if (!m) return;
     const id = m.item.id;
     api
       .deleteItem(id)
@@ -533,12 +564,13 @@ export function mountList(root: HTMLElement): void {
     if (it.rrule && !isDone(it)) {
       items.push({ label: "Stop repeating", icon: "repeatOff", run: () => void api.stopRepeating(it.id).catch(fail) });
     }
-    items.push({ label: "Delete", icon: "trash", danger: true, run: () => remove(row) });
+    items.push({ label: "Delete", icon: "trash", danger: true, run: () => void remove(row) });
     return items;
   }
 
-  function showMenu(row: HTMLElement, snoozeOnly = false, at?: DOMRect): void {
-    if (edit) return;
+  async function showMenu(row: HTMLElement, snoozeOnly = false, at?: DOMRect): Promise<void> {
+    if (!(await settleEdit())) return;
+    if (!row.isConnected) return;
     select(row, false); // a scroll would dismiss the menu
     const trigger = row.querySelector<HTMLElement>(".row-more") ?? undefined;
     const items = menuItems(row, snoozeOnly);
@@ -555,10 +587,15 @@ export function mountList(root: HTMLElement): void {
   // ---------- inline edit ----------
 
   async function startEdit(row: HTMLElement): Promise<void> {
+    if (edit && edit.key === row.dataset.key) {
+      edit.input?.focus();
+      return;
+    }
+    if (!(await settleEdit())) return;
     const m = modelOf(row);
-    if (!m || edit) return;
+    if (!m || !row.isConnected) return;
     select(row, false);
-    const state: EditState = { key: m.key, id: m.item.id, original: "", saving: false };
+    const state: EditState = { key: m.key, id: m.item.id, original: "", saving: null };
     edit = state;
     let text: string;
     try {
@@ -569,7 +606,10 @@ export function mountList(root: HTMLElement): void {
       applyIfIdle();
       return;
     }
-    if (edit !== state) return;
+    if (edit !== state || !row.isConnected) {
+      if (edit === state) edit = null;
+      return;
+    }
     state.original = text;
     const { input, setError } = editRow(row, text);
     state.input = input;
@@ -589,32 +629,63 @@ export function mountList(root: HTMLElement): void {
       }
     });
     input.addEventListener("input", () => setError(""));
-    // Leaving an unchanged edit cancels it; a changed one stays open.
+    // Leaving an unchanged edit cancels it; a changed one stays open until
+    // the next action settles it (settleEdit).
     input.addEventListener("blur", () => {
+      if (rendering) return; // render() moved the row and refocuses the input
       if (edit === state && !state.saving && input.value === state.original) endEdit(false);
     });
   }
 
-  async function commitEdit(): Promise<void> {
+  /**
+   * Saves the open edit; refocus returns focus to its row afterwards.
+   * Resolves false if Update failed: the edit stays open, shows the error
+   * and has focus.
+   */
+  function commitEdit(refocus = true): Promise<boolean> {
     const state = edit;
-    if (!state?.input || state.saving) return;
-    const value = state.input.value;
-    if (value === state.original) {
-      endEdit(true);
-      return;
+    if (!state?.input) return Promise.resolve(true);
+    if (state.saving) return state.saving;
+    const input = state.input;
+    if (input.value === state.original) {
+      endEdit(refocus);
+      return Promise.resolve(true);
     }
-    state.saving = true;
-    try {
-      await api.update(state.id, value);
-    } catch (err) {
-      state.saving = false;
-      const msg = errorText(err);
-      state.setError?.(msg.includes("empty input") ? "Add some text to save" : msg);
-      state.input.focus();
-      return;
+    const saving = api.update(state.id, input.value).then(
+      () => {
+        state.saving = null;
+        selectIdAfterRefresh = state.id; // a tag change moves the row to another section
+        if (edit === state) endEdit(refocus);
+        return true;
+      },
+      (err: unknown) => {
+        state.saving = null;
+        const msg = errorText(err);
+        state.setError?.(msg.includes("empty input") ? "Add some text to save" : msg);
+        if (edit === state) {
+          input.focus();
+          input.scrollIntoView({ block: "nearest" });
+        }
+        return false;
+      },
+    );
+    state.saving = saving;
+    return saving;
+  }
+
+  /**
+   * Settles an open edit before another action: a changed edit is saved, an
+   * unchanged one (or one still loading its text) is cancelled. Resolves
+   * false when the save failed; the caller must then drop its action.
+   */
+  async function settleEdit(): Promise<boolean> {
+    const state = edit;
+    if (!state) return true;
+    if (!state.input || (!state.saving && state.input.value === state.original)) {
+      endEdit(false);
+      return true;
     }
-    selectIdAfterRefresh = state.id; // a tag change moves the row to another section
-    endEdit(true);
+    return commitEdit(false);
   }
 
   function endEdit(refocus: boolean): void {
@@ -629,15 +700,19 @@ export function mountList(root: HTMLElement): void {
 
   // ---------- events ----------
 
-  sectionsBox.addEventListener("click", (e) => {
+  // A click anywhere in the list outside the edited row settles the edit
+  // first; the clicked action runs only if that succeeded.
+  scroll.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement;
     const row = t.closest<HTMLElement>(".row");
-    if (!row || row.classList.contains("is-editing")) return;
+    if (row?.classList.contains("is-editing")) return;
+    if (!(await settleEdit())) return;
+    if (!row || !row.isConnected) return;
     if (t.closest(".row-check")) {
       select(row, false);
       void toggleDone(row);
     } else if (t.closest(".row-more")) {
-      showMenu(row);
+      void showMenu(row);
     } else {
       select(row, false); // the row is under the pointer: don't jump
     }
@@ -653,7 +728,7 @@ export function mountList(root: HTMLElement): void {
     const row = (e.target as HTMLElement).closest<HTMLElement>(".row");
     if (!row || row.classList.contains("is-editing")) return;
     e.preventDefault();
-    showMenu(row, false, new DOMRect(e.clientX, e.clientY, 0, 0));
+    void showMenu(row, false, new DOMRect(e.clientX, e.clientY, 0, 0));
   });
 
   search.addEventListener("input", () => {
@@ -742,16 +817,16 @@ export function mountList(root: HTMLElement): void {
       case "s":
       case "S":
         e.preventDefault();
-        showMenu(row, true);
+        void showMenu(row, true);
         return;
       case "Delete":
         e.preventDefault();
-        remove(row);
+        void remove(row);
         return;
       case ".":
       case "ContextMenu":
         e.preventDefault();
-        showMenu(row);
+        void showMenu(row);
         return;
     }
   });
