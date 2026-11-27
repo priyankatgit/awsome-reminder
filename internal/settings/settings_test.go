@@ -151,3 +151,49 @@ func TestLoadSettingsMissingShowPendingCountDefaultsTrue(t *testing.T) {
 		t.Fatalf("explicit false lost: %s", b)
 	}
 }
+
+func TestWithSharedKeepsLocalFields(t *testing.T) {
+	s := Defaults("windows")
+	s.Hotkey = "Ctrl+Alt+K"
+	s.ExportPath = `C:\todo.md`
+	s.Autostart = false
+	s.ShowPendingCount = false
+	p := Shared{LeadTimes: []time.Duration{2 * time.Hour}, DefaultTime: "08:30", NextWeekDay: "friday", NextWeekTime: "07:15"}
+	got := s.WithShared(p)
+	if got.Hotkey != "Ctrl+Alt+K" || got.ExportPath != `C:\todo.md` || got.Autostart || got.ShowPendingCount {
+		t.Fatalf("local fields changed: %+v", got)
+	}
+	if !got.Shared().Equal(p) {
+		t.Fatalf("shared not replaced: %+v", got.Shared())
+	}
+	if s.Shared().Equal(p) {
+		t.Fatal("Equal should differ")
+	}
+}
+
+func TestSettingsJSONMissingSharedStamp(t *testing.T) {
+	var s Settings
+	old := `{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	if !s.SharedUpdatedAt.IsZero() || s.SharedUpdatedBy != "" {
+		t.Fatalf("got %v %q", s.SharedUpdatedAt, s.SharedUpdatedBy)
+	}
+	s.SharedUpdatedAt = time.UnixMilli(1764000000123)
+	s.SharedUpdatedBy = "dev1"
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"sharedUpdatedAt":1764000000123`) {
+		t.Fatalf("json %s", b)
+	}
+	var back Settings
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !back.SharedUpdatedAt.Equal(s.SharedUpdatedAt) || back.SharedUpdatedBy != "dev1" {
+		t.Fatalf("round trip %v %q", back.SharedUpdatedAt, back.SharedUpdatedBy)
+	}
+}

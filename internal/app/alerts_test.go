@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/settings"
@@ -454,5 +455,57 @@ func TestRuleChangeDropsLookAheadCards(t *testing.T) {
 				t.Fatalf("look-ahead card kept: %v", keys(h.svc.PendingAlerts()))
 			}
 		})
+	}
+}
+
+// A change pulled from another machine drops the cards it made stale, like
+// the same change made here; an edit that leaves the occurrence alone keeps
+// them.
+func TestRemoteDoneDropsAlertCards(t *testing.T) {
+	h := newHarness(t)
+	for _, id := range []string{"X", "T", "S", "M", "D"} {
+		putReminder(t, h, id, "text "+id, nil, "")
+	}
+	h.svc.showAlerts([]scheduler.Alert{alert("X", "x1"), alert("T", "t1"), alert("S", "s1"), alert("M", "m1"), alert("D", "d1")})
+	item := func(id string) model.Item {
+		t.Helper()
+		it, err := h.st.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return it
+	}
+	change := func(id string, edit func(*model.Item)) core.Applied {
+		before := item(id)
+		after := before
+		edit(&after)
+		return core.Applied{Before: &before, After: after}
+	}
+	snooze := time.Now().UTC().Add(2 * time.Hour)
+	moved := alertDue.Add(time.Hour)
+	done := time.Now().UTC()
+	h.svc.remoteApplied([]core.Applied{
+		change("X", func(it *model.Item) { it.Status, it.DoneAt = model.StatusDone, &done }),
+		change("T", func(it *model.Item) { it.Text = "edited elsewhere" }),
+		change("S", func(it *model.Item) { it.SnoozeUntil = &snooze }),
+		change("M", func(it *model.Item) { it.DueAt = &moved }),
+		change("D", func(it *model.Item) { it.Status = model.StatusDeleted }),
+	})
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"t1"}) {
+		t.Fatalf("queue %v, want only the text-edited item's card", got)
+	}
+	if got := keys(lastQueue(t, h)); !reflect.DeepEqual(got, []string{"t1"}) {
+		t.Fatalf("event queue %v", got)
+	}
+
+	// A new item from elsewhere (no Before) that is already done drops a
+	// card with its ID, if one is somehow queued; an open one keeps it.
+	h.svc.remoteApplied([]core.Applied{{After: model.Item{ID: "T", Status: model.StatusOpen}}})
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"t1"}) {
+		t.Fatalf("queue %v after an open insert", got)
+	}
+	h.svc.remoteApplied([]core.Applied{{After: model.Item{ID: "T", Status: model.StatusDone}}})
+	if n := len(h.svc.PendingAlerts()); n != 0 {
+		t.Fatalf("queue %v after a done insert", keys(h.svc.PendingAlerts()))
 	}
 }

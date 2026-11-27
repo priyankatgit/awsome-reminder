@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"awesome-reminder/internal/cloudsync"
 )
 
 type fakeBadgeTray struct {
@@ -284,4 +286,181 @@ func TestBadgeWiringCountErrorAtStartSetsTooltip(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	w.Stop()
+}
+
+// fakeTicker lets a test fire ticks by hand and see when the wiring stops it.
+type fakeTicker struct {
+	mu      sync.Mutex
+	c       chan time.Time
+	started int
+	stopped int
+}
+
+func (f *fakeTicker) New(time.Duration) (<-chan time.Time, func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.started++
+	return f.c, func() { f.mu.Lock(); f.stopped++; f.mu.Unlock() }
+}
+
+func (f *fakeTicker) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.started, f.stopped
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestBadgeWiringSyncChanged(t *testing.T) {
+	plain := trayIcons{
+		Light:    testPNG(t, color.NRGBA{0, 0, 0, 255}),
+		Dark:     testPNG(t, color.NRGBA{255, 255, 255, 255}),
+		Template: testPNG(t, color.NRGBA{0, 0, 0, 255}),
+	}
+	var mu sync.Mutex
+	st := cloudsync.Status{State: cloudsync.StateOff}
+	setSt := func(s cloudsync.Status) { mu.Lock(); st = s; mu.Unlock() }
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	tray := &fakeBadgeTray{}
+	ft := &fakeTicker{c: make(chan time.Time)}
+	reads := 0
+	w := newBadgeWiring(badgeDeps{
+		Count:     func() (int, error) { mu.Lock(); reads++; mu.Unlock(); return 3, nil },
+		Show:      func() bool { return true },
+		HotkeyErr: func() string { return "taken" },
+		Sync:      func() cloudsync.Status { mu.Lock(); defer mu.Unlock(); return st },
+		Now:       func() time.Time { return now },
+		NewTicker: ft.New,
+		Icons:     plain,
+		Tray:      tray,
+		Debounce:  time.Millisecond,
+	})
+	var nilW *badgeWiring
+	nilW.SyncChanged()
+
+	w.Start(nil)
+	waitFor(t, "first refresh", func() bool { _, tip, _ := tray.state(); return tip != "" })
+	offIcons, tip, _ := tray.state()
+	if tip != "Awesome Reminder — 3 pending — hotkey error: taken" {
+		t.Fatalf("off tooltip %q", tip)
+	}
+	if s, _ := ft.counts(); s != 0 {
+		t.Fatal("ticker started while off")
+	}
+	mu.Lock()
+	readsBefore := reads
+	mu.Unlock()
+
+	// Syncing: ticker starts; two ticks alternate two distinct icon sets.
+	setSt(cloudsync.Status{State: cloudsync.StateSyncing})
+	w.SyncChanged()
+	iconsA, tip, _ := tray.state()
+	if tip != "Awesome Reminder — 3 pending — Syncing… — hotkey error: taken" {
+		t.Fatalf("syncing tooltip %q", tip)
+	}
+	if bytes.Equal(iconsA[0], offIcons[0]) {
+		t.Fatal("syncing icon has no dot")
+	}
+	if s, _ := ft.counts(); s != 1 {
+		t.Fatalf("ticker started %d times, want 1", s)
+	}
+	ft.c <- now
+	var iconsB [3][]byte
+	waitFor(t, "frame B", func() bool { iconsB, _, _ = tray.state(); return !bytes.Equal(iconsB[0], iconsA[0]) })
+	ft.c <- now
+	waitFor(t, "frame A again", func() bool { i, _, _ := tray.state(); return bytes.Equal(i[0], iconsA[0]) })
+	w.SyncChanged() // still syncing: the same ticker keeps running
+	if s, _ := ft.counts(); s != 1 {
+		t.Fatalf("ticker restarted (%d)", s)
+	}
+
+	// Synced: the ticker stops, the tooltip carries the age.
+	last := now.Add(-2 * time.Minute)
+	setSt(cloudsync.Status{State: cloudsync.StateSynced, LastSyncAt: &last})
+	w.SyncChanged()
+	// The goroutine releases the ticker asynchronously after its stop
+	// channel closes; once it has, it can no longer take a tick.
+	waitFor(t, "ticker released", func() bool { _, e := ft.counts(); return e == 1 })
+	_, tip, sets := tray.state()
+	if tip != "Awesome Reminder — 3 pending — Synced · 2 min ago — hotkey error: taken" {
+		t.Fatalf("synced tooltip %q", tip)
+	}
+	select {
+	case ft.c <- now:
+		t.Fatal("stopped ticker still consumed a tick")
+	case <-time.After(30 * time.Millisecond):
+	}
+	if _, _, after := tray.state(); after != sets {
+		t.Fatal("icons changed after the ticker stopped")
+	}
+	mu.Lock()
+	if reads != readsBefore {
+		t.Fatalf("SyncChanged read the store (%d reads)", reads-readsBefore)
+	}
+	mu.Unlock()
+
+	// Syncing again, then Stop joins the ticker: nothing touches the tray after.
+	setSt(cloudsync.Status{State: cloudsync.StateSyncing})
+	w.SyncChanged()
+	w.Stop()
+	if s, e := ft.counts(); s != 2 || e != 2 {
+		t.Fatalf("ticker started/stopped %d/%d, want 2/2", s, e)
+	}
+	_, _, before := tray.state()
+	w.SyncChanged()
+	time.Sleep(30 * time.Millisecond)
+	if _, _, after := tray.state(); after != before {
+		t.Fatal("tray touched after Stop")
+	}
+}
+
+// A SyncChanged or StatusChanged that passed its stopped check before Stop
+// ran must not write to the tray after Stop returns.
+func TestBadgeWiringNoTrayWritesAfterStop(t *testing.T) {
+	for _, name := range []string{"SyncChanged", "StatusChanged"} {
+		t.Run(name, func(t *testing.T) {
+			tray := &fakeBadgeTray{}
+			w := newBadgeWiring(badgeDeps{
+				Count:     func() (int, error) { return 1, nil },
+				Show:      func() bool { return true },
+				HotkeyErr: func() string { return "" },
+				Sync:      func() cloudsync.Status { return cloudsync.Status{State: cloudsync.StateSynced} },
+				Tray:      tray,
+				Debounce:  time.Millisecond,
+			})
+			w.Start(nil)
+			waitFor(t, "first refresh", func() bool { _, tip, _ := tray.state(); return tip != "" })
+
+			var before int
+			w.afterStopCheck = func() {
+				// Runs in the window between the stopped check and refreshMu.
+				w.afterStopCheck = nil
+				w.Stop()
+				_, _, before = tray.state()
+			}
+			if name == "SyncChanged" {
+				w.SyncChanged()
+			} else {
+				w.StatusChanged()
+			}
+			if _, _, after := tray.state(); after != before {
+				t.Fatal("tray written after Stop")
+			}
+			// And the plain post-Stop no-op.
+			w.SyncChanged()
+			w.StatusChanged()
+			if _, _, after := tray.state(); after != before {
+				t.Fatal("tray written after Stop")
+			}
+		})
+	}
 }

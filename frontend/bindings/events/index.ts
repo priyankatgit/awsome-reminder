@@ -29,6 +29,11 @@ export const ItemsChanged = "items:changed";
 export const ListFocus = "list:focus";
 
 /**
+ * Name of the custom event "sync:status".
+ */
+export const SyncStatus = "sync:status";
+
+/**
  * Name of the custom event "voice:status".
  */
 export const VoiceStatus = "voice:status";

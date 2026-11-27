@@ -652,3 +652,59 @@ func TestDoneThroughOccurrence(t *testing.T) {
 		t.Fatalf("one-off: %+v %v", d, err)
 	}
 }
+
+func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
+	e := newEnv(t)
+	s, _ := e.c.Settings()
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	drain := func() int {
+		rows, err := e.st.Outbox(100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, r := range rows {
+			if r.Kind == store.OutboxSettings {
+				n++
+			}
+			if _, err := e.st.Ack(r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return n
+	}
+	drain()
+	before, _ := e.c.Settings()
+
+	s = before
+	s.Hotkey = "Ctrl+Alt+H"
+	s.SharedUpdatedAt = time.UnixMilli(5)
+	s.SharedUpdatedBy = "evil"
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.c.Settings()
+	if got.Hotkey != "Ctrl+Alt+H" || !got.SharedUpdatedAt.Equal(before.SharedUpdatedAt) || got.SharedUpdatedBy != before.SharedUpdatedBy {
+		t.Fatalf("local change: %+v", got)
+	}
+	if n := drain(); n != 0 {
+		t.Fatalf("outbox rows %d", n)
+	}
+
+	s = got
+	s.LeadTimes = []time.Duration{3 * time.Hour}
+	s.SharedUpdatedAt = time.UnixMilli(5)
+	s.SharedUpdatedBy = "evil"
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = e.c.Settings()
+	if !got.SharedUpdatedAt.Equal(e.now) || got.SharedUpdatedAt.UnixMilli() != e.now.UnixMilli() || got.SharedUpdatedBy != e.st.DeviceID() {
+		t.Fatalf("stamp %v %q", got.SharedUpdatedAt, got.SharedUpdatedBy)
+	}
+	if n := drain(); n != 1 {
+		t.Fatalf("outbox rows %d", n)
+	}
+}

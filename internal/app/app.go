@@ -16,11 +16,14 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"awesome-reminder/internal/autostart"
+	"awesome-reminder/internal/cloudsync"
+	"awesome-reminder/internal/cloudsync/atlas"
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/export"
 	"awesome-reminder/internal/hotkey"
 	"awesome-reminder/internal/paths"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/secret"
 	"awesome-reminder/internal/store"
 )
 
@@ -158,6 +161,23 @@ func Run(opts Options) error {
 		return s.ExportPath
 	}, c.View, time.Local, exportDebounce)
 	defer exp.Close() // writes a pending export; runs before st.Close
+	// Sync opens no Mongo client unless a connection string is saved, and
+	// never at the caller's pace: Start returns at once.
+	syncCtl := newSyncController(syncDeps{
+		Core:     c,
+		Secret:   secret.New(filepath.Dir(dbPath), st),
+		Open:     atlasOpen,
+		Host:     atlas.Host,
+		Classify: atlasClassify,
+		OnStatus: func(s cloudsync.Status) {
+			emit(EventSyncStatus, s)
+			badges.SyncChanged() // tray dot and tooltip; nil-safe before badges exists
+		},
+		// Off the engine's goroutine, like showAlerts: the alert window
+		// calls must not hold up a cycle that shutdown waits for. It does
+		// not touch the store.
+		OnApplied: func(a []core.Applied) { go svc.remoteApplied(a) },
+	})
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the
 	// export (deferred after exp.Close and st.Close, so it runs before them).
@@ -166,7 +186,8 @@ func Run(opts Options) error {
 	defer func() {
 		cancel()
 		sched.Wait()
-		badges.Stop() // joins a refresh in flight, closes the taskbar window
+		syncCtl.Stop() // joins the opener and the engine's cycle in flight
+		badges.Stop()  // joins a refresh in flight, closes the taskbar window
 	}()
 
 	win = newWindows(app)
@@ -188,6 +209,7 @@ func Run(opts Options) error {
 		StatusChanged: func() { badges.StatusChanged() },
 		Emit:          func(name string, data any) { emit(name, data) },
 		OpenURL:       app.Browser.OpenURL,
+		Sync:          syncCtl,
 	})
 	app.RegisterService(application.NewService(svc))
 	// Recurring reminders not marked done move on to their latest occurrence
@@ -204,6 +226,7 @@ func Run(opts Options) error {
 		exp.Trigger()
 		emit(EventItemsChanged)
 		badges.Changed() // also on a settings save
+		syncCtl.Kick()
 	})
 
 	tray = app.SystemTray.New()
@@ -221,6 +244,7 @@ func Run(opts Options) error {
 		Icons:     trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
 		Tray:      wailsBadgeTray{app, tray},
 		Debounce:  badgeDebounce,
+		Sync:      syncCtl.Status,
 	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
@@ -241,6 +265,7 @@ func Run(opts Options) error {
 		}))
 		sweepAttachments(c)
 		sched.Start(ctx)
+		syncCtl.Start(ctx)
 		// Bring the export up to date with the database at startup (it may
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()

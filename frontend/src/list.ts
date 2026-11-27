@@ -9,9 +9,11 @@
 import { api, errorText, events, on, type Item, type SnoozePreset, type View } from "./api";
 import { el, keycaps, motionMs } from "./dom";
 import { icons } from "./icons";
-import { createRow, editRow, effectiveDue, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
+import { applyMarker, createRow, editRow, effectiveDue, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
 import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide } from "./motion";
+import { mountSyncPill } from "./sync-pill";
+import { needsRefetch, showMarkers } from "./sync-status";
 
 const REFRESH_DEBOUNCE_MS = 50;
 const RETICK_MS = 60_000; // relative times and the Upcoming horizon move on
@@ -67,6 +69,7 @@ function normalize(v: View | null | undefined): View {
     upcoming: v?.upcoming ?? [],
     tags: (v?.tags ?? []).map((g) => ({ tag: g.tag, items: g.items ?? [] })),
     done: v?.done ?? [],
+    pending: v?.pending ?? [],
   };
 }
 
@@ -91,6 +94,7 @@ const TEMPLATE = `
                autocomplete="off" spellcheck="false" placeholder="Search" aria-label="Search items" />
         <kbd aria-hidden="true">/</kbd>
       </label>
+      <div id="list-sync"></div>
       <button class="icon-btn" id="list-settings" type="button" aria-label="Settings">${icons.settings}</button>
     </div>
   </header>
@@ -129,6 +133,7 @@ export function mountList(root: HTMLElement): void {
   const toastBar = root.querySelector<HTMLElement>("#list-toast-timer")!;
   const content = root.querySelector<HTMLElement>(".list-content")!;
 
+  let markersOn = false; // sync is configured: rows show "not synced yet" markers
   let view: View | null = null; // null until the first fetch settles
   let nextView: View | null = null; // fetched while a done animation held rendering
   let query = "";
@@ -155,11 +160,12 @@ export function mountList(root: HTMLElement): void {
 
   function buildSections(): SectionModel[] {
     if (!view) return [];
+    const pendingIds = new Set(view.pending);
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t !== "");
     // The row being edited always stays, so a filter can't drop its input.
     const rows = (key: string, items: Item[], tag?: string): RowModel[] =>
       items
-        .map((item) => ({ key: `${key}|${item.id}`, item, sectionTag: tag }))
+        .map((item) => ({ key: `${key}|${item.id}`, item, sectionTag: tag, markers: markersOn, unsynced: markersOn && pendingIds.has(item.id) }))
         .filter((r) => r.key === edit?.key || matches(r.item, terms));
     const out: SectionModel[] = [];
     const up = rows("upcoming", view.upcoming ?? []);
@@ -340,6 +346,8 @@ export function mountList(root: HTMLElement): void {
           if (rowSigs.get(r.key) !== sig) {
             fillRow(rowEl, r, now);
             rowSigs.set(r.key, sig);
+          } else {
+            applyMarker(rowEl, r);
           }
         }
         wantedRows.push(rowEl);
@@ -1118,6 +1126,17 @@ export function mountList(root: HTMLElement): void {
   on(events.itemsChanged, scheduleRefresh);
   on(events.listFocus, () => void consumeFocus());
   window.setInterval(scheduleRefresh, RETICK_MS);
+  mountSyncPill(root.querySelector<HTMLElement>("#list-sync")!, {
+    onStatus: (next, prev) => {
+      const on = showMarkers(next);
+      if (on !== markersOn) {
+        markersOn = on;
+        if (view && holds === 0) render();
+      }
+      // Which items are pending may have changed: refetch the view.
+      if (on && needsRefetch(prev, next)) scheduleRefresh();
+    },
+  });
   window.addEventListener("blur", () => closeMenu(false));
 
   renderEmpty();

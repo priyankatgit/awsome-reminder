@@ -42,6 +42,12 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--prio-low` | `#60A5FA` | `#1D4ED8` | Low priority |
 | `--panel-width` | `max(50%, 420px)` | same | details panel width (`--panel-share`, `--panel-min`); slide-in `--dur-panel` 180 ms |
 | `--shadow-menu` | `0 8px 24px rgba(0,0,0,.28)` + 1px `--border` | `0 8px 24px rgba(15,23,42,.12)` + 1px `--border` | row `⋯` menu (softer than the window shadow) |
+| `--sync-ok-fg` / `--sync-ok-bg` | `#4ADE80` / `#12301F` | `#166534` / `#DCFCE7` | "All synced" pill (8.21 dark, 6.49 light). The plan's light `#15803D` gave only 4.57:1 and was darkened to `#166534` |
+| `--sync-muted-fg` / `--sync-muted-bg` | `#A8B3C7` / `#272F42` | `#475569` / `#EEF2F7` | Offline pill (6.32 / 6.74) |
+| `--sync-danger-fg` / `--sync-danger-bg` | `#FCA5A5` / `#3A1C26` | `#B91C1C` / `#FEE2E2` | Sync error pill (8.05 / 5.30) |
+| `--sync-glow` | `0 0 10px 2px rgba(74,222,128,.6)` | `0 0 10px 2px rgba(22,163,74,.45)` | one glow of the pill when the last waiting change reaches Atlas |
+| `--sync-pill-height`, `--sync-popover-width` | `24px`, `296px` | same | pill and details popover size |
+| `--dur-sync-glow`, `--dur-marker-fade`, `--dur-sync-spin` | `600ms`, `180ms`, `1000ms` | same | glow, marker fade-out, spinner turn |
 
 Rule: text uses the `-text` / `-fg` variants, never the plain `--accent` / `--time` / `--danger`, so contrast holds on `--bg`, `--surface` and `--muted` in both themes. `frontend/src/tokens.css` is authoritative if this table drifts.
 
@@ -192,6 +198,17 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - Lead-time chips with ✕ and an "+ add" input accepting `30m`, `2h`, `1d`.
 - Save button at the bottom-right (accent); unsaved changes enable it.
 - "Show pending count" switch (Phase 1.6) after "Start at login"; its help text names the tray icon plus the taskbar (Windows) or the Dock (macOS).
+
+## Sync status (Phase 2)
+Only exists once the user has connected an Atlas cluster; with no connection string nothing below is drawn. Wording is in `internal/app/synctext.go` (tray) and `frontend/src/sync-status.ts` (pill); the two share one vocabulary.
+
+- **Pill** (list header, before the settings button, `--sync-pill-height` 24 px, radius pill): a 14 px Lucide icon and text, in the tone's `--sync-*` colors. States: `Syncing…` (`refresh-cw`, turning once per `--dur-sync-spin`, neutral), `All synced · just now` / `All synced · 2 min ago` (`cloud-check`, ok), `Synced · N waiting` (`cloud`, neutral), `Offline` / `Offline · N changes waiting` (`cloud-off`, muted), `Sync error` (`cloud-exclamation-point`, danger; the installed Lucide has no `cloud-alert`). Relative times re-render every 30 s: "just now", "N min ago", "N h ago", then "on 26 Nov". When the last waiting change reaches Atlas the pill glows once (`--sync-glow`, `--dur-sync-glow`); no glow under `prefers-reduced-motion`.
+- **Popover** (click the pill; `aria-expanded` / `aria-controls`): state line, "Last synced 14:32 (2 min ago)", "N changes waiting", the error text, warnings (clock off, scope too broad), "Cluster <host>" (never credentials), **Sync now** and **Sync settings**. Opening focuses Sync now; Esc closes and returns focus to the pill; a click or focus outside closes it. Sync now is `aria-disabled` while syncing so it keeps focus. A `role="status"` line announces state changes.
+- **Row marker:** a 14 px `cloud-off` icon after the row text in `--fg-muted` with `aria-label` and `title` "Not synced yet", shown on rows whose changes have not reached Atlas. Once synced it fades out over `--dur-marker-fade`; the slot stays reserved while sync is on, so nothing shifts.
+- **Settings section** "Sync across machines": a password-type field for the connection string with a show/hide eye, **Connect**; once connected, the same status line as the pill, cluster host, where the string is stored, "Images in Atlas: N MB of 512 MB", warnings, **Sync now** and **Disconnect** (with an inline confirm). It sits outside the Save flow: its buttons act at once.
+- **Tray dot:** drawn over the top-right quarter of the tray icon (diameter 40% of the icon, the glyph cleared 1 px around it). Synced is a solid green dot, syncing alternates a green ring and a solid green dot, offline is a grey ring, error is a red dot, off draws nothing. The tooltip appends `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0) or `Sync error` (the reason shows in the pill and Settings; the tooltip is capped at the 127 characters Windows allows, ending in an ellipsis).
+- **Shipped deviation (macOS template icon):** the macOS tray icon is a template image, which the system draws from alpha alone and tints itself, so colour cannot carry the state. There the dot is black and the state is its shape: synced is a filled dot, offline a ring, error a filled dot with a knocked-out bar, and syncing alternates ring and filled. Windows and Linux use the colours above. State is therefore never colour alone on any OS.
+- Contrast: popover text on `--surface`, `--fg-muted` 6.11 / 7.58 (dark / light), `--danger-text` 5.66 / 6.47, `--time-text` 7.30 / 7.09; the row marker on `--bg` 6.96 / 7.24.
 
 ## Pre-delivery checklist (every UI task)
 - [ ] No emoji icons; all icon buttons have `aria-label`

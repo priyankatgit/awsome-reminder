@@ -197,7 +197,7 @@ func TestMigrateIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 		var v string
-		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "2" {
+		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "3" {
 			t.Fatalf("v=%q err=%v", v, err)
 		}
 		s.Close()
@@ -233,7 +233,7 @@ func TestMigrateV1ToV2(t *testing.T) {
 	}
 	defer s.Close()
 	var v string
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "2" {
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "3" {
 		t.Fatalf("v=%q err=%v", v, err)
 	}
 	a, err := s.Get("A")
