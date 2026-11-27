@@ -17,9 +17,32 @@ import (
 	"awesome-reminder/internal/settings"
 )
 
+// RawInsert writes doc as is into a collection ("items" or "attachments") of
+// the backend behind s, the way another writer would: field names as in
+// Atlas, values unchecked, and stamped with a fresh server stamp (_srv) so it
+// sorts after every earlier write. doc has an "_id".
+type RawInsert func(t *testing.T, s cloudsync.Syncer, collection string, doc map[string]any)
+
+// Option configures Run.
+type Option func(*config)
+
+type config struct {
+	rawInsert RawInsert
+}
+
+// WithRawInsert enables the malformed-document cases. A backend should always
+// pass it; without it those cases are skipped.
+func WithRawInsert(fn RawInsert) Option {
+	return func(c *config) { c.rawInsert = fn }
+}
+
 // Run runs the conformance tests. open must return a Syncer over an empty
 // backend each time it is called; it registers its own cleanup.
-func Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer) {
+func Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer, opts ...Option) {
+	var cfg config
+	for _, o := range opts {
+		o(&cfg)
+	}
 	tests := []struct {
 		name string
 		fn   func(t *testing.T, s cloudsync.Syncer)
@@ -32,6 +55,12 @@ func Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer) {
 		{"SharedLWW", testSharedLWW},
 		{"TestSpecialTextRoundTrips", testSpecialTextRoundTrips},
 		{"AttachmentBytesSumsLive", testAttachmentBytesSumsLive},
+		{"MalformedDocDoesNotFailPull", func(t *testing.T, s cloudsync.Syncer) {
+			if cfg.rawInsert == nil {
+				t.Skip("backend gives no RawInsert hook (WithRawInsert)")
+			}
+			testMalformedDocDoesNotFailPull(t, s, cfg.rawInsert)
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -393,5 +422,57 @@ func testAttachmentBytesSumsLive(t *testing.T, s cloudsync.Syncer) {
 	}
 	if n, err := s.AttachmentBytes(ctx(t)); err != nil || n != 30 {
 		t.Errorf("after tombstone: %d %v, want 30", n, err)
+	}
+}
+
+func testMalformedDocDoesNotFailPull(t *testing.T, s cloudsync.Syncer, raw RawInsert) {
+	push(t, s, item(1, "valid one", base, devA))
+	raw(t, s, "items", map[string]any{
+		"_id": itemID(2), "kind": 7, "text": map[string]any{"nested": true}, "tags": "not a list",
+		"status": false, "due_at": "soon", "lead_times": "x", "created_at": 3.5,
+		"updated_at": "yesterday", "updated_by": 9,
+	})
+	push(t, s, item(3, "valid three", base, devA))
+
+	// One page holding all three: no error, the valid ones intact, the bad
+	// one returned (leniently decoded) rather than dropped, so the page is
+	// full and the watermark is past all three.
+	page, wm, err := s.PullItems(ctx(t), cloudsync.Watermark{}, 3)
+	if err != nil {
+		t.Fatalf("pull failed on a malformed document: %v", err)
+	}
+	if len(page) != 3 {
+		t.Fatalf("want 3 documents (the malformed one leniently decoded), got %d: %+v", len(page), page)
+	}
+	if page[0].ID != itemID(1) || page[0].Text != "valid one" || page[2].ID != itemID(3) || page[2].Text != "valid three" {
+		t.Errorf("valid documents: %+v, %+v", page[0], page[2])
+	}
+	if page[1].ID != itemID(2) {
+		t.Errorf("malformed document id %q, want %q", page[1].ID, itemID(2))
+	}
+	rest, next, err := s.PullItems(ctx(t), wm, 3)
+	if err != nil || len(rest) != 0 || next != wm {
+		t.Errorf("watermark not past all three: %d more docs, %+v → %+v, %v", len(rest), wm, next, err)
+	}
+
+	// One at a time: each page advances, the malformed one included.
+	var cur cloudsync.Watermark
+	var ids []string
+	for range 5 {
+		got, next, err := s.PullItems(ctx(t), cur, 1)
+		if err != nil {
+			t.Fatalf("paged pull: %v", err)
+		}
+		if len(got) == 0 {
+			break
+		}
+		if !cur.Less(next) {
+			t.Fatalf("watermark did not advance: %+v → %+v", cur, next)
+		}
+		ids = append(ids, got[0].ID)
+		cur = next
+	}
+	if !reflect.DeepEqual(ids, []string{itemID(1), itemID(2), itemID(3)}) {
+		t.Errorf("paged ids %v", ids)
 	}
 }

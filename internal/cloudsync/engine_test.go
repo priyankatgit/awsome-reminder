@@ -431,6 +431,35 @@ func TestEditDuringPushStaysPending(t *testing.T) {
 	}
 }
 
+// TestEditDuringPushSameMillisecond is TestEditDuringPushStaysPending with the
+// edit landing in the same millisecond as the version being pushed.
+func TestEditDuringPushSameMillisecond(t *testing.T) {
+	ms, clk := setup() // the clock never moves
+	a, b := newDevice(t, ms, clk), newDevice(t, ms, clk)
+	it := a.capture("first text")
+	var once sync.Once
+	ms.BeforePush(func() {
+		once.Do(func() {
+			if _, err := a.c.Update(it.ID, "newer text"); err != nil {
+				t.Error(err)
+			}
+		})
+	})
+	a.sync()
+	if n := a.pending(); n != 1 {
+		t.Fatalf("edit during push: pending %d, want 1", n)
+	}
+	ms.BeforePush(nil)
+	a.sync()
+	if n := a.pending(); n != 0 {
+		t.Fatalf("second cycle: pending %d", n)
+	}
+	b.sync()
+	if ga, gb := a.item(it.ID), b.item(it.ID); gb.Text != "newer text" || !reflect.DeepEqual(ga, gb) {
+		t.Errorf("devices diverged:\nA %+v\nB %+v", ga, gb)
+	}
+}
+
 func TestRestoreFreshDevice(t *testing.T) {
 	ms, clk := setup()
 	a := newDevice(t, ms, clk)
@@ -863,5 +892,31 @@ func TestSyncNowResetsBackoff(t *testing.T) {
 	waitFor(t, "recovery", func() bool { return a.lastIs(cloudsync.StateSynced) })
 	if n := cloudsync.Failures(a.e); n != 0 {
 		t.Errorf("failures %d after success", n)
+	}
+}
+
+// skippingSyncer drops items with an unknown kind from each page, keeping the
+// page's watermark: a backend that skips undecodable documents.
+type skippingSyncer struct{ cloudsync.Syncer }
+
+func (s skippingSyncer) PullItems(ctx context.Context, after cloudsync.Watermark, limit int) ([]model.Item, cloudsync.Watermark, error) {
+	items, wm, err := s.Syncer.PullItems(ctx, after, limit)
+	var kept []model.Item
+	for _, it := range items {
+		if it.Kind == model.KindTodo || it.Kind == model.KindReminder {
+			kept = append(kept, it)
+		}
+	}
+	return kept, wm, err
+}
+
+func TestSkippedDocAdvancesWatermark(t *testing.T) {
+	ms, clk := setup()
+	ms.PutRaw(map[string]any{"_id": "01JD00000000000000000000B1", "kind": 7})
+	_, want, _ := ms.PullItems(context.Background(), cloudsync.Watermark{}, 10)
+	b := newDevice(t, skippingSyncer{ms}, clk)
+	b.sync()
+	if wm, ok := b.watermark("sync_wm_items"); !ok || wm != want {
+		t.Errorf("watermark %+v (saved %v), want %+v past the skipped doc", wm, ok, want)
 	}
 }

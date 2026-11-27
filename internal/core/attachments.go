@@ -150,7 +150,7 @@ func (c *Core) SetDescription(id, md string) (model.Item, error) {
 				t := now
 				a.UnreferencedSince = &t
 			}
-			a.UpdatedAt, a.UpdatedBy = now, c.st.DeviceID()
+			a.UpdatedAt, a.UpdatedBy = nextStamp(now, a.UpdatedAt), c.st.DeviceID()
 			if err := c.st.PutAttachment(a); err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ func (c *Core) SweepAttachments() (int, error) {
 					continue
 				}
 			}
-			a.Deleted, a.UpdatedAt, a.UpdatedBy = true, now, c.st.DeviceID()
+			a.Deleted, a.UpdatedAt, a.UpdatedBy = true, nextStamp(now, a.UpdatedAt), c.st.DeviceID()
 			if err := c.st.PutAttachment(a); err != nil {
 				errs = append(errs, err)
 				continue

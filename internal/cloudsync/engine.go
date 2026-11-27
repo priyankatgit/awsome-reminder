@@ -438,14 +438,16 @@ func (e *Engine) pullAttachments(ctx context.Context) error {
 				log.Printf("sync: skipping remote attachment: %v", err)
 			}
 		}
-		if len(page) > 0 {
-			if !after.Less(next) {
-				return errStuck(after, next)
-			}
+		// The watermark may move even on an empty page (a backend that
+		// skipped an undecodable document); a page with documents must move
+		// it.
+		if after.Less(next) {
 			after = next
 			if done.Less(next) {
 				done = next
 			}
+		} else if len(page) > 0 {
+			return errStuck(after, next)
 		}
 		if len(page) < attachmentPage {
 			return e.saveWatermark(metaWMAttachments, saved, done)
@@ -473,14 +475,16 @@ func (e *Engine) pullItems(ctx context.Context) error {
 		if err != nil {
 			return errors.Join(err, e.saveWatermark(metaWMItems, saved, done))
 		}
-		if len(page) > 0 {
-			if !after.Less(next) {
-				return errStuck(after, next)
-			}
+		// The watermark may move even on an empty page (a backend that
+		// skipped an undecodable document); a page with documents must move
+		// it.
+		if after.Less(next) {
 			after = next
 			if done.Less(next) {
 				done = next
 			}
+		} else if len(page) > 0 {
+			return errStuck(after, next)
 		}
 		if len(page) < itemPage {
 			return e.saveWatermark(metaWMItems, saved, done)

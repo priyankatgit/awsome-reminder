@@ -441,3 +441,95 @@ func TestApplyBatchFiresOnChangeOnce(t *testing.T) {
 		t.Errorf("no-op notified: %d", n)
 	}
 }
+
+func TestItemStampsStrictlyIncrease(t *testing.T) {
+	e := newEnv(t) // the clock never moves
+	it := mustCapture(t, e, "first")
+	t0 := e.now.UTC()
+	if !it.UpdatedAt.Equal(t0) {
+		t.Fatalf("new item stamp %v, want %v", it.UpdatedAt, t0)
+	}
+	u1, err := e.c.Update(it.ID, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := e.c.Update(it.ID, "third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u1.UpdatedAt.Equal(t0.Add(time.Millisecond)) || !u2.UpdatedAt.Equal(t0.Add(2*time.Millisecond)) {
+		t.Errorf("same-ms edits not ordered: %v, %v", u1.UpdatedAt, u2.UpdatedAt)
+	}
+	got, _ := e.st.Get(it.ID)
+	if !got.UpdatedAt.Equal(u2.UpdatedAt) {
+		t.Errorf("stored %v, returned %v", got.UpdatedAt, u2.UpdatedAt)
+	}
+}
+
+func TestItemStampAfterFutureRemote(t *testing.T) {
+	e := newEnv(t)
+	future := e.now.UTC().Add(time.Hour) // a remote device with a fast clock
+	if _, err := e.c.ApplyRemoteItems([]model.Item{remoteItem(idA, "ZZZZ", future)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.c.Update(idA, "local edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.UpdatedAt.Equal(future.Add(time.Millisecond)) || got.UpdatedBy != e.st.DeviceID() {
+		t.Errorf("local edit stamp %v by %s, want %v", got.UpdatedAt, got.UpdatedBy, future.Add(time.Millisecond))
+	}
+	if !model.Newer(got.UpdatedAt, got.UpdatedBy, future, "ZZZZ") {
+		t.Error("local edit must beat the remote version it replaced")
+	}
+}
+
+func TestSharedStampsStrictlyIncrease(t *testing.T) {
+	e := newEnv(t)
+	s, _ := e.c.Settings()
+	s.LeadTimes = []time.Duration{time.Minute}
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	_, at1, _, _ := e.c.SharedForSync()
+	s.LeadTimes = []time.Duration{2 * time.Minute}
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	_, at2, _, _ := e.c.SharedForSync()
+	if !at1.Equal(e.now) || !at2.Equal(at1.Add(time.Millisecond)) {
+		t.Errorf("shared stamps %v then %v", at1, at2)
+	}
+
+	future := e.now.Add(time.Hour)
+	p := s.Shared()
+	p.DefaultTime = "07:00"
+	if ok, err := e.c.ApplyRemoteShared(p, future, "ZZZZ"); err != nil || !ok {
+		t.Fatalf("remote: %v %v", ok, err)
+	}
+	s, _ = e.c.Settings()
+	s.DefaultTime = "08:00"
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	_, at3, by3, _ := e.c.SharedForSync()
+	if !at3.Equal(future.Add(time.Millisecond)) || by3 != e.st.DeviceID() {
+		t.Errorf("after a future remote stamp: %v by %s", at3, by3)
+	}
+}
+
+func TestAttachmentStampsStrictlyIncrease(t *testing.T) {
+	e, _ := attEnv(t)
+	it := mustCapture(t, e, "x")
+	a, err := e.c.AddAttachment(it.ID, tinyWebP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.SetDescription(it.ID, "![x](att:"+a.ID+")"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.st.GetAttachment(a.ID)
+	if !got.UpdatedAt.After(a.UpdatedAt) {
+		t.Errorf("attachment restamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
+	}
+}

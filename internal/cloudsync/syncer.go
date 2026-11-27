@@ -55,8 +55,17 @@ type Syncer interface {
 	// PullItems returns up to limit items whose (_srv, _id) is after the
 	// watermark, ascending, and the watermark of the last one returned
 	// (after itself when none are).
+	//
+	// A pull never fails because of one bad document. A document that
+	// cannot be decoded (a field of the wrong type, written by anything
+	// else) is returned leniently decoded: its _id, and zero values for the
+	// fields that do not decode, so core validation rejects and skips it.
+	// It is returned rather than dropped, so a full page stays full (the
+	// engine reads a short page as the end) and the watermark advances past
+	// it. Only a failure to read at all (network, auth, server) is an error.
 	PullItems(ctx context.Context, after Watermark, limit int) ([]model.Item, Watermark, error)
-	// PullAttachments is PullItems for attachments, with their bytes.
+	// PullAttachments is PullItems for attachments, with their bytes, under
+	// the same bad-document rule.
 	PullAttachments(ctx context.Context, after Watermark, limit int) ([]RemoteAttachment, Watermark, error)
 	// PullShared returns the shared settings, nil when the cluster has none.
 	PullShared(ctx context.Context) (*SharedDoc, error)

@@ -18,7 +18,12 @@ func TestConformance(t *testing.T) {
 		s := memsync.New()
 		t.Cleanup(func() { s.Close(context.Background()) })
 		return s
-	})
+	}, cloudsynctest.WithRawInsert(func(t *testing.T, s cloudsync.Syncer, collection string, doc map[string]any) {
+		if collection != "items" {
+			t.Fatalf("memsync raw insert supports items only, not %q", collection)
+		}
+		s.(*memsync.Syncer).PutRaw(doc)
+	}))
 }
 
 func TestServerClockStrictlyIncreases(t *testing.T) {
