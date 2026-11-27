@@ -2,9 +2,11 @@
 // (`npx vite --config frontend/vite.config.ts frontend`, then open
 // http://127.0.0.1:9245/?demo#list, or ?demo=empty, or ?demo&focus=4;
 // ?demo#alert, ?demo=one#alert; ?demo#settings, where saving the hotkey
-// Ctrl+Alt+K fails as "already used"). Loaded only when import.meta.env.DEV
-// and ?demo are both set, so production bundles never include it.
-import { api, emitLocal, events, type AlertCard, type Item, type Settings, type View } from "./api";
+// Ctrl+Alt+K fails as "already used"; ?demo#capture, with a toy parser that
+// knows "tomorrow", "5pm", #tags and !priority tokens). Loaded only when
+// import.meta.env.DEV and ?demo are both set, so production bundles never
+// include it.
+import { api, emitLocal, events, type AlertCard, type Item, type Preview, type Settings, type View } from "./api";
 
 function item(id: string, text: string, tags: string[], dueInMin: number | null, extra: Partial<Item> = {}): Item {
   const now = Date.now();
@@ -78,6 +80,44 @@ export function installDemo(): void {
   });
   installAlertDemo();
   installSettingsDemo();
+  installCaptureDemo();
+}
+
+/** A toy stand-in for the Go parser: enough to drive the capture preview. */
+function installCaptureDemo(): void {
+  const prio: Record<string, string> = { "!high": "high", "!h": "high", "!!!": "high", "!medium": "medium", "!med": "medium", "!m": "medium", "!low": "low", "!l": "low" };
+  const fmt = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  Object.assign(api, {
+    preview: async (input: string): Promise<Preview> => {
+      const words = input.split(/\s+/).filter(Boolean);
+      const priority = words.map((w) => prio[w.toLowerCase()]).find(Boolean) ?? "";
+      const tags = words.filter((w) => /^#\w+$/.test(w)).map((w) => w.slice(1).toLowerCase());
+      const tomorrow = words.some((w) => w.toLowerCase() === "tomorrow");
+      const clock = words.map((w) => /^(\d{1,2})(am|pm)$/i.exec(w)).find(Boolean);
+      let dueAt: string | null = null;
+      if (tomorrow || clock) {
+        const d = new Date();
+        if (tomorrow) d.setDate(d.getDate() + 1);
+        d.setHours(clock ? (Number(clock[1]) % 12) + (clock[2].toLowerCase() === "pm" ? 12 : 0) : 9, 0, 0, 0);
+        dueAt = d.toISOString();
+      }
+      const text = words.filter((w) => !prio[w.toLowerCase()] && !w.startsWith("#")).join(" ");
+      return {
+        kind: (dueAt ? "reminder" : "todo") as Preview["kind"],
+        text,
+        tags: tags.length ? tags : ["inbox"],
+        dueAt,
+        rrule: "",
+        priority,
+        human: dueAt ? fmt.format(new Date(dueAt)).replace(/ at /, ", ") : "",
+        alerts: dueAt ? ["1h before", "10m before", "at time"] : null,
+        warnings: null,
+      };
+    },
+    capture: async (input: string) => console.info(`demo: capture ${input}`),
+    hideCapture: async () => console.info("demo: hide capture"),
+    resizeCapture: async () => undefined,
+  });
 }
 
 function installAlertDemo(): void {
