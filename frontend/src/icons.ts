@@ -1,7 +1,23 @@
 // Lucide icons rendered as inline SVG strings. Import each icon individually
 // so the bundle only carries the ones used. Size and stroke come from CSS
 // (.icon in style.css), never from here.
-import { Bell, CalendarClock, Search, SquareCheckBig, TriangleAlert } from "lucide";
+import {
+  AlarmClock,
+  Bell,
+  CalendarClock,
+  Check,
+  ChevronRight,
+  Ellipsis,
+  Inbox,
+  Pencil,
+  Repeat,
+  RepeatOff,
+  Search,
+  Settings,
+  SquareCheckBig,
+  Trash2,
+  TriangleAlert,
+} from "lucide";
 
 type IconNode = [tag: string, attrs: Record<string, string | number | undefined>][];
 
@@ -31,6 +47,16 @@ export const icons = {
   todo: render(SquareCheckBig as IconNode),
   warning: render(TriangleAlert as IconNode),
   calendar: render(CalendarClock as IconNode),
+  settings: render(Settings as IconNode),
+  inbox: render(Inbox as IconNode),
+  more: render(Ellipsis as IconNode),
+  check: render(Check as IconNode),
+  chevron: render(ChevronRight as IconNode),
+  repeat: render(Repeat as IconNode),
+  repeatOff: render(RepeatOff as IconNode),
+  snooze: render(AlarmClock as IconNode),
+  edit: render(Pencil as IconNode),
+  trash: render(Trash2 as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

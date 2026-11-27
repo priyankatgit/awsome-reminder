@@ -1,42 +1,10 @@
 // Capture box (#capture): one-line input with a live parse preview.
 // Layout and behaviour follow the "Capture box" section of the UI guide.
 import { api, errorText, events, on, type Preview } from "./api";
+import { chip, el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
 
 const PREVIEW_DEBOUNCE_MS = 80;
-const TAG_HUES = 8;
-
-const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-/** Duration of a CSS time token in ms (0 under reduced motion). */
-function motionMs(token: string): number {
-  if (reducedMotion.matches) return 0;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-  const n = parseFloat(v);
-  return v.endsWith("ms") ? n : n * 1000;
-}
-
-/** Stable tag colour slot: FNV-1a over the tag, mod 8. "inbox" is neutral. */
-export function tagSlot(tag: string): string {
-  if (tag === "inbox") return "inbox";
-  let h = 0x811c9dc5;
-  for (let i = 0; i < tag.length; i++) {
-    h ^= tag.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return String(h % TAG_HUES);
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
-function chip(text: string, cls: string): HTMLElement {
-  return el("span", `chip ${cls}`, text);
-}
 
 /** "YYYY-MM-DDTHH:MM" in local time, for <input type="datetime-local">. */
 function toLocalInput(d: Date): string {
@@ -116,11 +84,7 @@ export function mountCapture(root: HTMLElement): void {
     const line = el("div", "cap-line");
     line.append(el("span", "cap-kind", reminder ? "Reminder" : "To-do"));
     if (reminder && p.human) line.append(chip(p.human, "chip-time"));
-    for (const t of p.tags ?? []) {
-      const c = chip(`#${t}`, "chip-tag");
-      c.dataset.hue = tagSlot(t);
-      line.append(c);
-    }
+    for (const t of p.tags ?? []) line.append(tagChip(t));
     previewRow.append(line);
 
     if (reminder && p.alerts && p.alerts.length > 0) {
