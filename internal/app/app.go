@@ -134,6 +134,15 @@ func Run(opts Options) error {
 		}
 		go svc.showAlerts(alerts)
 	}, time.Now)
+	// Recurring reminders not marked done move on to their latest occurrence
+	// before each plan (ruling R15); the scheduler wakes at the next one.
+	sched.SetBeforePlan(func(now time.Time) (time.Time, error) {
+		n, wake, err := c.AdvanceRecurring(now)
+		if n > 0 {
+			log.Printf("recurring: moved %d item(s) to their latest occurrence", n)
+		}
+		return wake, err
+	})
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {

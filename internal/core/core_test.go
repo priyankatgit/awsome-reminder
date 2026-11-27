@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/store"
 )
 
@@ -384,5 +385,86 @@ func TestWithDue(t *testing.T) {
 	r, _ := e.c.Capture(out)
 	if r.Kind != model.KindReminder || r.Text != "refactor auth" || !r.DueAt.Equal(due) {
 		t.Fatalf("%q -> %+v", out, r)
+	}
+}
+
+// R15: a recurring reminder that is never marked done keeps reminding. A
+// daily 09:00 item due yesterday, at 10:00 today, moves to today 09:00 and
+// its at-time alert fires (late, so "missed"); its leads are skipped.
+func TestAdvanceRecurringDaily(t *testing.T) {
+	e := newEnv(t) // Wed 25 Nov 10:00 New York
+	it := mustCapture(t, e, "every day at 9am vitamins")
+	if !it.DueAt.Equal(utc(2026, 11, 26, 14, 0)) {
+		t.Fatalf("first due %v", it.DueAt)
+	}
+	if err := e.c.Snooze(it.ID, "1h"); err != nil {
+		t.Fatal(err)
+	}
+	changes := 0
+	e.c.OnChange(func() { changes++ })
+	e.now = time.Date(2026, 11, 27, 10, 0, 0, 0, ny) // due yesterday, 10:00 today
+
+	n, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || n != 1 || changes != 1 {
+		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	}
+	got, _ := e.st.Get(it.ID)
+	if !got.DueAt.Equal(utc(2026, 11, 27, 14, 0)) || got.SnoozeUntil != nil || got.Status != model.StatusOpen {
+		t.Fatalf("after advance %+v", got)
+	}
+	if !got.UpdatedAt.Equal(e.now) {
+		t.Fatalf("updatedAt %v", got.UpdatedAt)
+	}
+	if !wake.Equal(utc(2026, 11, 28, 14, 0)) {
+		t.Fatalf("wake %v, want tomorrow 09:00", wake)
+	}
+	fire, _, _ := scheduler.Plan([]model.Item{got}, []time.Duration{time.Hour, 10 * time.Minute}, e.now, func(string) bool { return false })
+	if len(fire) != 1 || fire[0].Lead != 0 || !fire[0].DueAt.Equal(*got.DueAt) || !fire[0].Missed {
+		t.Fatalf("planned %+v", fire)
+	}
+
+	// Again with nothing to do: no change, no notification.
+	if n, _, err := e.c.AdvanceRecurring(e.now); n != 0 || err != nil || changes != 1 {
+		t.Fatalf("second pass n=%d err=%v changes=%d", n, err, changes)
+	}
+}
+
+func TestAdvanceRecurringNotYet(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every day at 9am vitamins") // due Thu 26 Nov 09:00
+	changes := 0
+	e.c.OnChange(func() { changes++ })
+	e.now = time.Date(2026, 11, 27, 8, 59, 0, 0, ny) // next occurrence (27th 09:00) not reached
+	n, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || n != 0 || changes != 0 {
+		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	}
+	got, _ := e.st.Get(it.ID)
+	if !got.DueAt.Equal(*it.DueAt) || !got.UpdatedAt.Equal(it.UpdatedAt) {
+		t.Fatalf("changed: %+v", got)
+	}
+	if !wake.Equal(utc(2026, 11, 27, 14, 0)) {
+		t.Fatalf("wake %v, want the next occurrence", wake)
+	}
+}
+
+func TestAdvanceRecurringWeeklyCollapses(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every monday 10am standup") // Mon 30 Nov 10:00
+	one := mustCapture(t, e, "tomorrow 5pm one-off")
+	e.now = time.Date(2026, 12, 23, 12, 0, 0, 0, ny) // Wed, three Mondays later
+	n, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	got, _ := e.st.Get(it.ID)
+	if !got.DueAt.Equal(utc(2026, 12, 21, 15, 0)) {
+		t.Fatalf("due %v, want Mon 21 Dec 10:00 NY", got.DueAt)
+	}
+	if !wake.Equal(utc(2026, 12, 28, 15, 0)) {
+		t.Fatalf("wake %v", wake)
+	}
+	if o, _ := e.st.Get(one.ID); !o.DueAt.Equal(*one.DueAt) || !o.UpdatedAt.Equal(one.UpdatedAt) {
+		t.Fatalf("one-off touched: %+v", o)
 	}
 }

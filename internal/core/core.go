@@ -5,6 +5,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"strings"
 	"sync"
@@ -248,6 +249,56 @@ func (c *Core) Done(id string) (model.Item, error) {
 		it.Status = model.StatusDone
 		return nil
 	})
+}
+
+// AdvanceRecurring keeps recurring reminders reminding when they are not
+// marked done (ruling R15). Every open recurring item whose next occurrence
+// after DueAt is at or before now moves to its latest occurrence at or before
+// now; missed occurrences in between collapse into it and any snooze is
+// cleared. The scheduler calls it before each plan, so the new occurrence's
+// at-time alert fires through the normal catch-up path (its leads are in the
+// past of the bumped UpdatedAt and are skipped, ruling R6). It returns how
+// many items moved and wake, the earliest next occurrence still to come (zero
+// if none), when it must run again. Listeners are notified only if an item
+// moved. An item whose rule can't be evaluated is logged and left alone.
+func (c *Core) AdvanceRecurring(now time.Time) (advanced int, wake time.Time, err error) {
+	c.opMu.Lock()
+	advanced, wake, err = c.advanceRecurringLocked(now)
+	c.opMu.Unlock()
+	if advanced > 0 {
+		c.changed()
+	}
+	return advanced, wake, err
+}
+
+func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
+	items, err := c.st.ListOpen()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	n := 0
+	var wake time.Time
+	for _, it := range items {
+		if it.Status != model.StatusOpen || it.RRule == "" || it.DueAt == nil {
+			continue
+		}
+		latest, next, err := catchUp(it.RRule, *it.DueAt, now, c.itemLoc(it))
+		if err != nil {
+			log.Printf("recurring %s: %v", it.ID, err)
+			continue
+		}
+		if !latest.IsZero() {
+			it.DueAt, it.SnoozeUntil = &latest, nil
+			if err := c.save(&it, now); err != nil {
+				return n, wake, fmt.Errorf("item %s: %w", it.ID, err)
+			}
+			n++
+		}
+		if !next.IsZero() && (wake.IsZero() || next.Before(wake)) {
+			wake = next
+		}
+	}
+	return n, wake, nil
 }
 
 // Reopen marks a done item open again.

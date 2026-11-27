@@ -29,11 +29,22 @@ type Scheduler struct {
 	kick  chan struct{}
 
 	retryDelay time.Duration // re-plan delay after a Source error
+	beforePlan func(now time.Time) (wake time.Time, err error)
 }
 
 // New creates a Scheduler.
 func New(src Source, leads func() []time.Duration, fire func([]Alert), now func() time.Time) *Scheduler {
 	return &Scheduler{src: src, leads: leads, fire: fire, now: now, kick: make(chan struct{}, 1), retryDelay: checkInterval}
+}
+
+// SetBeforePlan installs fn, run at the start of every plan (at start, on
+// every Kick, timer and wake from sleep) before the items are listed. The app
+// uses it to move recurring reminders to their latest occurrence
+// (core.AdvanceRecurring). fn returns the earliest time it must run again
+// (zero if none), which bounds the next plan; on an error the plan is retried
+// after the retry delay. Call it before Start.
+func (s *Scheduler) SetBeforePlan(fn func(now time.Time) (wake time.Time, err error)) {
+	s.beforePlan = fn
 }
 
 // Kick requests a re-plan. It never blocks; concurrent kicks coalesce.
@@ -108,8 +119,18 @@ func wallJumped(last, wall time.Time, expected time.Duration) bool {
 	return d > jumpTolerance || d < -jumpTolerance
 }
 
-// plan computes alerts, fires due ones, marks them notified, and returns the next fire time.
+// plan runs the before-plan hook, computes alerts, fires due ones, marks them
+// notified, and returns the next fire or wake time.
 func (s *Scheduler) plan() time.Time {
+	var wake time.Time
+	if s.beforePlan != nil {
+		w, err := s.beforePlan(s.now())
+		if err != nil {
+			log.Printf("scheduler: before plan: %v", err)
+			w = s.now().Add(s.retryDelay)
+		}
+		wake = w
+	}
 	items, err := s.src.ListOpen()
 	if err != nil {
 		log.Printf("scheduler: list open: %v", err)
@@ -125,6 +146,9 @@ func (s *Scheduler) plan() time.Time {
 		return ok
 	}
 	fireNow, covered, next := Plan(items, s.leads(), now, notified)
+	if !wake.IsZero() && (next.IsZero() || wake.Before(next)) {
+		next = wake
+	}
 	if len(fireNow) > 0 {
 		s.fire(fireNow)
 	}

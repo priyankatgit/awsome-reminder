@@ -65,6 +65,8 @@ If the resulting time is already in the past the preview warns "time is in the p
 
 A reminder alerts at each lead time before it is due (default 1 hour and 10 minutes) and again at the due time. The alert pop-up appears at the bottom right without taking keyboard focus. Each card offers **Done**, **Snooze** (10 min, 1 hour, tomorrow) and **Open**. If the computer was asleep or the app was not running through a due time, you get one "missed" card per item when it wakes, not a burst of every alert you skipped.
 
+A repeating reminder keeps reminding on schedule even if you never mark it done: when its next occurrence arrives, it moves to that occurrence and alerts at the time (occurrences missed while the app was off collapse into the latest one).
+
 ### Tray list
 
 Click the tray icon, or use the tray menu (**Open List**, **Settings**, **Quit**), to open the list. It groups items into today/upcoming, one section per tag, and done.
