@@ -6,6 +6,6 @@ import "context"
 
 // Grab has no selection grab on this platform: it returns an empty Result
 // and never touches the clipboard.
-func Grab(ctx context.Context, mods []Key) Result {
+func Grab(ctx context.Context, keys []Key) Result {
 	return Result{}
 }

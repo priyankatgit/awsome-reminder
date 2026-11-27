@@ -8,6 +8,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -20,7 +21,13 @@ import (
 // cloud clipboard skip the restore. If the clipboard holds something that
 // cannot be put back byte for byte (files, an image, a handle format, or a
 // format that cannot be read), nothing is injected and the clipboard is
-// never touched.
+// never touched. Nothing is injected into a terminal or IDE either (Ctrl+C
+// would interrupt the running process), or while a hotkey key that is not a
+// modifier is still held.
+//
+// A copy that lands after the 150 ms wait (a busy Outlook or Excel) is
+// still put back: Grab returns the fallback on time, and a background
+// goroutine waits up to 1 s more for the copy, then restores.
 //
 // The restore needs a window: with OpenClipboard(NULL), EmptyClipboard
 // leaves the clipboard without an owner and SetClipboardData then fails. A
@@ -117,11 +124,17 @@ type savedFormat struct {
 	data   []byte
 }
 
+// restoreMu is held from the save until the clipboard is put back,
+// including by a background restore after Grab has returned. A grab that
+// finds it held does not inject: its save would capture the previous grab's
+// copy instead of the user's clipboard.
+var restoreMu sync.Mutex
+
 // Grab returns the text selected in the foreground app, and the app's
-// process name and window title. mods are the hotkey's modifier keys,
-// released before the copy is injected. It never panics: a Win32 failure is
-// logged and Grab returns what it has.
-func Grab(ctx context.Context, mods []Key) (res Result) {
+// process name and window title. keys are all the hotkey's keys (modifiers
+// and main key), released before the copy is injected. It never panics: a
+// Win32 failure is logged and Grab returns what it has.
+func Grab(ctx context.Context, keys []Key) (res Result) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("grab: panic: %v", r)
@@ -131,53 +144,110 @@ func Grab(ctx context.Context, mods []Key) (res Result) {
 	defer runtime.UnlockOSThread()
 
 	res.Process, res.Title = windowInfo(windows.GetForegroundWindow())
-	if ctx.Err() != nil {
+	switch {
+	case ctx.Err() != nil:
+		return res
+	case noInject(res.Process):
+		res.Text = fallbackText()
+		return res
+	case !waitForRelease(keyDown, modUp, keys, releaseTimeout, time.Sleep):
+		log.Printf("grab: a hotkey key is still held; not injecting")
+		res.Text = fallbackText()
+		return res
+	case !restoreMu.TryLock():
+		log.Printf("grab: the last grab's restore is still pending; not injecting")
+		res.Text = fallbackText()
 		return res
 	}
-	waitForRelease(modDown, modUp, mods, releaseTimeout, time.Sleep)
+	res.Text, res.Grabbed = copySelection(ctx)
+	return res
+}
 
-	hwnd := messageWindow()
-	if hwnd != 0 {
-		defer procDestroyWindow.Call(hwnd)
-	}
-	if !openClipboard(hwnd) {
-		return res
-	}
-	saved, original, ok := saveClipboard()
-	procCloseClipboard.Call()
-
-	useFallback := func() {
-		if q, ok := fallbackQuote(original); ok {
-			res.Text = q
+// copySelection injects Ctrl+C and returns the copied text, or the fallback
+// quote with grabbed false. The caller holds restoreMu; copySelection
+// unlocks it, or hands it to the background restore.
+func copySelection(ctx context.Context) (text string, grabbed bool) {
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			restoreMu.Unlock()
 		}
+	}()
+	hwnd := messageWindow()
+	if hwnd == 0 { // the restore would fail: don't inject
+		return fallbackText(), false
 	}
-	// Without a window the restore would fail: don't inject.
-	if !ok || hwnd == 0 || ctx.Err() != nil {
-		useFallback()
-		return res
+	defer procDestroyWindow.Call(hwnd)
+
+	var saved []savedFormat
+	var original string
+	ok := false
+	if !withClipboard(hwnd, openTimeout, func() { saved, original, ok = saveClipboard() }) {
+		return "", false
+	}
+	fallback, _ := fallbackQuote(original)
+	if !ok || ctx.Err() != nil {
+		return fallback, false
 	}
 
 	seq := sequenceNumber()
-	if !sendCopy() || !waitForSequence(seq) {
-		useFallback()
-		return res
+	if !sendCopy() {
+		return fallback, false
 	}
-	// The copy landed: from here the clipboard must go back, whatever ctx says.
-	if !openClipboard(hwnd) {
-		log.Printf("grab: clipboard busy after the copy; not restored")
-		useFallback()
-		return res
+	// From here the clipboard must go back, whatever ctx says.
+	changed := waitForChange(sequenceNumber, seq, seqTimeout, time.Now, time.Sleep)
+	restored := changed && withClipboard(hwnd, openTimeout, func() {
+		text = readText()
+		restore(saved)
+	})
+	switch afterCopy(changed, restored) {
+	case stepWatchLate:
+		handedOff = true
+		go restoreLater(saved, seq, true)
+	case stepRestoreLater:
+		log.Printf("grab: clipboard busy after the copy; restoring in the background")
+		handedOff = true
+		go restoreLater(saved, seq, false)
 	}
-	text := readText()
-	restore(saved)
-	procCloseClipboard.Call()
-
 	if text != "" {
-		res.Text, res.Grabbed = text, true
-	} else {
-		useFallback()
+		return text, true
 	}
-	return res
+	return fallback, false
+}
+
+// restoreLater puts the saved clipboard back after Grab has returned. With
+// watch, it first waits up to 1 s for a late copy and does nothing if none
+// lands (the clipboard was never touched). It owns restoreMu and unlocks it.
+func restoreLater(saved []savedFormat, seq uint32, watch bool) {
+	defer restoreMu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("grab: background restore: panic: %v", r)
+		}
+	}()
+	runtime.LockOSThread() // its own window and open clipboard
+	defer runtime.UnlockOSThread()
+
+	if watch && !waitForChange(sequenceNumber, seq, lateTimeout, time.Now, time.Sleep) {
+		return
+	}
+	hwnd := messageWindow()
+	if hwnd == 0 {
+		log.Printf("grab: background restore: no window; clipboard not restored")
+		return
+	}
+	defer procDestroyWindow.Call(hwnd)
+	if !withClipboard(hwnd, restoreOpenTimeout, func() { restore(saved) }) {
+		log.Printf("grab: background restore: clipboard busy; not restored")
+	}
+}
+
+// fallbackText is the fallback quote from the clipboard's current text.
+func fallbackText() string {
+	var text string
+	withClipboard(0, openTimeout, func() { text = readText() })
+	q, _ := fallbackQuote(text)
+	return q
 }
 
 // windowInfo is the base name of hwnd's process image and its title.
@@ -222,14 +292,15 @@ func messageWindow() uintptr {
 	return h
 }
 
-// openClipboard opens the clipboard for hwnd, retrying every 10 ms for up
-// to 100 ms while another app has it open.
-func openClipboard(hwnd uintptr) bool {
-	deadline := time.Now().Add(openTimeout)
+// withClipboard opens the clipboard for hwnd, retrying every 10 ms for up
+// to timeout while another app has it open, runs f and closes it, even if f
+// panics. It reports whether the clipboard could be opened.
+func withClipboard(hwnd uintptr, timeout time.Duration, f func()) bool {
+	deadline := time.Now().Add(timeout)
 	for {
 		r, _, err := procOpenClipboard.Call(hwnd)
 		if r != 0 {
-			return true
+			break
 		}
 		if !time.Now().Before(deadline) {
 			log.Printf("grab: OpenClipboard: %v", err)
@@ -237,6 +308,9 @@ func openClipboard(hwnd uintptr) bool {
 		}
 		time.Sleep(pollInterval)
 	}
+	defer procCloseClipboard.Call()
+	f()
+	return true
 }
 
 // saveClipboard copies every format on the open clipboard into memory, and
@@ -378,21 +452,6 @@ func sequenceNumber() uint32 {
 	return uint32(r)
 }
 
-// waitForSequence polls every 10 ms for up to 150 ms for the clipboard to
-// change from seq.
-func waitForSequence(seq uint32) bool {
-	deadline := time.Now().Add(seqTimeout)
-	for {
-		if sequenceNumber() != seq {
-			return true
-		}
-		if !time.Now().Before(deadline) {
-			return false
-		}
-		time.Sleep(pollInterval)
-	}
-}
-
 func keyInput(vk uint16, flags uint32) input {
 	scan, _, _ := procMapVirtualKeyW.Call(uintptr(vk), mapvkVkToVsc)
 	if extended[vk] {
@@ -401,26 +460,32 @@ func keyInput(vk uint16, flags uint32) input {
 	return input{typ: inputKeyboard, ki: keybdInput{vk: vk, scan: uint16(scan), flags: flags}}
 }
 
-func sendInputs(in []input) bool {
+// sendInputs injects in and returns how many events were sent.
+func sendInputs(in []input) int {
 	if len(in) == 0 {
-		return true
+		return 0
 	}
 	n, _, err := procSendInput.Call(uintptr(len(in)), uintptr(unsafe.Pointer(&in[0])), unsafe.Sizeof(in[0]))
 	if int(n) != len(in) {
 		log.Printf("grab: SendInput: %d of %d sent: %v", n, len(in), err)
-		return false
 	}
-	return true
+	return int(n)
 }
 
-// sendCopy injects Ctrl down, C down, C up, Ctrl up.
+// sendCopy injects Ctrl down, C down, C up, Ctrl up. It reports false only
+// when nothing was sent. If only some events were sent, the copy may still
+// happen: the key-ups are sent again so Ctrl and C are not left down, and
+// it reports true so the clipboard is watched and put back.
 func sendCopy() bool {
-	return sendInputs([]input{
-		keyInput(vkControl, 0),
-		keyInput(vkC, 0),
-		keyInput(vkC, keyeventfKeyUp),
-		keyInput(vkControl, keyeventfKeyUp),
-	})
+	ups := []input{keyInput(vkC, keyeventfKeyUp), keyInput(vkControl, keyeventfKeyUp)}
+	in := append([]input{keyInput(vkControl, 0), keyInput(vkC, 0)}, ups...)
+	switch n := sendInputs(in); {
+	case n == 0:
+		return false
+	case n < len(in):
+		sendInputs(ups)
+	}
+	return true
 }
 
 func vkDown(vk uint16) bool {
@@ -428,7 +493,8 @@ func vkDown(vk uint16) bool {
 	return r&0x8000 != 0
 }
 
-// vks are the keys to check and release for k: both sides of a modifier.
+// vks are the keys to check and release for k: both sides of a modifier,
+// or the key itself.
 func vks(k Key) []uint16 {
 	if s, ok := sides[k]; ok {
 		return s[:]
@@ -436,8 +502,8 @@ func vks(k Key) []uint16 {
 	return []uint16{uint16(k)}
 }
 
-// modDown reports whether either side of the modifier is held.
-func modDown(k Key) bool {
+// keyDown reports whether k (either side, for a modifier) is held.
+func keyDown(k Key) bool {
 	for _, vk := range vks(k) {
 		if vkDown(vk) {
 			return true

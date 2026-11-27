@@ -7,12 +7,13 @@
 package grab
 
 import (
+	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-// Key is a modifier key as a Windows virtual-key code. macOS and Linux
-// ignore it.
+// Key is one of the hotkey's keys as a Windows virtual-key code: a modifier
+// or the main key. macOS and Linux ignore it.
 type Key uint16
 
 // The modifier keys a hotkey can hold.
@@ -39,6 +40,12 @@ const (
 	seqTimeout = 150 * time.Millisecond
 	// openTimeout bounds the retries while another app has the clipboard open.
 	openTimeout = 100 * time.Millisecond
+	// lateTimeout bounds the background wait for a copy that missed
+	// seqTimeout (a busy Outlook or Excel), so the clipboard still goes back.
+	lateTimeout = 1 * time.Second
+	// restoreOpenTimeout bounds the retries to open the clipboard for the
+	// restore, which must happen once the copy has landed.
+	restoreOpenTimeout = 500 * time.Millisecond
 	// maxFallback is the longest clipboard text used as the fallback quote.
 	maxFallback = 2000
 )
@@ -87,29 +94,128 @@ func fallbackQuote(text string) (string, bool) {
 	return text, true
 }
 
-// waitForRelease waits for the hotkey's modifiers to be let go, polling
-// every 10 ms for up to timeout, then sends a key-up for any still down, so
-// the injected Ctrl+C does not arrive as Ctrl+Shift+C or Ctrl+Alt+C.
-func waitForRelease(down func(Key) bool, keyUp func(Key), mods []Key, timeout time.Duration, sleep func(time.Duration)) {
+// isModifier reports whether k is a modifier key: Shift, Ctrl, Alt or Win,
+// generic or sided.
+func isModifier(k Key) bool {
+	switch k {
+	case KeyShift, KeyControl, KeyAlt, KeyWin, 0x5C, // VK_RWIN
+		0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5: // VK_LSHIFT..VK_RMENU
+		return true
+	}
+	return false
+}
+
+// waitForRelease waits for the hotkey's keys (modifiers and main key) to be
+// let go, polling every 10 ms for up to timeout, so the injected Ctrl+C does
+// not arrive as Ctrl+Shift+C or Ctrl+Alt+C. At the timeout it sends a key-up
+// for each modifier still down, unless a non-modifier is still down: its
+// auto-repeat would then type into the selection, so it sends nothing and
+// returns false (don't inject).
+func waitForRelease(down func(Key) bool, keyUp func(Key), keys []Key, timeout time.Duration, sleep func(time.Duration)) bool {
 	anyDown := func() bool {
-		for _, m := range mods {
-			if down(m) {
+		for _, k := range keys {
+			if down(k) {
 				return true
 			}
 		}
 		return false
 	}
 	for waited := time.Duration(0); anyDown(); waited += pollInterval {
-		if waited >= timeout {
-			sent := map[Key]bool{}
-			for _, m := range mods {
-				if !sent[m] && down(m) {
-					sent[m] = true
-					keyUp(m)
-				}
+		if waited < timeout {
+			sleep(pollInterval)
+			continue
+		}
+		for _, k := range keys {
+			if !isModifier(k) && down(k) {
+				return false
 			}
-			return
+		}
+		sent := map[Key]bool{}
+		for _, k := range keys {
+			if !sent[k] && down(k) {
+				sent[k] = true
+				keyUp(k)
+			}
+		}
+		return true
+	}
+	return true
+}
+
+// noInjectProcesses are terminals and IDEs with a terminal: with nothing
+// selected, Ctrl+C there interrupts the running process.
+var noInjectProcesses = []string{
+	"WindowsTerminal.exe", "OpenConsole.exe", "conhost.exe", "cmd.exe",
+	"powershell.exe", "pwsh.exe", "wsl.exe", "bash.exe", "mintty.exe",
+	"alacritty.exe", "wezterm-gui.exe", "Code.exe", "Cursor.exe",
+	"idea64.exe", "goland64.exe", "pycharm64.exe", "webstorm64.exe",
+	"rider64.exe", "clion64.exe", "devenv.exe",
+}
+
+// noInject reports whether Ctrl+C must not be sent to the process (its
+// image base name): a terminal or IDE, or an unknown process.
+func noInject(process string) bool {
+	if process == "" {
+		return true
+	}
+	for _, p := range noInjectProcesses {
+		if strings.EqualFold(process, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForChange polls seq every 10 ms for up to timeout and reports whether
+// it moved away from from.
+func waitForChange(seq func() uint32, from uint32, timeout time.Duration, now func() time.Time, sleep func(time.Duration)) bool {
+	deadline := now().Add(timeout)
+	for {
+		if seq() != from {
+			return true
+		}
+		if !now().Before(deadline) {
+			return false
 		}
 		sleep(pollInterval)
 	}
+}
+
+// afterCopyStep is what is left to do once the injected copy's wait is over.
+type afterCopyStep int
+
+const (
+	// stepDone: the copy landed and the clipboard was read and put back.
+	stepDone afterCopyStep = iota
+	// stepRestoreLater: the copy landed but the clipboard was busy, so it is
+	// put back in the background (reopen retried for up to 500 ms).
+	stepRestoreLater
+	// stepWatchLate: no copy within 150 ms. Grab returns the fallback; the
+	// background waits up to 1 s for a late copy and then puts the clipboard
+	// back. If none comes, the clipboard was never touched.
+	stepWatchLate
+)
+
+func (s afterCopyStep) String() string {
+	switch s {
+	case stepDone:
+		return "stepDone"
+	case stepRestoreLater:
+		return "stepRestoreLater"
+	case stepWatchLate:
+		return "stepWatchLate"
+	}
+	return "afterCopyStep(?)"
+}
+
+// afterCopy decides the next step from whether the clipboard sequence
+// changed within the wait and whether the clipboard was then restored.
+func afterCopy(changed, restored bool) afterCopyStep {
+	switch {
+	case !changed:
+		return stepWatchLate
+	case !restored:
+		return stepRestoreLater
+	}
+	return stepDone
 }
