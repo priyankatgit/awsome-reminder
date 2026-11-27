@@ -157,7 +157,7 @@ func Run(opts Options) error {
 		}
 		return s.ExportPath
 	}, c.View, time.Local, exportDebounce)
-	defer exp.Close()
+	defer exp.Close() // writes a pending export; runs before st.Close
 
 	win = newWindows(app)
 	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
@@ -208,6 +208,9 @@ func Run(opts Options) error {
 		}
 		tray.SetTooltip(tooltip(svc.Status()))
 		sched.Start(ctx)
+		// Bring the export up to date with the database at startup (it may
+		// be missing, or older than changes made by an earlier run).
+		exp.Trigger()
 		switch args := os.Args[1:]; {
 		case slices.Contains(args, captureFlag):
 			go win.ShowCapture()
