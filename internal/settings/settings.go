@@ -156,6 +156,8 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	reply, eod, sweep, days := d.ReplyHotkey, d.EndOfDay, d.EndOfDaySweep, d.WorkDays
 	if w.ReplyHotkey != nil {
 		reply = *w.ReplyHotkey
+	} else {
+		reply = defaultReplyHotkey(runtime.GOOS, w.Hotkey)
 	}
 	if w.EndOfDay != nil {
 		eod = *w.EndOfDay
@@ -309,4 +311,20 @@ func (s Settings) ParserConfig(loc *time.Location) parser.Config {
 	dt, _ := parseClock(s.DefaultTime)
 	nt, _ := parseClock(s.NextWeekTime)
 	return parser.Config{Loc: loc, DefaultTime: dt, NextWeekDay: weekdays[s.NextWeekDay], NextWeekTime: nt}
+}
+
+// defaultReplyHotkey is the reply hotkey for settings saved without one: the
+// platform default, or the Shift variant when the default would collide with
+// the user's existing capture hotkey (compared as parsed combos).
+func defaultReplyHotkey(goos, capture string) string {
+	def, alt := "Ctrl+Alt+R", "Ctrl+Alt+Shift+R"
+	if goos == "darwin" {
+		def, alt = "Ctrl+Option+R", "Ctrl+Option+Shift+R"
+	}
+	dc, err1 := hotkey.ParseCombo(def)
+	cc, err2 := hotkey.ParseCombo(capture)
+	if err1 == nil && err2 == nil && dc.String() == cc.String() {
+		return alt
+	}
+	return def
 }

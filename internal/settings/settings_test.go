@@ -320,3 +320,34 @@ func TestIsWorkDay(t *testing.T) {
 		t.Fatal("custom work days wrong")
 	}
 }
+
+func TestMissingReplyHotkeyAvoidsCaptureCollision(t *testing.T) {
+	old := `{"hotkey":"ctrl+alt+r","leadTimes":["1h0m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`
+	var s Settings
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := "Ctrl+Alt+Shift+R"
+	if runtime.GOOS == "darwin" {
+		want = "Ctrl+Option+Shift+R"
+		s.Hotkey = "Ctrl+Option+R"
+	}
+	if runtime.GOOS == "darwin" {
+		_ = json.Unmarshal([]byte(strings.Replace(old, "ctrl+alt+r", "Ctrl+Option+R", 1)), &s)
+	}
+	if s.ReplyHotkey != want {
+		t.Fatalf("reply hotkey %q want %q", s.ReplyHotkey, want)
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultReplyHotkey("darwin", "Ctrl+Option+R"); got != "Ctrl+Option+Shift+R" {
+		t.Fatalf("darwin collision %q", got)
+	}
+	if got := defaultReplyHotkey("darwin", "Cmd+Shift+Space"); got != "Ctrl+Option+R" {
+		t.Fatalf("darwin default %q", got)
+	}
+	if got := defaultReplyHotkey("windows", "Ctrl+Shift+Space"); got != "Ctrl+Alt+R" {
+		t.Fatalf("windows default %q", got)
+	}
+}
