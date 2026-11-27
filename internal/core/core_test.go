@@ -880,6 +880,37 @@ func TestDoneAndDropReply(t *testing.T) {
 	}
 }
 
+// A nudge card's Snooze: an open reply without a due time can be snoozed;
+// a plain to-do and a closed reply still can't.
+func TestSnoozeUndatedReply(t *testing.T) {
+	e := newEnv(t)
+	r := mustReply(t, e, "answer Priya", "Priya")
+	if r.Kind != model.KindTodo {
+		t.Fatalf("want an undated reply, got kind %q", r.Kind)
+	}
+	if err := e.c.Snooze(r.ID, "1h"); err != nil {
+		t.Fatalf("snooze undated reply: %v", err)
+	}
+	want := time.Date(2026, 11, 25, 11, 0, 0, 0, ny)
+	if got, _ := e.st.Get(r.ID); got.SnoozeUntil == nil || !got.SnoozeUntil.Equal(want) {
+		t.Fatalf("SnoozeUntil %v, want %v", got.SnoozeUntil, want)
+	}
+	todo := mustCapture(t, e, "just a todo")
+	if err := e.c.Snooze(todo.ID, "1h"); err == nil {
+		t.Error("want error snoozing a plain to-do")
+	}
+	closed := mustReply(t, e, "answer Sam", "Sam")
+	if _, err := e.c.DropReply(closed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Snooze(closed.ID, "1h"); err == nil {
+		t.Error("want error snoozing a closed reply")
+	}
+	if got, _ := e.st.Get(closed.ID); got.SnoozeUntil != nil {
+		t.Fatalf("closed reply snoozed: %v", got.SnoozeUntil)
+	}
+}
+
 func TestSnoozeRepliesUntil(t *testing.T) {
 	e := newEnv(t)
 	a := mustReply(t, e, "a", "Priya")

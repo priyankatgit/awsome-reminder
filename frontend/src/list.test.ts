@@ -19,7 +19,7 @@ const api = vi.hoisted(() => ({
   reopen: vi.fn(async (_id: string) => {}),
   dropReply: vi.fn(async (_id: string) => {}),
   deleteItem: vi.fn(async (_id: string) => {}),
-  snooze: vi.fn(async () => {}),
+  snooze: vi.fn(async (_id: string, _preset: string) => {}),
   getSettings: async () => ({ hotkey: "Ctrl+Shift+Space" }),
   takePendingFocus: async () => "",
   openSettings: async () => {},
@@ -168,6 +168,26 @@ describe("Waiting on you", () => {
     expect(drop).toBeTruthy();
     drop.click();
     expect(api.dropReply).toHaveBeenCalledWith("r1");
+  });
+
+  it("the row menu offers snooze for an undated reply, but not for a plain to-do", async () => {
+    const root = await mount(
+      view({
+        tags: [{ tag: "inbox", items: [item("b", "read RFC")] }],
+        waiting: [{ person: "Priya", items: [reply("r1", "Priya", "Teams", 125)] }],
+      }),
+    );
+    const labels = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).map((i) => i.textContent);
+    rowsOf(root, "b")[0].querySelector<HTMLElement>(".row-more")!.click();
+    await tick();
+    expect(labels()).not.toContain("Snooze 1 hour");
+    rowsOf(root, "r1")[0].querySelector<HTMLElement>(".row-more")!.click();
+    await tick();
+    expect(labels()).toEqual(["Snooze 10 min", "Snooze 1 hour", "Snooze until tomorrow", "No reply needed", "Edit", "Delete"]);
+    Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find((i) => i.textContent === "Snooze 1 hour")!
+      .click();
+    expect(api.snooze).toHaveBeenCalledWith("r1", "1h");
   });
 
   it("the checkbox marks a reply replied (Done)", async () => {

@@ -278,7 +278,7 @@ function fill(force: boolean, own?: Field): void {
   const done = isDone(it);
   doneBtn.className = done ? "btn btn-ghost" : "btn btn-primary";
   doneBtn.innerHTML = done ? "<span>Reopen</span>" : `${icons.check}<span>${isOpenReply(it) ? "Replied" : "Mark done"}</span>`;
-  snoozeBtn.hidden = !isReminder(it) || done; // to-dos have nothing to snooze
+  snoozeBtn.hidden = !(isReminder(it) || isOpenReply(it)) || done; // plain to-dos have nothing to snooze; replies have nudges
   dropBtn.hidden = !isOpenReply(it);
 }
 

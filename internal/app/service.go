@@ -222,8 +222,8 @@ func (s *Service) StopRepeating(id string) error {
 	return err
 }
 
-// Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
-// are removed.
+// Snooze postpones a reminder or an open reply (a nudge card's Snooze):
+// "10m", "1h" or "tomorrow". Its alert cards are removed.
 func (s *Service) Snooze(id, preset string) error {
 	if err := s.d.Core.Snooze(id, preset); err != nil {
 		return err

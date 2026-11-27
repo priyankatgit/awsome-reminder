@@ -400,7 +400,8 @@ func clearStaleDone(it *model.Item) {
 	}
 }
 
-// Snooze postpones a reminder: "10m", "1h" or "tomorrow" (tomorrow at the
+// Snooze postpones a reminder, or an open reply with or without a due time
+// (a nudge card's Snooze): "10m", "1h" or "tomorrow" (tomorrow at the
 // default time, in the item's zone).
 func (c *Core) Snooze(id, preset string) error {
 	s, err := c.settings()
@@ -408,8 +409,8 @@ func (c *Core) Snooze(id, preset string) error {
 		return err
 	}
 	_, err = c.mutate(id, func(it *model.Item, now time.Time) error {
-		if it.Kind != model.KindReminder {
-			return errors.New("only reminders can be snoozed")
+		if it.Kind != model.KindReminder && !openReply(*it) {
+			return errors.New("only reminders and open replies can be snoozed")
 		}
 		var until time.Time
 		switch strings.TrimSpace(preset) {
@@ -432,6 +433,11 @@ func (c *Core) Snooze(id, preset string) error {
 	return err
 }
 
+// openReply reports whether it is a reply still owed: open, no outcome yet.
+func openReply(it model.Item) bool {
+	return it.Reply && it.Status == model.StatusOpen && it.ReplyOutcome == ""
+}
+
 // SnoozeRepliesUntil snoozes every open reply until t (the end-of-day
 // sweep's Tomorrow), whatever its kind, in one write: listeners are notified
 // once, and not at all if there is no open reply.
@@ -445,7 +451,7 @@ func (c *Core) SnoozeRepliesUntil(t time.Time) error {
 		now := c.now().UTC()
 		n := 0
 		for _, it := range items {
-			if it.Status != model.StatusOpen || !it.Reply || it.ReplyOutcome != "" {
+			if !openReply(it) {
 				continue
 			}
 			u := until

@@ -258,8 +258,8 @@ export function SetText(id: string, text: string): $CancellablePromise<model$0.I
 }
 
 /**
- * Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
- * are removed.
+ * Snooze postpones a reminder or an open reply (a nudge card's Snooze):
+ * "10m", "1h" or "tomorrow". Its alert cards are removed.
  */
 export function Snooze(id: string, preset: string): $CancellablePromise<void> {
     return $Call.ByID(1387438710, id, preset);

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => {
 const api = vi.hoisted(() => ({
   pendingAlerts: async () => h.queue,
   done: vi.fn(async (_id: string) => {}),
-  snooze: vi.fn(async () => {}),
+  snooze: vi.fn(async (_id: string, _preset: string) => {}),
   snoozeReplies: vi.fn(async () => {}),
   openList: vi.fn(async (_id: string) => {}),
   dismissAlert: vi.fn(async (_key: string) => {}),
@@ -85,6 +85,21 @@ describe("nudge card", () => {
     primary.click();
     await tick();
     expect(api.done).toHaveBeenCalledWith("r1");
+  });
+});
+
+describe("nudge card snooze", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("Priya's 2 h nudge: Snooze, then 1 hour, snoozes the reply", async () => {
+    const root = await mount([card({ key: "n1", itemId: "r1", text: "Reply to Priya", kind: "nudge", person: "Priya", waitingSince: new Date(Date.now() - 2 * HOUR).toISOString() })]);
+    const node = root.querySelector<HTMLElement>(".alert-card")!;
+    buttons(node).find((b) => b.textContent === "Snooze")!.click();
+    const hour = Array.from(node.querySelectorAll<HTMLButtonElement>(".alert-snooze button")).find((b) => b.textContent === "1 hour")!;
+    hour.click();
+    await tick();
+    expect(api.snooze).toHaveBeenCalledWith("r1", "1h");
+    expect(node.querySelector<HTMLElement>(".alert-error")!.hidden).toBe(true);
   });
 });
 

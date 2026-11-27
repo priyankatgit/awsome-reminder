@@ -755,7 +755,8 @@ export function mountList(root: HTMLElement): void {
     if (!m) return [];
     const it = m.item;
     const items: MenuItem[] = [];
-    if (isReminder(it) && !isDone(it)) {
+    // An open reply snoozes with or without a due time (its nudges wait).
+    if ((isReminder(it) || isOpenReply(it)) && !isDone(it)) {
       items.push(
         { label: "Snooze 10 min", icon: "snooze", run: () => snooze(row, "10m") },
         { label: "Snooze 1 hour", icon: "snooze", run: () => snooze(row, "1h") },
