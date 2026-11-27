@@ -387,9 +387,9 @@ func TestBadgeWiringSyncChanged(t *testing.T) {
 	last := now.Add(-2 * time.Minute)
 	setSt(cloudsync.Status{State: cloudsync.StateSynced, LastSyncAt: &last})
 	w.SyncChanged()
-	if _, e := ft.counts(); e != 1 {
-		t.Fatalf("ticker stopped %d times, want 1", e)
-	}
+	// The goroutine releases the ticker asynchronously after its stop
+	// channel closes; once it has, it can no longer take a tick.
+	waitFor(t, "ticker released", func() bool { _, e := ft.counts(); return e == 1 })
 	_, tip, sets := tray.state()
 	if tip != "Awesome Reminder — 3 pending — Synced · 2 min ago — hotkey error: taken" {
 		t.Fatalf("synced tooltip %q", tip)
@@ -420,5 +420,47 @@ func TestBadgeWiringSyncChanged(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if _, _, after := tray.state(); after != before {
 		t.Fatal("tray touched after Stop")
+	}
+}
+
+// A SyncChanged or StatusChanged that passed its stopped check before Stop
+// ran must not write to the tray after Stop returns.
+func TestBadgeWiringNoTrayWritesAfterStop(t *testing.T) {
+	for _, name := range []string{"SyncChanged", "StatusChanged"} {
+		t.Run(name, func(t *testing.T) {
+			tray := &fakeBadgeTray{}
+			w := newBadgeWiring(badgeDeps{
+				Count:     func() (int, error) { return 1, nil },
+				Show:      func() bool { return true },
+				HotkeyErr: func() string { return "" },
+				Sync:      func() cloudsync.Status { return cloudsync.Status{State: cloudsync.StateSynced} },
+				Tray:      tray,
+				Debounce:  time.Millisecond,
+			})
+			w.Start(nil)
+			waitFor(t, "first refresh", func() bool { _, tip, _ := tray.state(); return tip != "" })
+
+			var before int
+			w.afterStopCheck = func() {
+				// Runs in the window between the stopped check and refreshMu.
+				w.afterStopCheck = nil
+				w.Stop()
+				_, _, before = tray.state()
+			}
+			if name == "SyncChanged" {
+				w.SyncChanged()
+			} else {
+				w.StatusChanged()
+			}
+			if _, _, after := tray.state(); after != before {
+				t.Fatal("tray written after Stop")
+			}
+			// And the plain post-Stop no-op.
+			w.SyncChanged()
+			w.StatusChanged()
+			if _, _, after := tray.state(); after != before {
+				t.Fatal("tray written after Stop")
+			}
+		})
 	}
 }

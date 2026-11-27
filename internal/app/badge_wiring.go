@@ -78,6 +78,8 @@ type badgeWiring struct {
 	frame     bool           // syncing animation frame (false = A)
 	tickStop  chan struct{}  // non-nil while the syncing ticker runs
 	tickWG    sync.WaitGroup // ticker goroutines
+
+	afterStopCheck func() // test hook: runs between the stopped check and refreshMu
 }
 
 func newBadgeWiring(d badgeDeps) *badgeWiring {
@@ -182,6 +184,14 @@ func (w *badgeWiring) tooltip(st cloudsync.Status) string {
 // icons when the badge or the dot changed, and the tooltip. It starts or
 // stops the syncing ticker. Call with refreshMu held.
 func (w *badgeWiring) render() {
+	// A caller may have passed its stopped check before Stop ran; Stop takes
+	// refreshMu after setting stopped, so this check closes that window.
+	w.mu.Lock()
+	stopped := w.stopped
+	w.mu.Unlock()
+	if stopped {
+		return
+	}
 	st := w.syncStatus()
 	w.syncTicker(st.State == cloudsync.StateSyncing)
 	dot := dotFor(st, w.frame)
@@ -294,6 +304,9 @@ func (w *badgeWiring) StatusChanged() {
 	if stopped {
 		return
 	}
+	if w.afterStopCheck != nil {
+		w.afterStopCheck()
+	}
 	w.refreshMu.Lock()
 	defer w.refreshMu.Unlock()
 	w.render()
@@ -311,6 +324,9 @@ func (w *badgeWiring) SyncChanged() {
 	w.mu.Unlock()
 	if skip {
 		return
+	}
+	if w.afterStopCheck != nil {
+		w.afterStopCheck()
 	}
 	w.refreshMu.Lock()
 	defer w.refreshMu.Unlock()
