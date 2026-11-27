@@ -446,6 +446,7 @@ html[data-view="list"] body {
 }
 
 .list-content {
+  position: relative; /* holds the fading ghosts of removed rows */
   padding-top: var(--space-2);
   /* room for the toast so it never covers the last row */
   padding-bottom: calc(var(--row-height) + 2 * var(--toast-offset));
@@ -583,6 +584,42 @@ html[data-view="list"] body {
   transition: border-color var(--dur-hover), background-color var(--dur-hover);
 }
 
+/* Done: the box pops on the bouncy spring and the check draws left to right
+   (an accent cover over it scales away from the left). */
+.row.is-completing .check-box {
+  position: relative;
+  overflow: hidden;
+  animation: check-pop var(--dur-check) var(--ease-spring-pop);
+}
+
+.row.is-completing .check-box::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: 100% 50%;
+  animation: check-draw var(--dur-done) var(--ease-enter);
+}
+
+@keyframes check-pop {
+  from {
+    transform: scale(var(--check-pop-scale));
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes check-draw {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
 .row-check[data-shape="round"] .check-box {
   border-radius: var(--radius-pill);
 }
@@ -676,14 +713,24 @@ html[data-view="list"] body {
 
 .row.is-completing .row-text::after {
   transform: scaleX(1);
-  transition: transform var(--dur-done) var(--ease-enter);
+  transition: transform var(--dur-done) var(--ease-enter) var(--done-stagger);
 }
 
 .row.is-completing .row-main,
 .row.is-completing .row-time,
 .row.is-completing .row-tags {
   opacity: var(--completing-opacity);
-  transition: opacity var(--dur-done) var(--ease-exit);
+  transition: opacity var(--dur-done) var(--ease-exit) var(--done-stagger);
+}
+
+/* The fading copy of a removed row (motion.ts ghost). */
+.row.is-ghost {
+  pointer-events: none;
+}
+
+.row.is-ghost .check-box,
+.row.is-ghost .check-box::after {
+  animation: none;
 }
 
 .row-repeat {
@@ -893,6 +940,24 @@ html[data-view="list"] body {
   transition: opacity var(--dur-enter) var(--ease-enter), transform var(--dur-enter) var(--ease-enter), visibility 0s;
 }
 
+/* The undo window running down: a bar along the bottom edge, inset past
+   the rounded corners so it needs no clipping (list.ts). */
+.toast-timer {
+  position: absolute;
+  left: var(--radius-card);
+  right: var(--radius-card);
+  bottom: 0;
+  height: var(--toast-bar);
+  background: var(--accent);
+  opacity: var(--toast-bar-opacity);
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+
+.toast-timer[hidden] {
+  display: none;
+}
+
 .toast-action {
   height: var(--control-height);
   padding: 0 var(--space-2);
@@ -959,6 +1024,17 @@ html[data-view="list"] body {
   background: var(--surface-glass);
 }
 
+/* Cards sit at the bottom: the window grows and shrinks from its top edge
+   (it is pinned bottom-right), and a shrink waits for the gap to close. */
+.alert-app {
+  display: flex;
+  flex-direction: column;
+}
+
+.alert-content {
+  margin-top: auto;
+}
+
 html[data-backdrop="solid"] .alert-app {
   background: var(--bg);
   border-radius: var(--radius-window);
@@ -987,7 +1063,7 @@ html[data-demo] .alert-app {
   gap: var(--space-2);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   background: var(--remind-tint);
-  transition: opacity var(--dur-exit) var(--ease-exit), transform var(--dur-exit) var(--ease-exit);
+  transition: opacity var(--dur-alert-exit) var(--ease-exit), transform var(--dur-alert-exit) var(--ease-exit);
 }
 
 /* The edge bar, and over it a glow layer that pulses once on entrance. */
@@ -1028,12 +1104,22 @@ html[data-demo] .alert-app {
   border-top: var(--hairline) solid var(--border);
 }
 
+/* Several new cards cascade: alert.ts sets --stagger-i (0, 1, 2…). */
 .alert-card.is-entering {
-  animation: alert-enter var(--dur-alert-enter) var(--ease-enter);
+  animation: alert-enter var(--dur-alert-enter) var(--ease-spring) both;
+  animation-delay: calc(var(--stagger-i, 0) * var(--stagger-alert));
 }
 
 .alert-card.is-entering::after {
-  animation: alert-glow var(--dur-remind-glow) ease-in-out;
+  animation: alert-glow var(--dur-remind-glow) ease-in-out both;
+  animation-delay: calc(var(--stagger-i, 0) * var(--stagger-alert));
+}
+
+/* A card revealed while others close a gap waits until they have mostly
+   settled, so it never fades in under a gliding card. */
+.alert-card.is-entering.is-after-gap,
+.alert-card.is-entering.is-after-gap::after {
+  animation-delay: calc(var(--alert-gap-wait) + var(--stagger-i, 0) * var(--stagger-alert));
 }
 
 .alert-card.is-leaving {
@@ -1871,13 +1957,17 @@ legend.field-label {
 
 .cap-lead.is-pop,
 .chip-remind.is-pop {
-  animation: remind-pop var(--dur-pop) var(--ease-enter);
+  animation: remind-pop var(--dur-pop) var(--ease-spring-pop);
+}
+
+.cap-lead .icon {
+  transform-origin: 50% 0; /* the bell rings about its top */
 }
 
 .cap-lead.is-leaving,
 .chip-remind.is-leaving {
   opacity: 0;
-  transition: opacity var(--dur-exit) var(--ease-exit);
+  transition: opacity var(--dur-pop-exit) var(--ease-exit);
 }
 
 @keyframes remind-pop {
@@ -2276,3 +2366,50 @@ legend.field-label {
     animation: none;
   }
 }
+
+/* ---------- Motion: fly to tray, confetti ---------- */
+
+/* Save: a copy of the typed line flies to the tray corner (capture.ts),
+   while the input itself goes blank (its value clears on hide). */
+.capture.is-flying .cap-input {
+  color: transparent;
+  caret-color: transparent;
+}
+
+/* Save: a copy of the typed line flies to the tray corner (capture.ts). */
+.cap-fly {
+  position: fixed;
+  z-index: 5;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-input);
+  white-space: pre;
+  transform-origin: 100% 100%;
+  pointer-events: none;
+}
+
+/* "Today is clear": dots burst from the last checkbox (motion.ts). */
+.confetti {
+  position: fixed;
+  z-index: 30;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.confetti i {
+  position: absolute;
+  left: calc(var(--confetti-size) / -2);
+  top: calc(var(--confetti-size) / -2);
+  width: var(--confetti-size);
+  height: var(--confetti-size);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  opacity: 0;
+}
+
+.confetti i:nth-child(5n + 2) { background: var(--prio-med); }
+.confetti i:nth-child(5n + 3) { background: var(--prio-low); }
+.confetti i:nth-child(5n + 4) { background: var(--remind); }
+.confetti i:nth-child(5n + 5) { background: var(--tag-2-fg); }
