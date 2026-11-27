@@ -1687,28 +1687,46 @@ legend.field-label {
   color: var(--danger);
 }
 
-/* The listening row takes the input's place; same height, no layout shift. */
-.capture[data-voice="listening"] .cap-input,
-.capture[data-voice="transcribing"] .cap-input {
-  display: none;
-}
-
-.cap-listen {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  height: var(--hit-area);
-  padding: 0 var(--space-2);
+/* Phase 3: the input stays visible while listening (it shows the current
+   task as it grows); the listening indicators live in the hint row. */
+.cap-hint .cap-listen {
+  gap: var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--text-body);
 }
 
 .cap-listen[hidden],
 .cap-voice[hidden],
-.cap-progress[hidden] {
+.cap-progress[hidden],
+.cap-busy[hidden] {
   display: none;
+}
+
+.cap-listen-dot {
+  width: var(--listen-dot);
+  height: var(--listen-dot);
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  animation: cap-listen-dot var(--dur-pulse) ease-in-out infinite;
+}
+
+.capture[data-voice="transcribing"] .cap-listen-dot {
+  visibility: hidden;
+}
+
+@keyframes cap-listen-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--pulse-opacity);
+  }
+}
+
+/* While segments are transcribed: a shimmer at the end of the input. */
+.cap-busy {
+  flex: none;
+  color: var(--fg-muted);
 }
 
 .cap-listen-label {
@@ -1771,21 +1789,23 @@ legend.field-label {
   }
 }
 
-/* While recording, the preview and hint rows swap for the voice versions. */
+/* While recording, the hint row swaps for the voice version. The preview
+   stays (it previews the current task); while it is empty, the speaking
+   example takes its place. */
 .cap-listen-sub,
 .cap-hint-voice {
   display: none;
 }
 
-.capture[data-voice="listening"] .cap-preview,
-.capture[data-voice="transcribing"] .cap-preview,
 .capture[data-voice="listening"] .cap-hint:not(.cap-hint-voice),
-.capture[data-voice="transcribing"] .cap-hint:not(.cap-hint-voice) {
+.capture[data-voice="transcribing"] .cap-hint:not(.cap-hint-voice),
+.capture[data-voice="listening"]:has(.cap-preview .cap-empty) .cap-preview,
+.capture[data-voice="transcribing"]:has(.cap-preview .cap-empty) .cap-preview {
   display: none;
 }
 
-.capture[data-voice="listening"] .cap-listen-sub,
-.capture[data-voice="transcribing"] .cap-listen-sub {
+.capture[data-voice="listening"]:has(.cap-preview .cap-empty) .cap-listen-sub,
+.capture[data-voice="transcribing"]:has(.cap-preview .cap-empty) .cap-listen-sub {
   display: block;
   min-height: calc(var(--line-body) + 2 * var(--space-2) + var(--hairline));
   padding: var(--space-2) var(--space-4);
@@ -1796,6 +1816,18 @@ legend.field-label {
 .capture[data-voice="listening"] .cap-hint-voice,
 .capture[data-voice="transcribing"] .cap-hint-voice {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Multi-task hints ("new task" next) unless dictation is one line (reply mode). */
+.capture .cap-voice-single,
+.capture[data-dictation="single"] .cap-voice-multi {
+  display: none;
+}
+
+.capture[data-dictation="single"] .cap-voice-single {
+  display: inline-flex;
 }
 
 /* Setup panel: consent, download progress, "ready". Replaces the preview. */
@@ -1892,7 +1924,8 @@ legend.field-label {
   }
 
   .cap-dots i,
-  .cap-input.is-dictated {
+  .cap-input.is-dictated,
+  .cap-listen-dot {
     animation: none;
   }
 

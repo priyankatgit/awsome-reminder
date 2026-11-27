@@ -12,6 +12,7 @@ import { mountVoice } from "./voice";
 const PREVIEW_DEBOUNCE_MS = 80;
 const NOTE_MS = 5000; // the Saved/Discarded note with Undo
 const CONFIRM_MS = 3000; // the discard confirm after the first Esc
+const SESSION_TEXT_CHARS = 200; // recent dictation passed as the whisper prompt
 
 const tasks = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
@@ -37,11 +38,7 @@ const TEMPLATE = `
       <input class="cap-input" id="cap-input" type="text" autocomplete="off" spellcheck="false"
              aria-label="To-do or reminder" aria-describedby="cap-preview cap-hint"
              placeholder="remind me tomorrow 5pm check deploy #backend" />
-      <div class="cap-listen" id="cap-listen" hidden>
-        <span class="cap-listen-label" id="cap-listen-label">Listening…</span>
-        <canvas class="cap-wave" id="cap-wave" aria-hidden="true"></canvas>
-        <span class="cap-timer" id="cap-timer">0:00</span>
-      </div>
+      <span class="cap-dots cap-busy" id="cap-busy" aria-hidden="true" hidden><i></i><i></i><i></i></span>
       <div class="cap-action-slot">
         <button class="mic-btn" id="cap-mic" type="button" aria-label="Start dictation" aria-pressed="false"
                 title="Dictate (Ctrl+M)"><span class="mic-ring" aria-hidden="true"></span><span class="mic-icon" id="cap-mic-icon"></span></button>
@@ -89,9 +86,16 @@ const TEMPLATE = `
       <span><kbd>Esc</kbd> close</span>
     </footer>
     <footer class="cap-hint cap-hint-voice">
-      <span>auto-stops after a pause</span>
-      <span><kbd>Esc</kbd> cancel</span>
-      <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> stop</span>
+      <span class="cap-listen" id="cap-listen" hidden>
+        <span class="cap-listen-dot" aria-hidden="true"></span>
+        <span class="cap-listen-label" id="cap-listen-label">Listening…</span>
+        <canvas class="cap-wave" id="cap-wave" aria-hidden="true"></canvas>
+        <span class="cap-timer" id="cap-timer">0:00</span>
+      </span>
+      <span class="cap-voice-multi">“new task” next</span>
+      <span class="cap-voice-multi">“save all” done</span>
+      <span class="cap-voice-single">auto-stops after a pause</span>
+      <span><kbd>Esc</kbd> stop</span>
     </footer>
   </div>
 </main>`;
@@ -481,17 +485,22 @@ export function mountCapture(root: HTMLElement): void {
     void runPreview();
   }
 
-  /** A short status line with an Undo button for NOTE_MS (Ctrl+Z when focused). */
-  function showNote(text: string, undo: () => void | Promise<void>): void {
+  /**
+   * A short status line for NOTE_MS, with an Undo button (Ctrl+Z when
+   * focused) when undo is given. Without undo it is only information
+   * ("Stopped after 5 minutes") and the box stays open.
+   */
+  function showNote(text: string, undo?: () => void | Promise<void>): void {
     window.clearTimeout(noteTimer);
-    noteAction = undo;
+    noteAction = undo ?? null;
     noteText.textContent = text;
+    noteUndo.hidden = !undo;
     note.hidden = false;
     noteTimer = window.setTimeout(() => {
       hideNote();
       // A spoken save/discard left the box open for the note; close it now
       // unless something new is going on.
-      if (!busy && pending() === 0 && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
+      if (undo && !busy && pending() === 0 && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
     }, NOTE_MS);
   }
 
@@ -520,23 +529,48 @@ export function mountCapture(root: HTMLElement): void {
     }
   });
 
-  /** Voice: a finished task joins the review list. */
-  function addTask(text: string): void {
-    if (reply.active || text.trim() === "") return;
-    showError("");
+  /**
+   * Voice boundary ("new task"): the input becomes a row at the end of the
+   * list. Returns the row count, 0 when there was nothing to add (or in
+   * reply mode, which has no rows). A showing discard confirm goes away, so
+   * a pending Esc-Esc cannot sweep the new row.
+   */
+  function addTask(): number {
+    const text = input.value.trim();
+    if (reply.active || text === "") return 0;
+    clearConfirm();
+    leftover = false;
+    input.value = "";
     list.add(text);
+    void runPreview();
+    updateReview();
+    return list.items().length;
   }
 
-  /** Voice: "scratch that" clears the input, or drops the last row when it is empty. */
-  function scratch(): void {
+  /**
+   * Voice: "scratch that" clears the input, or drops the last row when it is
+   * empty (never in reply mode, where the rows are hidden). Returns whether
+   * anything was removed.
+   */
+  function scratch(): boolean {
     if (input.value.trim() !== "") {
       input.value = "";
-      showError("");
       void runPreview();
       updateReview();
-    } else {
-      list.popLast();
+      return true;
     }
+    if (reply.active) return false;
+    return list.popLast() !== undefined;
+  }
+
+  /** The recent session text for the whisper prompt: rows plus the input. */
+  function sessionText(): string {
+    const parts = reply.active ? [input.value] : [...list.items(), input.value];
+    return parts
+      .map((s) => s.trim())
+      .filter((s) => s !== "")
+      .join(" ")
+      .slice(-SESSION_TEXT_CHARS);
   }
 
   /** Voice "cancel" (spoken) or a confirmed Esc: drops the rows and the input. */
@@ -567,6 +601,13 @@ export function mountCapture(root: HTMLElement): void {
   /** Voice "save all" (spoken: Undo note, box stays) or Enter (flash and hide). */
   async function saveAll(spoken: boolean): Promise<void> {
     await save(spoken);
+  }
+
+  /** Enter: while dictating, stop and wait for pending segments first. */
+  async function submit(): Promise<void> {
+    if (busy) return;
+    if (box.dataset.voice === "listening" || box.dataset.voice === "transcribing") await voice.finish();
+    await save();
   }
 
   async function save(spoken = false): Promise<void> {
@@ -711,7 +752,7 @@ export function mountCapture(root: HTMLElement): void {
     if (e.isComposing) return;
     if (e.key === "Enter") {
       e.preventDefault();
-      void save();
+      void submit();
     } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       void openPicker();
@@ -750,20 +791,20 @@ export function mountCapture(root: HTMLElement): void {
   });
   dueSet.addEventListener("click", () => void confirmPicker());
 
-  // The voice wiring (Task 9) hands these to mountVoice's host.
-  void [addTask, saveAll, cancelAll, scratch, showNote];
-
   const voice = mountVoice(root, {
     box,
     input,
     insert(text: string): void {
+      // A transcription error shown earlier in the session stays visible;
+      // a new session clears it.
       input.value = input.value.trim() === "" ? text : `${input.value.trimEnd()} ${text}`;
       input.classList.remove("is-dictated");
       void input.offsetWidth; // restart the fade-in
       input.classList.add("is-dictated");
-      showError("");
+      clearConfirm();
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
+      updateReview();
       void runPreview();
     },
     showError,
@@ -772,6 +813,13 @@ export function mountCapture(root: HTMLElement): void {
       lead.classList.toggle("is-listening", on);
       paintLead(on ? "mic" : leadIcon);
     },
+    addTask,
+    scratch,
+    saveAll,
+    cancelAll,
+    multi: () => !reply.active,
+    sessionText,
+    showNote: (text: string) => showNote(text),
   });
 
   box.addEventListener("pointerdown", () => {

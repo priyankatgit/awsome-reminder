@@ -151,3 +151,15 @@ Run on a release build; each row is for the person at the keyboard. The Windows 
 | R4 | Outlook Reply All | With the reply key `Ctrl+Alt+R`, Outlook's Reply All (`Ctrl+Shift+R`) still works. | | | | |
 | R5 | Nudges and sweep on time | Using the clock or seeded data: a reply nudges 2 hours after saving and at the default time on working days, and the end-of-day sweep card shows at the end-of-day time on a working day. | | | | |
 | R6 | Idle CPU | With the feature on and nothing open, about 0% CPU over 60 s (as row 7). | | | | |
+
+## Phase 3 — hands-free voice
+
+Run in the built app (`wails3 build`) from a temp copy, with `APPDATA` / `LOCALAPPDATA` pointed at scratch folders as in Phase 1.5, voice installed. These need a person speaking into a real microphone; the automated runs cannot.
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| H1 | One task, as in Phase 1.5 | `Ctrl+M`, say "buy milk", pause. The input shows "buy milk" with the preview (a screen reader hears "Ready to save"); nothing is saved until Enter. | needs human | | | |
+| H2 | Several tasks in one session | `Ctrl+M`, say "call Sam tomorrow at 10, new task, buy milk, next task, refactor auth hashtag backend". Two review rows and the third task in the input; the input stays visible while listening and the listening row sits in the hint row. Enter: 3 items in the list. | needs human | | | |
+| H3 | scratch that / save all / Undo | "… new task … scratch that" removes the current task. "save all" saves every task and shows "Saved N tasks" with Undo; Undo removes them again and puts them back in the review list. | needs human | | | |
+| H4 | Esc and blur keep the text | Esc while listening stops and keeps the rows and the input (pending pieces still land). Switching to another window while listening releases the mic; the next open shows the draft. | needs human | | | |
+| H5 | Reply mode stays one line | In reply mode (replies-owed), `Ctrl+M` and say "thanks new task save all": it stays one line of text in the input, no rows, nothing saved. | needs human | | | |
