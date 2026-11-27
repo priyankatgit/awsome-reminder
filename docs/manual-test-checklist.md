@@ -93,3 +93,16 @@ Notes: whisper-server (8 threads on 16 cores, `base.en`) commits about 740 MB pr
 | B5 | Pinned button | Pin the taskbar button, quit, start from the pin: the pin and the running button merge into one, with the badge. | needs human | n/a | n/a | n/a |
 
 Windows run (2026-11-27, same machine; temp copy with `APPDATA`/`LOCALAPPDATA` pointed at a scratch folder): no `taskbar:` errors in `awesome.log`. The Go process was at 58 MB private / 40 MB working set a few seconds after start with the native window. That is no measurement of the window's own cost, which is a plain Win32 window with no WebView.
+
+## Replies owed
+
+Run on a release build; each row is for the person at the keyboard. The Windows column is filled in after the run.
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| R1 | Grab in real apps | Select text in Outlook, Teams, Slack and Chrome, then press the reply key: the box opens pre-filled with the line, the person and the source within about 200 ms. | | | | |
+| R2 | Clipboard put back | Copy some formatted text (it has both plain and HTML content), grab a selection, then paste: the clipboard holds exactly its previous text and its previous HTML content. | | | | |
+| R3 | Image on the clipboard | With an image on the clipboard, press the reply key: no copy is injected, and the image is still on the clipboard afterwards. | | | | |
+| R4 | Outlook Reply All | With the reply key `Ctrl+Alt+R`, Outlook's Reply All (`Ctrl+Shift+R`) still works. | | | | |
+| R5 | Nudges and sweep on time | Using the clock or seeded data: a reply nudges 2 hours after saving and at the default time on working days, and the end-of-day sweep card shows at the end-of-day time on a working day. | | | | |
+| R6 | Idle CPU | With the feature on and nothing open, about 0% CPU over 60 s (as row 7). | | | | |

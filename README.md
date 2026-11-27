@@ -96,6 +96,22 @@ Engine per OS:
 | Linux x64 / arm64 | Official whisper.cpp Ubuntu build, downloaded on consent (needs glibc from Ubuntu 22.04 or newer). |
 | macOS | whisper.cpp publishes no macOS binaries. Install the engine with Homebrew, `brew install whisper.cpp`; the app then downloads only the model. Each dictation runs `whisper-cli` once, so there is no warm start. A `whisper-server` you built yourself and put on `PATH` is used instead when present. |
 
+### Replies owed
+
+For a message someone is waiting on. Select the message in Outlook, Teams, Slack, a browser or any other app, then press the reply key (default `Ctrl+Alt+R`, `Ctrl+Option+R` on macOS; `Ctrl+Alt+Shift+R` if your capture hotkey is already `Ctrl+Alt+R`). The capture box opens in reply mode with the line filled in, such as `Reply to Priya: can you check the deploy?`. Press Enter to save it, or edit the line first. If the capture box is already open, the key switches it to reply mode and keeps what you typed.
+
+- **What it grabs.** On Windows and macOS the app copies the selection (it sends `Ctrl+C` / `Cmd+C` to the app you are in), reads it, and puts your clipboard back exactly as it was, every format included. Nothing watches the clipboard or the window in the background; it all happens when you press the key. If the copy is slow to arrive, the clipboard is still put back a moment later.
+- **Clipboard history.** The copy is made by the other app, so it appears in Windows clipboard history (`Win+V`), cloud clipboard, Universal Clipboard and clipboard managers like any copy you make yourself. The app's own restore is marked so history and cloud sync skip it.
+- **When it does not copy.** Nothing is sent to terminals and IDEs, where `Ctrl+C` with nothing selected would stop the running process: Windows Terminal, cmd, PowerShell, WSL, mintty, Alacritty, WezTerm, VS Code, Cursor, the JetBrains IDEs and Visual Studio on Windows; Terminal, iTerm2, Alacritty, WezTerm, kitty, Warp, Hyper, Ghostty, VS Code, Cursor and the JetBrains IDEs on macOS. It also sends nothing when the clipboard holds an image or files, or a format that cannot be put back unchanged, or while a key of the hotkey is still held. In these cases the box opens with whatever text the clipboard already holds (only if it is 2,000 characters or less), and your clipboard is not touched.
+- **Who it is from.** The app guesses the person from the text (a `From:` line or a chat header such as `Priya  10:42`) or the window title (Teams, Slack), and the source from the app (Outlook, Teams, Slack, Chrome and so on). The person shows in the preview as a chip; press `Alt+P` to change it before saving. With no guess, the reply is owed to "Someone". The line is cut at 200 characters; the grabbed text is kept in full as a quote in the description.
+- **Waiting on you.** Open replies have their own section at the top of the list, one subheading per person, oldest first. A row shows the source and how long it has waited (`Teams · 2 h`; the age turns amber after 24 hours). A reply is not listed under tags or Today/Upcoming. Mark it done when you have replied (the details panel says **Replied**), or choose **No reply needed** in the row menu or the panel to close it without replying; it moves to Done as "no reply needed". The panel has a **For** field for the person and shows where it came from.
+- **Nudges.** A reply without a due time is nudged 2 hours after you save it, then at the default time (09:00) on each working day until you close it. A reply with a due time gets its normal alerts first, then the daily nudge. The nudge card reads "waiting 2 h · Priya" with **Replied**, **Snooze** and **Open**. Snoozing a reply (10 min, 1 hour or tomorrow, from the card, the row menu or the panel) holds its nudges until then, with or without a due time. The capture box shows the plan before you save, for example `nudge in 2h, then 9:00`.
+- **End-of-day sweep.** At the end of the working day (default 17:30) one card lists who is still waiting: "3 people are still waiting on you - Priya, Sam, Ops channel". **Open list** shows the Waiting section; **Tomorrow** snoozes every open reply to the next working day at the default time. There is no sweep on non-working days, and none when every open reply was saved after the sweep time. A sweep you slept through is dropped, not shown late the next day.
+- **Settings.** A Replies group has the reply key, the working days (default Monday to Friday), the end-of-day time and an end-of-day sweep switch. The reply key must differ from the capture hotkey; if another app owns it, the error shows inline and in the tray tooltip.
+- **`todo.md`.** The export starts with a `## Waiting on you` section of lines like `- [ ] Reply to Priya: can you check the deploy? (from Teams)`.
+- **macOS.** Reading the selection needs the Accessibility permission (System Settings › Privacy & Security › Accessibility). Without it the box says so and uses the clipboard's text instead.
+- **Linux.** The app reads the selected text (the primary selection) with `wl-paste`, `xclip` or `xsel`, whichever is installed. It injects nothing and never writes the clipboard; with nothing selected it falls back to the clipboard's text. Wayland has no global hotkeys, so bind `awesome-reminder --reply` to a shortcut in your desktop settings.
+
 ### Alerts
 
 A reminder alerts at each lead time before it is due (default 1 hour and 10 minutes) and again at the due time. The alert pop-up appears at the bottom right without taking keyboard focus. Each card offers **Done**, **Snooze** (10 min, 1 hour, tomorrow) and **Open**. If the computer was asleep or the app was not running through a due time, you get one "missed" card per item when it wakes, not a burst of every alert you skipped.
@@ -150,6 +166,7 @@ Open Settings from the tray menu or the gear in the list window.
 - **Alert lead times:** chips such as `1h` and `10m`; add more as `30m`, `2h`, `1d`.
 - **Default time** for dates without a time (`09:00`), and the weekday and time used for "next week".
 - **Export path:** if set, the app writes a read-only `todo.md` there after changes (leave empty to turn off).
+- **Replies:** the reply key, working days, end-of-day time and the end-of-day sweep (see Replies owed above).
 - **Start at login:** on by default.
 - **Show pending count:** on by default. Turn it off to remove the count from the tray icon, the taskbar button and the Dock.
 
@@ -183,6 +200,7 @@ The voice engine and model (Phase 1.5, about 160 MB) live in the local cache ins
 Only one copy of the app runs. Starting it again with a flag asks the running copy to do something and exits:
 
 - `awesome-reminder --capture` opens the capture box
+- `awesome-reminder --reply` opens the capture box in reply mode, as the reply key does
 - `awesome-reminder --list` opens the list
 - `awesome-reminder --settings` opens Settings
 
@@ -208,7 +226,7 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
 
 Planned, in order:
 

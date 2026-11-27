@@ -49,6 +49,9 @@ func openLine(it model.Item, loc *time.Location) string {
 		s += " (!low)"
 	}
 	s += " " + oneLine(it.Text)
+	if it.Reply && it.Source != "" {
+		s += " (from " + oneLine(it.Source) + ")"
+	}
 	var meta []string
 	if it.DueAt != nil {
 		meta = append(meta, "due "+it.DueAt.In(loc).Format("2006-01-02 15:04"))
@@ -66,6 +69,16 @@ func openLine(it model.Item, loc *time.Location) string {
 func Markdown(v core.View, loc *time.Location) []byte {
 	var b strings.Builder
 	b.WriteString("# Awesome Reminder\n")
+	var waiting []model.Item
+	for _, g := range v.Waiting {
+		waiting = append(waiting, g.Items...)
+	}
+	if len(waiting) > 0 {
+		b.WriteString("\n## Waiting on you\n")
+		for _, it := range waiting {
+			b.WriteString(openLine(it, loc) + "\n")
+		}
+	}
 	for _, g := range v.Tags {
 		if len(g.Items) == 0 {
 			continue
