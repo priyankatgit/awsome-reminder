@@ -24,6 +24,7 @@ type Result struct {
 	Tags     []string   // lowercase, deduped, first-seen order; never nil
 	DueAt    *time.Time // UTC
 	RRule    string
+	Priority string // model.Priority*; "" when none typed
 	Warnings []string // e.g. "time is in the past"
 }
 
@@ -55,6 +56,7 @@ func Parse(input string, now time.Time, cfg Config) Result {
 	toks := stripPrefix(all)
 	prefixed := len(toks) < len(all)
 	toks, tags := extractTags(toks)
+	toks, priority := extractPriority(toks)
 
 	due, rrule, rest := parseWhen(toks, now, cfg)
 	if rest == nil && due == nil && rrule == "" {
@@ -78,6 +80,8 @@ func Parse(input string, now time.Time, cfg Config) Result {
 		Tags:  tags,
 		DueAt: due,
 		RRule: rrule,
+
+		Priority: priority,
 	}
 	if due != nil && due.Before(now) {
 		res.Warnings = append(res.Warnings, "time is in the past")

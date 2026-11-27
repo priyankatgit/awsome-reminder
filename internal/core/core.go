@@ -135,7 +135,7 @@ func (c *Core) WithDue(input string, due time.Time) string {
 		return input
 	}
 	d := due.UTC()
-	return parser.Render(r.Text, r.Tags, &d, r.RRule, c.loc)
+	return parser.Render(r.Text, r.Tags, &d, r.RRule, r.Priority, c.loc)
 }
 
 // Capture parses input and stores a new open item.
@@ -211,7 +211,7 @@ func (c *Core) EditText(id string) (string, error) {
 	if len(tags) == 1 && tags[0] == inboxTag {
 		tags = nil
 	}
-	return parser.Render(it.Text, tags, it.DueAt, it.RRule, c.itemLoc(it)), nil
+	return parser.Render(it.Text, tags, it.DueAt, it.RRule, it.Priority, c.itemLoc(it)), nil
 }
 
 // Update re-parses input for an existing item. ID, CreatedAt, LeadTimes, TZ

@@ -14,7 +14,7 @@ func TestRenderRoundTrip(t *testing.T) {
 		}
 		t.Run(c.name, func(t *testing.T) {
 			r := Parse(c.in, now, cfg)
-			line := Render(r.Text, r.Tags, r.DueAt, r.RRule, cfg.Loc)
+			line := Render(r.Text, r.Tags, r.DueAt, r.RRule, r.Priority, cfg.Loc)
 			r2 := Parse(line, now, cfg)
 			if r2.Text != r.Text {
 				t.Errorf("line %q: Text = %q, want %q", line, r2.Text, r.Text)
@@ -37,7 +37,7 @@ func TestRenderForms(t *testing.T) {
 	check := func(in, want string) {
 		t.Helper()
 		r := Parse(in, now, cfg)
-		if got := Render(r.Text, r.Tags, r.DueAt, r.RRule, cfg.Loc); got != want {
+		if got := Render(r.Text, r.Tags, r.DueAt, r.RRule, r.Priority, cfg.Loc); got != want {
 			t.Errorf("Render(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -50,14 +50,14 @@ func TestRenderForms(t *testing.T) {
 
 func TestRenderQuotesWhenNeeded(t *testing.T) {
 	_, cfg := testNow(t)
-	got := Render("fix 5pm cron job", nil, nil, "", cfg.Loc)
+	got := Render("fix 5pm cron job", nil, nil, "", "", cfg.Loc)
 	if !strings.Contains(got, `"fix 5pm cron job"`) {
 		t.Errorf("got %q, want quoted text", got)
 	}
-	if got := Render("plain text", []string{"a"}, nil, "", cfg.Loc); got != "plain text #a" {
+	if got := Render("plain text", []string{"a"}, nil, "", "", cfg.Loc); got != "plain text #a" {
 		t.Errorf("got %q", got)
 	}
-	if got := Render("see #notatag", nil, nil, "", cfg.Loc); got != `"see #notatag"` {
+	if got := Render("see #notatag", nil, nil, "", "", cfg.Loc); got != `"see #notatag"` {
 		t.Errorf("got %q", got)
 	}
 }

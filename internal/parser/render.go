@@ -9,16 +9,19 @@ import (
 
 var renderWeekdays = [...]string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}
 
-// Render produces the editable one-line form "<text> #tag1 #tag2 <when>".
+// Render produces the editable one-line form "<text> #tag1 #tag2 !prio <when>".
 // The text is wrapped in double quotes only when it would not survive being
 // parsed back unchanged (it contains a time phrase, a tag, a prefix, ...).
-func Render(text string, tags []string, due *time.Time, rrule string, loc *time.Location) string {
+func Render(text string, tags []string, due *time.Time, rrule string, priority string, loc *time.Location) string {
 	if loc == nil {
 		loc = time.UTC
 	}
 	var rest []string
 	for _, t := range tags {
 		rest = append(rest, "#"+t)
+	}
+	if p := renderPriority(priority); p != "" {
+		rest = append(rest, p)
 	}
 	if due != nil {
 		local := due.In(loc)
@@ -35,7 +38,7 @@ func Render(text string, tags []string, due *time.Time, rrule string, loc *time.
 	}
 
 	line := join(text)
-	if text != "" && !strings.Contains(text, `"`) && !survives(line, text, tags, due, rrule, loc) {
+	if text != "" && !strings.Contains(text, `"`) && !survives(line, text, tags, due, rrule, priority, loc) {
 		line = join(`"` + text + `"`)
 	}
 	return line
@@ -43,10 +46,10 @@ func Render(text string, tags []string, due *time.Time, rrule string, loc *time.
 
 // survives reports whether parsing line yields back the given text, tags and
 // schedule.
-func survives(line, text string, tags []string, due *time.Time, rrule string, loc *time.Location) bool {
+func survives(line, text string, tags []string, due *time.Time, rrule string, priority string, loc *time.Location) bool {
 	cfg := Config{Loc: loc, DefaultTime: Clock{9, 0}, NextWeekDay: time.Monday, NextWeekTime: Clock{9, 0}}
 	r := Parse(line, time.Now().In(loc), cfg)
-	if r.Text != text || r.RRule != rrule || !reflect.DeepEqual(r.Tags, nonNil(tags)) {
+	if r.Text != text || r.RRule != rrule || r.Priority != priority || !reflect.DeepEqual(r.Tags, nonNil(tags)) {
 		return false
 	}
 	if (r.DueAt == nil) != (due == nil) {
