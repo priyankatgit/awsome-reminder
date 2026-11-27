@@ -259,3 +259,47 @@ func TestAfterCopy(t *testing.T) {
 		}
 	}
 }
+
+// Ruling R1: on macOS, files and images on the pasteboard, or a type that
+// cannot be read, mean no Cmd+C is injected.
+func TestCanRestoreTypes(t *testing.T) {
+	all := func(string) bool { return true }
+	base := []string{"public.utf8-plain-text", "public.html", "com.apple.webarchive"}
+	if !canRestoreTypes(base, all) {
+		t.Fatalf("canRestoreTypes(%v) = false, want true", base)
+	}
+	for _, typ := range []string{"public.file-url", "public.tiff", "public.png"} {
+		types := append(append([]string{}, base...), typ)
+		if canRestoreTypes(types, all) {
+			t.Errorf("canRestoreTypes(%v) = true, want false (type %s)", types, typ)
+		}
+	}
+	unreadable := func(s string) bool { return s != "public.html" }
+	if canRestoreTypes(base, unreadable) {
+		t.Errorf("canRestoreTypes with an unreadable type = true, want false")
+	}
+	if !canRestoreTypes(nil, all) {
+		t.Errorf("canRestoreTypes(empty pasteboard) = false, want true")
+	}
+}
+
+// Cmd+C in a macOS terminal or IDE terminal can interrupt the running
+// process.
+func TestNoInjectMac(t *testing.T) {
+	for _, app := range []string{
+		"Terminal", "iTerm2", "Alacritty", "WezTerm", "kitty", "Warp", "Hyper",
+		"Ghostty", "Code", "Visual Studio Code", "Cursor", "IntelliJ IDEA",
+		"GoLand", "PyCharm", "WebStorm", "Rider", "CLion",
+		"terminal", "ITERM2", "visual studio code", "KITTY", // case-insensitive
+		"", // unknown app: be safe
+	} {
+		if !noInjectMac(app) {
+			t.Errorf("noInjectMac(%q) = false, want true", app)
+		}
+	}
+	for _, app := range []string{"Mail", "Microsoft Outlook", "Slack", "Safari", "Google Chrome", "Notes", "Code Helper", "Terminal Notes"} {
+		if noInjectMac(app) {
+			t.Errorf("noInjectMac(%q) = true, want false", app)
+		}
+	}
+}

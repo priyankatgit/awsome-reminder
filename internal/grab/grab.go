@@ -219,3 +219,46 @@ func afterCopy(changed, restored bool) afterCopyStep {
 	}
 	return stepDone
 }
+
+// unrestorableTypes are macOS pasteboard types that are files or images:
+// the Global Constraints list, as for unrestorable on Windows.
+var unrestorableTypes = map[string]bool{
+	"public.file-url": true,
+	"public.tiff":     true,
+	"public.png":      true,
+}
+
+// canRestoreTypes is canRestore for macOS pasteboard types: every type can
+// be saved and put back when none is a file or image and each one is
+// readable. When it is false no Cmd+C is injected.
+func canRestoreTypes(types []string, readable func(string) bool) bool {
+	for _, t := range types {
+		if unrestorableTypes[t] || !readable(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// noInjectApps are macOS terminals and IDEs with a terminal (their
+// localized app names): with nothing selected, Cmd+C there can interrupt
+// the running process.
+var noInjectApps = []string{
+	"Terminal", "iTerm2", "Alacritty", "WezTerm", "kitty", "Warp", "Hyper",
+	"Ghostty", "Code", "Visual Studio Code", "Cursor", "IntelliJ IDEA",
+	"GoLand", "PyCharm", "WebStorm", "Rider", "CLion",
+}
+
+// noInjectMac reports whether Cmd+C must not be sent to the frontmost app
+// (its localized name): a terminal or IDE, or an unknown app.
+func noInjectMac(app string) bool {
+	if app == "" {
+		return true
+	}
+	for _, a := range noInjectApps {
+		if strings.EqualFold(app, a) {
+			return true
+		}
+	}
+	return false
+}

@@ -525,3 +525,7 @@ func modUp(k Key) {
 	}
 	sendInputs(in)
 }
+
+// AccessibilityTrusted is always true on Windows: the grab needs no
+// permission.
+func AccessibilityTrusted() bool { return true }
