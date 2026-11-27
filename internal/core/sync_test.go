@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -146,6 +147,27 @@ func TestApplyRemoteNewItemSuppressesPastAlerts(t *testing.T) {
 	if fire, _ := planFor(t, e); len(fire) != 0 {
 		t.Fatalf("inserted overdue item must not fire: %+v", fire)
 	}
+	// The marks exist as keys (written before the insert, see sync.go).
+	if ok, _ := e.st.WasNotified(idA + "|" + strconv.FormatInt(pd.Unix(), 10) + "|0"); !ok {
+		t.Fatal("at-time key not marked")
+	}
+	if ok, _ := e.st.WasNotified(idA + "|" + strconv.FormatInt(pd.Unix(), 10) + "|3600"); !ok {
+		t.Fatal("1h lead key not marked")
+	}
+
+	// A reminder whose at-time passed 30 s ago still fires.
+	fresh := remoteItem(idD, "R", now.Add(-48*time.Hour))
+	fresh.Kind = model.KindReminder
+	frd := now.Add(-30 * time.Second)
+	fresh.DueAt = &frd
+	fresh.CreatedAt = now.Add(-72 * time.Hour)
+	if _, err := e.c.ApplyRemoteItems([]model.Item{fresh}); err != nil {
+		t.Fatal(err)
+	}
+	if fire, _ := planFor(t, e); len(fire) != 1 || fire[0].ItemID != idD {
+		t.Fatalf("fresh alert must fire: %+v", fire)
+	}
+	e.st.MarkNotified(idD+"|"+strconv.FormatInt(frd.Unix(), 10)+"|0", now)
 
 	fut := remoteItem(idB, "R", now.Add(-48*time.Hour))
 	fut.Kind = model.KindReminder

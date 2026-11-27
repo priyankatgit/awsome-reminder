@@ -22,6 +22,11 @@ import (
 // whose image file is not on disk.
 var ErrAttachmentFileMissing = errors.New("attachment file missing")
 
+// staleAlertAge is how old an alert must be before restoring an item marks it
+// as fired. It matches the scheduler's missed threshold; younger alerts still
+// show, so a reminder that came due during the pull lag is not lost.
+const staleAlertAge = 2 * time.Minute
+
 // Applied reports one item written by ApplyRemoteItems. Before is nil when the
 // item was inserted on this device.
 type Applied struct {
@@ -76,7 +81,13 @@ func (c *Core) ApplyRemoteItems(items []model.Item) ([]Applied, error) {
 func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 	var applied []Applied
 	var leads []time.Duration
-	leadsLoaded := false
+	if len(items) > 0 {
+		st, err := c.settings()
+		if err != nil {
+			return nil, err
+		}
+		leads = st.LeadTimes
+	}
 	now := c.now()
 	never := func(string) bool { return false }
 	for _, it := range items {
@@ -97,26 +108,21 @@ func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 			l := local
 			before = &l
 		}
+		// Mark the already-old alerts of an inserted item first: if we stop
+		// between the two writes, a retry still sees no local copy and
+		// marks again, and the marks are harmless without the row.
+		if before == nil && it.Status == model.StatusOpen && it.DueAt != nil {
+			_, covered, _ := scheduler.Plan([]model.Item{it}, leads, now.Add(-staleAlertAge), never)
+			for _, key := range covered {
+				if err := c.st.MarkNotified(key, now); err != nil {
+					return applied, err
+				}
+			}
+		}
 		if err := c.st.PutRemote(it); err != nil {
 			return applied, err
 		}
 		applied = append(applied, Applied{Before: before, After: it})
-		if before != nil || it.Status != model.StatusOpen || it.DueAt == nil {
-			continue
-		}
-		if !leadsLoaded {
-			s, err := c.settings()
-			if err != nil {
-				return applied, err
-			}
-			leads, leadsLoaded = s.LeadTimes, true
-		}
-		_, covered, _ := scheduler.Plan([]model.Item{it}, leads, now, never)
-		for _, key := range covered {
-			if err := c.st.MarkNotified(key, now); err != nil {
-				return applied, err
-			}
-		}
 	}
 	return applied, nil
 }
