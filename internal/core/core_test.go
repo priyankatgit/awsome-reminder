@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"errors"
 	"reflect"
 	"strings"
@@ -1018,8 +1019,15 @@ func TestSnoozeRepliesUntil(t *testing.T) {
 	e.c.OnChange(func() { changes++ })
 	e.now = e.now.Add(time.Minute)
 	until := time.Date(2026, 11, 26, 9, 0, 0, 0, ny)
-	if err := e.c.SnoozeRepliesUntil(until); err != nil {
+	ids, err := e.c.SnoozeRepliesUntil(until)
+	if err != nil {
 		t.Fatal(err)
+	}
+	want := []string{a.ID, b.ID}
+	slices.Sort(ids)
+	slices.Sort(want)
+	if !slices.Equal(ids, want) {
+		t.Fatalf("snoozed %v, want %v", ids, want)
 	}
 	if changes != 1 {
 		t.Fatalf("OnChange called %d times, want 1", changes)
@@ -1043,7 +1051,7 @@ func TestSnoozeRepliesUntil(t *testing.T) {
 		}
 	}
 	changes = 0
-	if err := e.c.SnoozeRepliesUntil(until); err != nil || changes != 0 {
-		t.Fatalf("err %v changes %d", err, changes)
+	if ids, err := e.c.SnoozeRepliesUntil(until); err != nil || changes != 0 || len(ids) != 0 {
+		t.Fatalf("err %v changes %d ids %v", err, changes, ids)
 	}
 }

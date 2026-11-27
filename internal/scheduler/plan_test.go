@@ -593,3 +593,36 @@ func TestSweepNotForReplyAfterEndOfDay(t *testing.T) {
 		t.Fatalf("reply saved at 16:00: %+v", sw)
 	}
 }
+
+// NextWorkMorning is the sweep's Tomorrow: pressed after midnight but before
+// the default time on a working day, it means that same morning.
+func TestNextWorkMorning(t *testing.T) {
+	loc := time.UTC
+	r := replyRules(loc, nil)
+	thu := func(h, m int) time.Time { return time.Date(2026, 12, 3, h, m, 0, 0, loc) }
+	sat := time.Date(2026, 12, 5, 1, 0, 0, 0, loc)
+	for _, c := range []struct {
+		name     string
+		now, want time.Time
+	}{
+		{"evening", wed(loc, 17, 30), thu(9, 0)},
+		{"after midnight", thu(0, 30), thu(9, 0)},
+		{"at the default time", thu(9, 0), time.Date(2026, 12, 4, 9, 0, 0, 0, loc)},
+		{"weekend night", sat, time.Date(2026, 12, 7, 9, 0, 0, 0, loc)},
+	} {
+		if got := r.NextWorkMorning(c.now); !got.Equal(c.want) {
+			t.Errorf("%s: NextWorkMorning(%v) = %v, want %v", c.name, c.now, got, c.want)
+		}
+	}
+	late := replyRules(loc, nil)
+	late.DefaultTime = "20:00" // later than the end of day
+	if got, want := late.NextWorkMorning(wed(loc, 17, 30)), thu(20, 0); !got.Equal(want) {
+		t.Errorf("default after end of day: %v, want %v", got, want)
+	}
+	if got, want := late.NextWorkMorning(thu(0, 30)), thu(20, 0); !got.Equal(want) {
+		t.Errorf("default after end of day, after midnight: %v, want %v", got, want)
+	}
+	if got := (Rules{Loc: loc, DefaultTime: "09:00", WorkDays: func(time.Weekday) bool { return false }}).NextWorkMorning(thu(1, 0)); !got.IsZero() {
+		t.Errorf("no working days: %v, want zero", got)
+	}
+}

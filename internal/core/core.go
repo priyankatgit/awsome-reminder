@@ -439,17 +439,20 @@ func openReply(it model.Item) bool {
 }
 
 // SnoozeRepliesUntil snoozes every open reply until t (the end-of-day
-// sweep's Tomorrow), whatever its kind, in one write: listeners are notified
-// once, and not at all if there is no open reply.
-func (c *Core) SnoozeRepliesUntil(t time.Time) error {
+// sweep's Tomorrow), whatever its kind, in one write, and returns the IDs it
+// snoozed. Listeners are notified once if any reply was saved (even when a
+// later save fails), and not at all if there is no open reply.
+func (c *Core) SnoozeRepliesUntil(t time.Time) ([]string, error) {
 	until := t.UTC()
-	return c.write(func() error {
+	var ids []string
+	err := func() error {
+		c.opMu.Lock()
+		defer c.opMu.Unlock()
 		items, err := c.st.ListOpen()
 		if err != nil {
 			return err
 		}
 		now := c.now().UTC()
-		n := 0
 		for _, it := range items {
 			if !openReply(it) {
 				continue
@@ -459,13 +462,14 @@ func (c *Core) SnoozeRepliesUntil(t time.Time) error {
 			if err := c.save(&it, now); err != nil {
 				return fmt.Errorf("item %s: %w", it.ID, err)
 			}
-			n++
-		}
-		if n == 0 {
-			return errUnchanged
+			ids = append(ids, it.ID)
 		}
 		return nil
-	})
+	}()
+	if len(ids) > 0 {
+		c.changed()
+	}
+	return ids, err
 }
 
 // Delete tombstones an item (status=deleted); the row is kept.
