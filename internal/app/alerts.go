@@ -34,20 +34,22 @@ type alertQueue struct {
 }
 
 // card enriches a scheduler alert with the item's tags and recurrence. An
-// item that can't be read still gets a card from the alert alone.
-func (s *Service) card(a scheduler.Alert) AlertCard {
-	c := AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
+// item that can't be read still gets a card from the alert alone. stale
+// reports an alert for an occurrence before the item's current DueAt: it was
+// fired before the item moved on or was marked done, and reached here late.
+func (s *Service) card(a scheduler.Alert) (c AlertCard, stale bool) {
+	c = AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
 	if s.d.Core == nil {
-		return c
+		return c, false
 	}
 	it, err := s.d.Core.Item(a.ItemID)
 	if err != nil {
 		log.Printf("alert %s: item: %v", a.Key, err)
-		return c
+		return c, false
 	}
 	c.Tags = append(c.Tags, it.Tags...)
 	c.Recurring = it.RRule != ""
-	return c
+	return c, it.DueAt != nil && a.DueAt.Before(*it.DueAt)
 }
 
 // showAlerts adds alerts the queue doesn't hold yet and shows the alert
@@ -58,7 +60,9 @@ func (s *Service) card(a scheduler.Alert) AlertCard {
 func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	cards := make([]AlertCard, 0, len(alerts))
 	for _, a := range alerts {
-		cards = append(cards, s.card(a))
+		if c, stale := s.card(a); !stale {
+			cards = append(cards, c)
+		}
 	}
 	q := &s.alerts
 	q.mu.Lock()

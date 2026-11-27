@@ -17,7 +17,7 @@ import (
 func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule string) {
 	t.Helper()
 	now := time.Now().UTC()
-	due := now.Add(time.Hour).Truncate(time.Minute) // a whole minute, so an edit round trip keeps it
+	due := alertDue
 	if err := h.st.Put(model.Item{
 		ID: id, Kind: model.KindReminder, Text: text, Tags: tags, DueAt: &due, TZ: "UTC",
 		RRule: rrule, Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now, UpdatedBy: "test",
@@ -26,9 +26,11 @@ func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule
 	}
 }
 
-// alertDue is the DueAt of every alert(): one occurrence per item, since a
-// card for a later occurrence replaces an item's earlier ones.
-var alertDue = time.Now().Add(10 * time.Minute).Truncate(time.Minute)
+// alertDue is the DueAt of every putReminder item and every alert(): cards
+// must match their item's occurrence, since one for an earlier occurrence is
+// stale and one for a later occurrence replaces the item's earlier ones. A
+// whole minute, so an edit round trip keeps it.
+var alertDue = time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
 
 func alert(id, key string) scheduler.Alert {
 	return scheduler.Alert{Key: key, ItemID: id, Text: "text " + id, DueAt: alertDue, Lead: 10 * time.Minute}
@@ -357,5 +359,18 @@ func TestDoneFromLaterOccurrenceCard(t *testing.T) {
 	}
 	if n := len(h.svc.PendingAlerts()); n != 0 {
 		t.Fatalf("%d cards left", n)
+	}
+}
+
+// An alert for an occurrence before the item's current DueAt is stale (a
+// delayed fire from before the item moved or was marked done) and is not
+// shown.
+func TestStaleOccurrenceAlertIgnored(t *testing.T) {
+	h := newHarness(t)
+	today := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+	putDaily(t, h, "A", today)
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today.Add(-24*time.Hour), 0)})
+	if n := len(h.svc.PendingAlerts()); n != 0 || h.win.alertsShown != 0 {
+		t.Fatalf("queue %v shown %d", keys(h.svc.PendingAlerts()), h.win.alertsShown)
 	}
 }
