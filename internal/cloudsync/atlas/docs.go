@@ -50,7 +50,8 @@ func itemSet(it model.Item) bson.D {
 		{Key: "done_at", Value: dtPtr(it.DoneAt)}, {Key: "snooze_until", Value: dtPtr(it.SnoozeUntil)},
 		{Key: "created_at", Value: dt(it.CreatedAt)}, {Key: "updated_at", Value: dt(it.UpdatedAt)},
 		{Key: "updated_by", Value: it.UpdatedBy}, {Key: "priority", Value: it.Priority},
-		{Key: "description", Value: it.Description},
+		{Key: "description", Value: it.Description}, {Key: "reply", Value: it.Reply}, {Key: "owed_to", Value: it.OwedTo},
+		{Key: "source", Value: it.Source}, {Key: "reply_outcome", Value: it.ReplyOutcome},
 	}
 }
 
@@ -170,6 +171,7 @@ func decodeItem(r bson.Raw) model.Item {
 		Status: model.Status(rStr(r, "status")), DoneAt: rTimePtr(r, "done_at"), SnoozeUntil: rTimePtr(r, "snooze_until"),
 		CreatedAt: rTimeZero(r, "created_at"), UpdatedAt: rTimeZero(r, "updated_at"), UpdatedBy: rStr(r, "updated_by"),
 		Priority: rStr(r, "priority"), Description: rStr(r, "description"),
+		Reply: rBool(r, "reply"), OwedTo: rStr(r, "owed_to"), Source: rStr(r, "source"), ReplyOutcome: rStr(r, "reply_outcome"),
 	}
 }
 

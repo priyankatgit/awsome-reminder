@@ -209,6 +209,7 @@ func (s *Syncer) PushItem(ctx context.Context, it model.Item) error {
 		"status": string(it.Status), "done_at": msPtr(it.DoneAt), "snooze_until": msPtr(it.SnoozeUntil),
 		"created_at": ms(it.CreatedAt), "updated_at": ms(it.UpdatedAt), "updated_by": it.UpdatedBy,
 		"priority": it.Priority, "description": it.Description,
+		"reply": it.Reply, "owed_to": it.OwedTo, "source": it.Source, "reply_outcome": it.ReplyOutcome,
 	})
 	return nil
 }
@@ -330,6 +331,11 @@ func leads(d doc, k string) []time.Duration {
 	return out
 }
 
+func boolean(d doc, k string) bool {
+	b, _ := d[k].(bool)
+	return b
+}
+
 func decodeItem(d doc) model.Item {
 	return model.Item{
 		ID: str(d, "_id"), Kind: model.Kind(str(d, "kind")), Text: str(d, "text"), Tags: strs(d, "tags"),
@@ -337,6 +343,7 @@ func decodeItem(d doc) model.Item {
 		Status: model.Status(str(d, "status")), DoneAt: tmPtr(d, "done_at"), SnoozeUntil: tmPtr(d, "snooze_until"),
 		CreatedAt: tm(d, "created_at"), UpdatedAt: tm(d, "updated_at"), UpdatedBy: str(d, "updated_by"),
 		Priority: str(d, "priority"), Description: str(d, "description"),
+		Reply: boolean(d, "reply"), OwedTo: str(d, "owed_to"), Source: str(d, "source"), ReplyOutcome: str(d, "reply_outcome"),
 	}
 }
 
