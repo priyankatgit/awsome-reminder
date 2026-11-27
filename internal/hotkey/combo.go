@@ -58,7 +58,7 @@ func canonKey(s string) string {
 }
 
 // ParseCombo parses a case-insensitive, '+'-separated combo. It requires at
-// least one modifier and exactly one key. It is OS-independent; whether a
+// least one of Ctrl, Alt or Cmd (Shift may be added) and exactly one key. It is OS-independent; whether a
 // modifier is usable on the current OS is checked at registration time.
 func ParseCombo(s string) (Combo, error) {
 	if strings.TrimSpace(s) == "" {
@@ -93,8 +93,10 @@ func ParseCombo(s string) (Combo, error) {
 			mods = append(mods, m)
 		}
 	}
-	if len(mods) == 0 {
-		return Combo{}, fmt.Errorf("hotkey needs at least one modifier (Ctrl, Alt, Shift)")
+	// Shift alone would take over ordinary typing (Shift+A is "A",
+	// Shift+Tab moves focus backwards), so a non-Shift modifier is required.
+	if !have["Ctrl"] && !have["Alt"] && !have["Cmd"] {
+		return Combo{}, fmt.Errorf("hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)")
 	}
 	return Combo{Mods: mods, Key: keys[0]}, nil
 }

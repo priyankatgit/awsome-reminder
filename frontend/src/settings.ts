@@ -105,7 +105,10 @@ export function comboFor(e: KeyboardEvent, mac: boolean): { combo?: string; hint
     else if (k === "Enter" || k === "Tab" || /^F([1-9]|1[0-2])$/.test(k)) key = k;
   }
   if (!key) return { hint: KEY_HINT };
-  if (mods.length === 0) return { hint: mac ? "Add Ctrl, Alt, Shift or Cmd" : "Add Ctrl, Alt or Shift" };
+  // Mirrors hotkey.ParseCombo: Shift alone would take over ordinary typing.
+  if (!e.ctrlKey && !e.altKey && !(mac && e.metaKey)) {
+    return { hint: mac ? "Add Ctrl, Alt or Cmd (Shift alone isn't enough)" : "Add Ctrl or Alt (Shift alone isn't enough)" };
+  }
   return { combo: [...mods, key].join("+") };
 }
 
@@ -443,7 +446,9 @@ export function mountSettings(root: HTMLElement): void {
       stopRecording();
       return;
     }
-    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+    // Tab and Shift+Tab end recording and move focus as usual, so keyboard
+    // users can leave the field in either direction.
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
       stopRecording(); // let focus move on
       return;
     }
