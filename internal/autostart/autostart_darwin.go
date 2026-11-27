@@ -63,6 +63,48 @@ func Set(enabled bool, exePath string) error {
 	return nil
 }
 
+// Target returns ProgramArguments[0] of the launch agent; "" if there is no
+// entry.
+func Target() (string, error) {
+	b, err := os.ReadFile(entryPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("autostart: read: %w", err)
+	}
+	d := xml.NewDecoder(bytes.NewReader(b))
+	d.Strict = false // the DOCTYPE is not fetched
+	var key string   // text of the last <key>
+	var inArgs bool  // inside the ProgramArguments <array>
+	var elem string  // element whose text is being read
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return "", nil // no ProgramArguments: treat as a foreign entry
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			elem = t.Name.Local
+			if elem == "array" && key == "ProgramArguments" {
+				inArgs = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "array" && inArgs {
+				return "", nil
+			}
+			elem = ""
+		case xml.CharData:
+			switch {
+			case elem == "key":
+				key = string(t)
+			case elem == "string" && inArgs:
+				return string(t), nil
+			}
+		}
+	}
+}
+
 func Enabled() (bool, error) {
 	_, err := os.Stat(entryPath())
 	if errors.Is(err, os.ErrNotExist) {

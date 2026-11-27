@@ -12,6 +12,8 @@ func TestParseCombo(t *testing.T) {
 		{"Meta+Tab", "Cmd+Tab"},
 		{"Ctrl+0", "Ctrl+0"},
 		{"CTRL+alt+z", "Ctrl+Alt+Z"},
+		{"Ctrl+Shift+Space", "Ctrl+Shift+Space"},
+		{"Shift+Alt+Tab", "Alt+Shift+Tab"},
 	}
 	for _, tc := range ok {
 		c, err := ParseCombo(tc.in)
@@ -24,7 +26,11 @@ func TestParseCombo(t *testing.T) {
 		}
 	}
 	bad := []struct{ in, msg string }{
-		{"space", "hotkey needs at least one modifier (Ctrl, Alt, Shift)"},
+		{"space", "hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)"},
+		{"Shift+A", "hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)"},
+		{"Shift+Space", "hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)"},
+		{"Shift+Tab", "hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)"},
+		{"Shift+Enter", "hotkey needs Ctrl, Alt or Cmd (Shift alone isn't enough)"},
 		{"", "hotkey is empty"},
 		{"Ctrl+Foo", `unknown key "Foo"`},
 		{"Ctrl+Shift", "hotkey needs a key (for example Space or K)"},

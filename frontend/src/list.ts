@@ -543,7 +543,7 @@ export function mountList(root: HTMLElement): void {
           label: "Undo",
           run: () => {
             selectIdAfterRefresh = id;
-            api.reopen(id).catch(fail);
+            api.undelete(id).catch(fail);
           },
         }),
       )

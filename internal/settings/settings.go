@@ -4,6 +4,8 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +110,17 @@ func parseClock(v string) (parser.Clock, error) {
 	return parser.Clock{Hour: hh, Minute: mm}, nil
 }
 
-// Validate checks times, weekday name and lead times.
+// exportExample is the sample path in the "full path" error.
+func exportExample() string {
+	if runtime.GOOS == "windows" {
+		return `C:\Users\you\todo.md`
+	}
+	return "/home/you/todo.md"
+}
+
+// Validate checks times, weekday name, lead times and that a non-empty
+// export path is absolute (a relative one would resolve against the working
+// directory, which is System32 when the app starts at login).
 func (s Settings) Validate() error {
 	if _, err := parseClock(s.DefaultTime); err != nil {
 		return fmt.Errorf("defaultTime: %w", err)
@@ -126,6 +138,9 @@ func (s Settings) Validate() error {
 		if d <= 0 || d > maxLead {
 			return fmt.Errorf("leadTimes: %v must be > 0 and <= 7 days", d)
 		}
+	}
+	if s.ExportPath != "" && !filepath.IsAbs(s.ExportPath) {
+		return fmt.Errorf("exportPath: export path must be a full path, e.g. %s", exportExample())
 	}
 	return nil
 }

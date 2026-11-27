@@ -2,7 +2,10 @@ package settings
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,5 +92,28 @@ func TestJSONShape(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"leadTimes":["bogus"]}`), &back); err == nil {
 		t.Fatal("expected error for bad duration")
+	}
+}
+
+// M7: a relative export path would resolve against the process's working
+// directory (System32 when started at login).
+func TestValidateExportPath(t *testing.T) {
+	s := Defaults(runtime.GOOS)
+	for _, p := range []string{"todo.md", `notes\todo.md`, "./todo.md"} {
+		s.ExportPath = p
+		err := s.Validate()
+		if err == nil {
+			t.Errorf("%q: expected error", p)
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "exportPath: export path must be a full path, e.g. ") {
+			t.Errorf("%q: error %q", p, err)
+		}
+	}
+	for _, p := range []string{"", filepath.Join(t.TempDir(), "todo.md")} {
+		s.ExportPath = p
+		if err := s.Validate(); err != nil {
+			t.Errorf("%q: %v", p, err)
+		}
 	}
 }

@@ -31,7 +31,10 @@ var (
 func main() {
 	logger := setupLogging()
 	if err := app.Run(app.Options{Assets: assets, TrayIconLight: trayIconLight, TrayIconDark: trayIconDark, TrayIconTemplate: trayIconTemplate, Logger: logger}); err != nil {
-		log.Fatal(err)
+		// A tray app has no window to fail in: tell the user why it isn't
+		// running (message box with the error and the data folder).
+		app.ReportFatal(err)
+		os.Exit(1)
 	}
 }
 

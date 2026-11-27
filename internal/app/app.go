@@ -78,6 +78,9 @@ func Run(opts Options) error {
 		win  *wailsWindows
 		tray *application.SystemTray
 		svc  *Service
+		// Second-instance requests can arrive before win is assigned below;
+		// they are held until ApplicationStarted.
+		launches launchQueue
 	)
 	app := application.New(application.Options{
 		Name:        appName,
@@ -91,24 +94,34 @@ func Run(opts Options) error {
 			// Tray-only app: keep running with no windows.
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
-		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true},
-		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
+		Windows: application.WindowsOptions{
+			DisableQuitOnLastWindowClosed: true,
+			// WebView2 memory (Task 12b, measured on the idle app with the
+			// capture window pre-created): --disable-gpu replaces the GPU
+			// process's hardware compositor with software compositing
+			// (64 -> 12 MB private), and --in-process-gpu folds what is left
+			// into the browser process (one process fewer, about 8 MB less).
+			// The windows are small and mostly static, rendering looked the
+			// same, and the Acrylic backdrop is drawn by DWM, not Chromium.
+			AdditionalBrowserArgs: []string{"--disable-gpu", "--in-process-gpu"},
+		},
+		Linux: application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "dev.awesome-reminder.app",
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
 				if slices.Contains(d.Args, captureFlag) {
 					log.Printf("second instance: %s", captureFlag)
-					go win.ShowCapture()
+					launches.Do(func() { win.ShowCapture() })
 					return
 				}
 				if slices.Contains(d.Args, settingsFlag) {
 					log.Printf("second instance: %s", settingsFlag)
-					go win.OpenSettings()
+					launches.Do(func() { win.OpenSettings() })
 					return
 				}
 				// --list, or a plain second launch (e.g. the Start menu entry).
 				log.Printf("second instance: open list")
-				go win.OpenList("")
+				launches.Do(func() { win.OpenList("") })
 			},
 		},
 	})
@@ -129,14 +142,29 @@ func Run(opts Options) error {
 		}
 		go svc.showAlerts(alerts)
 	}, time.Now)
+	// Recurring reminders not marked done move on to their latest occurrence
+	// before each plan (ruling R15); the scheduler wakes at the next one.
+	sched.SetBeforePlan(func(now time.Time) (time.Time, error) {
+		n, wake, err := c.AdvanceRecurring(now)
+		if n > 0 {
+			log.Printf("recurring: moved %d item(s) to their latest occurrence", n)
+		}
+		return wake, err
+	})
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {
 			return ""
 		}
+		// Settings.Validate rejects a relative path; one stored before that
+		// check would land in the working directory (System32 at login).
+		if s.ExportPath != "" && !filepath.IsAbs(s.ExportPath) {
+			log.Printf("export: ignoring relative path %q", s.ExportPath)
+			return ""
+		}
 		return s.ExportPath
 	}, c.View, time.Local, exportDebounce)
-	defer exp.Close()
+	defer exp.Close() // writes a pending export; runs before st.Close
 
 	win = newWindows(app)
 	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
@@ -190,6 +218,10 @@ func Run(opts Options) error {
 		tray.SetTooltip(tooltip(svc.Status()))
 		sweepAttachments(c)
 		sched.Start(ctx)
+		// Bring the export up to date with the database at startup (it may
+		// be missing, or older than changes made by an earlier run).
+		exp.Trigger()
+		launches.Ready()
 		switch args := os.Args[1:]; {
 		case slices.Contains(args, captureFlag):
 			go win.ShowCapture()

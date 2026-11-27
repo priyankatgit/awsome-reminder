@@ -119,13 +119,52 @@ func TestExporterDisabledPath(t *testing.T) {
 	}
 }
 
-func TestExporterCloseCancels(t *testing.T) {
+// I6: Quit right after a change must not lose it; Close writes a pending
+// export before returning and ignores later triggers.
+func TestExporterCloseFlushesPending(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "todo.md")
-	e := NewExporter(func() string { return p }, func() (core.View, error) { return core.View{}, nil }, time.UTC, 50*time.Millisecond)
+	var views atomic.Int32
+	e := NewExporter(func() string { return p }, func() (core.View, error) {
+		views.Add(1)
+		return core.View{}, nil
+	}, time.UTC, time.Hour)
 	e.Trigger()
 	e.Close()
-	time.Sleep(150 * time.Millisecond)
-	if _, err := os.Stat(p); err == nil {
-		t.Fatal("wrote after Close")
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("pending export not written on Close: %v", err)
+	}
+	e.Trigger()
+	e.Close()
+	if n := views.Load(); n != 1 {
+		t.Fatalf("view calls = %d, want 1", n)
+	}
+}
+
+func TestExporterCloseWithNothingPending(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "todo.md")
+	var views atomic.Int32
+	e := NewExporter(func() string { return p }, func() (core.View, error) {
+		views.Add(1)
+		return core.View{}, nil
+	}, time.UTC, 20*time.Millisecond)
+	e.Close()
+	if _, err := os.Stat(p); err == nil || views.Load() != 0 {
+		t.Fatal("Close wrote with nothing pending")
+	}
+
+	// An export that already ran is not repeated by Close.
+	p2 := filepath.Join(t.TempDir(), "todo.md")
+	e2 := NewExporter(func() string { return p2 }, func() (core.View, error) {
+		views.Add(1)
+		return core.View{}, nil
+	}, time.UTC, 10*time.Millisecond)
+	e2.Trigger()
+	deadline := time.Now().Add(2 * time.Second)
+	for views.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	e2.Close()
+	if n := views.Load(); n != 1 {
+		t.Fatalf("view calls = %d, want 1", n)
 	}
 }

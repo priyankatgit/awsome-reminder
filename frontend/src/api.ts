@@ -53,6 +53,8 @@ export const api = {
   reopen: (id: string): Promise<void> => Service.Reopen(id),
   snooze: (id: string, preset: SnoozePreset): Promise<void> => Service.Snooze(id, preset),
   deleteItem: (id: string): Promise<void> => Service.Delete(id),
+  /** Undoes deleteItem, restoring the item's status and snooze. */
+  undelete: (id: string): Promise<void> => Service.Undelete(id),
   editText: (id: string): Promise<string> => Service.EditText(id),
   update: (id: string, input: string): Promise<Item> => Service.Update(id, input),
   stopRepeating: (id: string): Promise<void> => Service.StopRepeating(id),
@@ -135,6 +137,11 @@ export function hasNativeBackdrop(): boolean {
 /** Whether we run on macOS (the Cmd modifier is offered only there). */
 export function isMac(): boolean {
   return System.IsMac();
+}
+
+/** Whether we run on Windows (drive-letter paths). */
+export function isWindows(): boolean {
+  return System.IsWindows();
 }
 
 /** Message text of a rejected binding call. */

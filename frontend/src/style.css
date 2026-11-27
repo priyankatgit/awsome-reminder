@@ -978,12 +978,50 @@ html[data-demo] .alert-app {
   margin: var(--space-4);
 }
 
+/* Every card is a light-red reminder: --remind-tint fill, a --remind edge
+   bar and a red time line. Missed/overdue cards go a step stronger. */
 .alert-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  background: var(--remind-tint);
   transition: opacity var(--dur-exit) var(--ease-exit), transform var(--dur-exit) var(--ease-exit);
+}
+
+/* The edge bar, and over it a glow layer that pulses once on entrance. */
+.alert-card::before,
+.alert-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--remind-bar);
+  background: var(--remind);
+  pointer-events: none;
+}
+
+.alert-card::after {
+  box-shadow: var(--remind-glow);
+  opacity: 0;
+}
+
+.alert-card[data-when="missed"],
+.alert-card[data-when="overdue"] {
+  background: var(--remind-tint-strong);
+}
+
+.alert-card .btn-ghost {
+  border-color: var(--remind-border);
+}
+
+.alert-card[data-when="missed"]::before,
+.alert-card[data-when="missed"]::after,
+.alert-card[data-when="overdue"]::before,
+.alert-card[data-when="overdue"]::after {
+  width: var(--remind-bar-strong);
 }
 
 .alert-card + .alert-card {
@@ -992,6 +1030,10 @@ html[data-demo] .alert-app {
 
 .alert-card.is-entering {
   animation: alert-enter var(--dur-alert-enter) var(--ease-enter);
+}
+
+.alert-card.is-entering::after {
+  animation: alert-glow var(--dur-remind-glow) ease-in-out;
 }
 
 .alert-card.is-leaving {
@@ -1011,6 +1053,12 @@ html[data-demo] .alert-app {
   }
 }
 
+@keyframes alert-glow {
+  50% {
+    opacity: 1;
+  }
+}
+
 .alert-head {
   display: flex;
   align-items: center;
@@ -1020,32 +1068,17 @@ html[data-demo] .alert-app {
 
 .alert-bell {
   display: inline-flex;
-  color: var(--time-text);
+  color: var(--remind);
 }
 
 .alert-when {
   flex: 1;
   min-width: 0;
-  color: var(--time-text);
+  color: var(--remind-text);
   font-family: var(--font-mono);
   font-size: var(--text-small);
+  font-weight: var(--weight-medium);
   line-height: var(--line-small);
-}
-
-.alert-card[data-when="now"] .alert-bell,
-.alert-card[data-when="now"] .alert-when {
-  color: var(--accent-text);
-}
-
-.alert-card[data-when="missed"] .alert-bell,
-.alert-card[data-when="missed"] .alert-when,
-.alert-card[data-when="overdue"] .alert-bell,
-.alert-card[data-when="overdue"] .alert-when {
-  color: var(--danger-text);
-}
-
-.alert-card[data-when="snoozed"] .alert-when {
-  color: var(--fg-muted);
 }
 
 .alert-close {

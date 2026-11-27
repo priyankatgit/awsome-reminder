@@ -126,9 +126,12 @@ type Exporter struct {
 	loc      *time.Location
 	debounce time.Duration
 
-	mu     sync.Mutex
-	timer  *time.Timer
-	closed bool
+	mu      sync.Mutex
+	timer   *time.Timer
+	pending bool // a Trigger has not been exported yet
+	closed  bool
+
+	runMu sync.Mutex // serializes exports, so Close can wait for one in flight
 }
 
 func NewExporter(path func() string, view func() (core.View, error), loc *time.Location, debounce time.Duration) *Exporter {
@@ -142,6 +145,7 @@ func (e *Exporter) Trigger() {
 	if e.closed {
 		return
 	}
+	e.pending = true
 	if e.timer == nil {
 		e.timer = time.AfterFunc(e.debounce, e.run)
 		return
@@ -149,17 +153,41 @@ func (e *Exporter) Trigger() {
 	e.timer.Reset(e.debounce)
 }
 
-// Close cancels a pending export and ignores further triggers.
+// Close stops the timer and, if an export is still pending, writes it before
+// returning (so a change made just before Quit is not lost); it also waits
+// for an export already running. Later triggers are ignored.
 func (e *Exporter) Close() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.closed = true
 	if e.timer != nil {
 		e.timer.Stop()
 	}
+	pending := e.pending
+	e.pending = false
+	e.mu.Unlock()
+
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+	if pending {
+		e.export()
+	}
 }
 
+// run is the timer callback: it exports unless Close took the pending
+// export over.
 func (e *Exporter) run() {
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+	e.mu.Lock()
+	pending := e.pending
+	e.pending = false
+	e.mu.Unlock()
+	if pending {
+		e.export()
+	}
+}
+
+func (e *Exporter) export() {
 	p := e.path()
 	if p == "" {
 		return

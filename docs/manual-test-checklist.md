@@ -13,8 +13,8 @@ Safety when testing: do not run `bin/awesome-reminder` from the repo folder if y
 | 3 | Tray menu | Tray icon is visible and legible on light and dark taskbars/menu bars; the menu shows Open List, Settings, Quit; the left click opens the list; Quit exits. On macOS the icon is a template image and follows the menu bar color. | needs human (the icon and menu were not inspected or clicked) | | | |
 | 4 | Autostart after reboot | Enable "Start at login", reboot, log in: the app is running in the tray with no window. Disable the setting: the entry is removed (Windows: `HKCU\...\Run\AwesomeReminder`; macOS: `~/Library/LaunchAgents`; Linux: `~/.config/autostart`). | needs human (reboot) | | | |
 | 5 | Catch-up after sleep | Create a reminder due in 3 minutes with the default lead times (1h, 10m, at due). Sleep the machine through the due time, wake it. Exactly one "missed" card per item appears, not one per lead time. | needs human (sleep) | | | |
-| 6 | Idle RAM < 150 MB after 10 min idle, all windows closed | Task Manager (Details, add the app and its WebView2 children) / Activity Monitor / `ps -o rss`. Sum the app and its WebView2/WebKit helper processes. | **fail: about 200 MB private, 390 MB working set summed over the tree** (see measurements; idle time was 3 min, not 10) | | | |
-| 7 | ~0% idle CPU | Same tools, 60 s window with nothing open. | about 1% of one core (0.05% of 16 cores), see measurements | | | |
+| 6 | Idle RAM < 150 MB after 10 min idle, all windows closed | Task Manager (Details, add the app and its WebView2 children) / Activity Monitor / `ps -o rss`. Sum the app and its WebView2/WebKit helper processes. | **pass: 137 MB private (308 MB working set) summed over the tree after 10 min idle; 144 MB private after opening and closing every window and two alerts** (see measurements) | | | |
+| 7 | ~0% idle CPU | Same tools, 60 s window with nothing open. | pass: 0.08% of one core for the whole tree, 0% in the Go process (no CPU-profile samples in 120 s) | | | |
 | 8 | Second-instance flags | Start the app, then run `awesome-reminder --capture`, `--list`, `--settings`: each opens the matching window in the running copy and the second process exits. | pass (log: `second instance: --capture`/`open list`/`--settings`; windows `Awesome Reminder` and `Awesome Reminder Settings` became visible; second process exit code 0) | | | |
 | 9 | Windows hide, app keeps running | Close the list and settings windows. The app and tray stay alive. | pass (closed via WM_CLOSE; log `settings: closed`, `list: closed`; process alive, 0 visible windows) | | | |
 | 10 | `todo.md` export | Set an export path in Settings (or the database), change an item (toggle done). The file appears within a second or two with sections per tag and a Done section. | pass (seeded the export path, toggled an item in the list with the keyboard; the file was written with the expected content) | | | |
@@ -24,27 +24,34 @@ Safety when testing: do not run `bin/awesome-reminder` from the repo folder if y
 
 ## Windows 11 measurements
 
-Machine: Windows 11 Pro build 26300, 16 logical cores, WebView2 runtime 158.0.4370.45. Build: `wails3 build` (production, 14.8 MB exe), run from a copy under `%TEMP%` with `APPDATA` pointed at a scratch folder (empty database, then seeded with 2 items for the fresh-start run).
+Machine: Windows 11 Pro build 26300, 16 logical cores, WebView2 runtime 158.0.4370.45. Build: `wails3 build` (production), run from a copy under `%TEMP%` with `APPDATA` pointed at a scratch folder; the database is seeded with one to-do and two reminders that fire after the idle measurement (no lead alerts).
 
-Method: PowerShell. Find the app process, walk Win32_Process by `ParentProcessId` (CIM) to collect all descendants (the msedgewebview2 processes of this app only; other apps' WebView2 processes on the machine are excluded), then read `WorkingSet64`, `PrivateMemorySize64` and `TotalProcessorTime` for each. CPU is the change in total processor seconds over the window divided by the wall time, as a percent of one core.
+Method: PowerShell. Find the app process, walk Win32_Process by `ParentProcessId` (CIM) to collect all descendants (the msedgewebview2 processes of this app only; other apps' WebView2 processes on the machine are excluded), then read `WorkingSet64`, `PrivateMemorySize64` and `TotalProcessorTime` for each. CPU is the change in total processor seconds over a 60 s window divided by the wall time, as a percent of one core. "After" = press the hotkey, `--capture`, `--list`, `--settings`, close list and settings (WM_CLOSE), let two alerts fire 30 s apart and dismiss each (UI Automation), 60 s settle, 60 s window.
 
-Fresh start, no window ever opened, 3 minutes idle, then a 60 s CPU window:
+Current build (Task 12b), fresh start, no window opened, 10 minutes idle:
 
 | Process | Working set | Private | CPU (% of one core) |
 |---|---|---|---|
-| awesome-reminder (Go app) | 34.5 MB | 54.1 MB | 0.85 |
-| msedgewebview2 browser (main) | 129.8 MB | 35.3 MB | 0.08 |
-| msedgewebview2 gpu-process | 80.8 MB | 61.7 MB | 0 |
-| msedgewebview2 renderer | 67.5 MB | 26.1 MB | 0 |
-| msedgewebview2 utility x2 | 40.4 + 21.0 MB | 11.8 + 7.7 MB | 0.08 |
-| msedgewebview2 crashpad-handler | 13.0 MB | 3.0 MB | 0 |
-| **Total (7 processes)** | **387 MB** | **199.7 MB** | **1.01** |
+| awesome-reminder (Go app) | 35.0 MB | 52.4 MB | 0 |
+| msedgewebview2 browser (main, GPU thread in-process) | 130.0 MB | 36.5 MB | 0.05 |
+| msedgewebview2 renderer (capture window) | 67.6 MB | 25.0 MB | 0 |
+| msedgewebview2 utility x2 (network, storage) | 41.4 + 21.0 MB | 12.2 + 7.8 MB | 0.03 |
+| msedgewebview2 crashpad-handler | 13.2 MB | 3.1 MB | 0 |
+| **Total (6 processes)** | **308 MB** | **137.0 MB** | **0.08** |
 
-After opening capture, list and settings once, closing them all (windows are hidden, not destroyed), and about 1 to 3 minutes of idle: app alone 38.0 MB working set / 56.1 MB private; whole tree 391 MB working set / 210 MB private; 1.8 to 2.0% of one core over 30 s.
+After the window round and two alerts: 143.6 MB private / 323 MB working set (6 processes; the browser process grows by about 3 MB, the Go process by about 3 MB). The alert window is destroyed when its last card goes, so no renderer stays behind for it.
 
-Reading the numbers: the Go process alone is well under the 150 MB budget. With the WebView2 helper processes included, private memory is about 200 MB and the summed working set about 390 MB (the working-set sum double counts pages shared between the browser processes, so private is the fairer total). Either way row 6 fails against the 150 MB target on this machine. Row 7 is 0.05% of total CPU on 16 cores but not literally zero: the Go process itself uses about 0.85% of a core while idle, which is worth a look (timers/polling) before the Phase 1 sign-off. The idle time was 3 minutes, shorter than the 10 minutes in the row; memory was flat between samples (391.3 vs 392.6 MB working set 30 s apart), but a 10 minute run has not been done.
+How it got there (3 min idle unless noted; private / working set of the whole tree):
 
-Possible follow-ups, not done here: create the capture/list/settings windows lazily and destroy them (not just hide them) so the WebView2 renderer and GPU processes exit when nothing is open; check whether the hidden capture window can be created on first use.
+| Step | Fresh idle | After windows + alert | Go CPU |
+|---|---|---|---|
+| Task 12 build | 200.4 / 376 MB | 231.5 / 464 MB | 1.5% of a core |
+| Native Windows hotkey loop (no 10 ms polling) | 200.5 / 382 MB | 235.1 / 475 MB | 0 |
+| Alert window destroyed when empty | 198.3 / 380 MB | 210.2 / 411 MB | 0 |
+| WebView2 `--disable-gpu --in-process-gpu` | 139.3 / 311 MB | 151.3 / 341 MB | 0 |
+| Same, 10 min idle | 137.0 / 308 MB | 143.6 / 323 MB | 0 |
+
+Reading the numbers: the working-set sum double counts pages shared between the WebView2 processes, so private is the fairer total. The Go runtime itself holds only about 12 MB (`runtime.MemStats.Sys`, heap in use about 3 MB); the rest of the app process's 52 MB is native WebView2 host code and data loaded into it. The remaining tree is the minimum for one live WebView2 (the pre-created capture window, which keeps hotkey latency low): browser, renderer, network and storage utilities, crashpad.
 
 ## Voice dictation (Phase 1.5)
 
