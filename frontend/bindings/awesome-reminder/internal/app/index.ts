@@ -10,5 +10,6 @@ export {
 
 export type {
     AlertCard,
-    Status
+    Status,
+    SyncInfo
 } from "./models.js";

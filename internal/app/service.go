@@ -3,12 +3,14 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"awesome-reminder/internal/cloudsync"
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/settings"
@@ -57,6 +59,9 @@ type Deps struct {
 	Emit func(name string, data any)
 	// OpenURL opens a link in the system browser (OpenURL binding).
 	OpenURL func(url string) error
+	// Sync is the sync controller behind the Sync* bindings; nil reports
+	// sync as off.
+	Sync *syncController
 }
 
 // Status is app health shown in the tray tooltip and the settings window.
@@ -111,6 +116,14 @@ func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model
 	if err != nil {
 		return after, err
 	}
+	s.dropStaleCards(before, after)
+	return after, nil
+}
+
+// dropStaleCards removes the alert cards that an edit of an item from before
+// to after made stale (the rules of dropIfMoved).
+func (s *Service) dropStaleCards(before, after model.Item) {
+	id := after.ID
 	switch {
 	case !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status:
 		s.dropItemAlerts(id)
@@ -118,7 +131,6 @@ func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model
 		due := *after.DueAt
 		s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id && c.DueAt.After(due) }, true)
 	}
-	return after, nil
 }
 
 // sameTime reports whether a and b are both nil or the same instant.
@@ -316,4 +328,50 @@ func (s *Service) OpenURL(url string) error {
 func allowedLink(url string) bool {
 	l := strings.ToLower(url)
 	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "mailto:")
+}
+
+// errSyncUnavailable is returned by SyncConnect when the app runs without a
+// sync controller.
+var errSyncUnavailable = errors.New("Sync isn't available.")
+
+// SyncConnect checks and saves an Atlas connection string and starts sync. It
+// returns without waiting for the first sync; progress arrives as
+// EventSyncStatus. The error text is user-facing and never holds the string.
+func (s *Service) SyncConnect(uri string) (cloudsync.Status, error) {
+	if s.d.Sync == nil {
+		return offStatus(""), errSyncUnavailable
+	}
+	return s.d.Sync.Connect(context.Background(), uri)
+}
+
+// SyncDisconnect stops sync and forgets the connection string; local data
+// stays.
+func (s *Service) SyncDisconnect() error {
+	if s.d.Sync == nil {
+		return nil
+	}
+	return s.d.Sync.Disconnect()
+}
+
+// SyncStatus returns the sync status (state off when not connected).
+func (s *Service) SyncStatus() cloudsync.Status {
+	if s.d.Sync == nil {
+		return offStatus("")
+	}
+	return s.d.Sync.Status()
+}
+
+// SyncNow syncs at once ("Sync now").
+func (s *Service) SyncNow() {
+	if s.d.Sync != nil {
+		s.d.Sync.SyncNow()
+	}
+}
+
+// SyncInfo describes the connection for Settings.
+func (s *Service) SyncInfo() SyncInfo {
+	if s.d.Sync == nil {
+		return SyncInfo{AttachmentBytes: -1}
+	}
+	return s.d.Sync.Info(context.Background())
 }

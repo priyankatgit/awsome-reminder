@@ -6,9 +6,10 @@ import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, Status } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
 
-export type { Attachment, Detail, Preview, Item, Status, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, Preview, Item, Status, SyncInfo, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -25,6 +26,16 @@ function pcmBase64(pcm: Int16Array): string {
 
 /** One card of the alert window (internal/app/alerts.go); tags never null. */
 export type AlertCard = Omit<GenAlertCard, "tags"> & { tags: string[] };
+
+/** Machine sync state (internal/cloudsync State). */
+export type SyncState = "off" | "syncing" | "synced" | "offline" | "error";
+
+/** Sync status (internal/cloudsync Status); warnings never null. */
+export type SyncStatus = Omit<GenSyncStatus, "state" | "warnings"> & { state: SyncState; warnings: string[] };
+
+function syncStatus(s: GenSyncStatus): SyncStatus {
+  return { ...s, state: s.state as string as SyncState, warnings: s.warnings ?? [] };
+}
 
 /** Base64 of a blob's bytes (a Go []byte argument travels as base64). */
 async function blobBase64(b: Blob): Promise<string> {
@@ -50,6 +61,9 @@ export interface Settings {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  /** Stamp of the last shared-settings change (unix ms, device id). Set by Go; passed back unchanged. */
+  sharedUpdatedAt?: number;
+  sharedUpdatedBy?: string;
 }
 
 export const api = {
@@ -115,6 +129,18 @@ export const api = {
   openURL: (url: string): Promise<void> => Service.OpenURL(url),
   widenList: (minWidth: number): Promise<void> => Service.WidenList(minWidth),
   restoreListWidth: (): Promise<void> => Service.RestoreListWidth(),
+  /** Sync through the user's Atlas cluster (internal/app/syncctl.go). */
+  sync: {
+    /** Checks, saves and starts syncing; rejects with user-facing text. Returns before the first sync. */
+    connect: async (uri: string): Promise<SyncStatus> => syncStatus(await Service.SyncConnect(uri)),
+    /** Stops syncing and forgets the connection string; local data stays. */
+    disconnect: (): Promise<void> => Service.SyncDisconnect(),
+    status: async (): Promise<SyncStatus> => syncStatus(await Service.SyncStatus()),
+    /** "Sync now": runs at once and resets the backoff. */
+    now: (): Promise<void> => Service.SyncNow(),
+    /** attachmentBytes is -1 when unknown (offline or not connected). */
+    info: (): Promise<SyncInfo> => Service.SyncInfo(),
+  },
 };
 
 /** Event names emitted by Go (internal/app/events.go). */
@@ -124,6 +150,7 @@ export const events = {
   listFocus: "list:focus",
   captureOpen: "capture:open",
   voiceStatus: "voice:status",
+  syncStatus: "sync:status",
 } as const;
 
 const local = new Map<string, Set<(data: unknown) => void>>();
@@ -138,6 +165,11 @@ export function on<T = unknown>(name: string, fn: (data: T) => void): () => void
     local.get(name)?.delete(cb);
     off();
   };
+}
+
+/** Subscribes to sync status changes; returns the unsubscribe function. */
+export function onSyncStatus(cb: (s: SyncStatus) => void): () => void {
+  return on<GenSyncStatus>(events.syncStatus, (s) => cb(syncStatus(s)));
 }
 
 /** Delivers an event to this page's own listeners only (dev preview data). */

@@ -66,6 +66,7 @@ function normalize(v: View | null | undefined): View {
     upcoming: v?.upcoming ?? [],
     tags: (v?.tags ?? []).map((g) => ({ tag: g.tag, items: g.items ?? [] })),
     done: v?.done ?? [],
+    pending: v?.pending ?? [],
   };
 }
 

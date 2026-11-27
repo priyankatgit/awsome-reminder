@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"awesome-reminder/internal/core"
+	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
 )
 
@@ -113,6 +115,24 @@ func (s *Service) emitAlertsLocked() {
 // deleted, from the alert window or anywhere else).
 func (s *Service) dropItemAlerts(id string) {
 	s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id }, true)
+}
+
+// remoteApplied drops the alert cards that changes pulled from another
+// machine made stale: the item is no longer open (done or deleted there), its
+// snooze changed, or its occurrence moved (dropStaleCards). An edit that
+// leaves the occurrence alone, e.g. of the text, keeps them.
+func (s *Service) remoteApplied(applied []core.Applied) {
+	for _, a := range applied {
+		switch {
+		case a.After.Status != model.StatusOpen:
+			s.dropItemAlerts(a.After.ID)
+		case a.Before == nil: // new here: it has no cards
+		case !sameTime(a.Before.SnoozeUntil, a.After.SnoozeUntil):
+			s.dropItemAlerts(a.After.ID)
+		default:
+			s.dropStaleCards(*a.Before, a.After)
+		}
+	}
 }
 
 // advanceRecurring is the scheduler's before-plan step: it moves recurring

@@ -178,9 +178,27 @@ func (c *Core) write(fn func() error) error {
 	return nil
 }
 
-// save stamps the update metadata and stores the item. Callers hold opMu.
+// nextStamp is the update stamp for a record last stamped at prev (zero for a
+// new record): now at millisecond precision, but always strictly after prev.
+// Two saves in the same millisecond, or an edit of a version stamped by a
+// device with a faster clock, then still beat the version they replace under
+// last-writer-wins, so the newer one is never skipped as "equal" by a push.
+func nextStamp(now, prev time.Time) time.Time {
+	t := time.UnixMilli(now.UnixMilli()).UTC()
+	if prev.IsZero() {
+		return t
+	}
+	if p := time.UnixMilli(prev.UnixMilli()).UTC(); !t.After(p) {
+		t = p.Add(time.Millisecond)
+	}
+	return t
+}
+
+// save stamps the update metadata and stores the item. it.UpdatedAt still
+// holds the stamp of the version being replaced (zero for a new item).
+// Callers hold opMu.
 func (c *Core) save(it *model.Item, now time.Time) error {
-	it.UpdatedAt = now.UTC()
+	it.UpdatedAt = nextStamp(now, it.UpdatedAt)
 	it.UpdatedBy = c.st.DeviceID()
 	return c.st.Put(*it)
 }
@@ -423,7 +441,16 @@ func (c *Core) View() (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	return buildView(open, done, c.now()), nil
+	pending, err := c.st.PendingItemIDs()
+	if err != nil {
+		return View{}, err
+	}
+	v := buildView(open, done, c.now())
+	v.Pending = pending
+	if v.Pending == nil {
+		v.Pending = []string{}
+	}
+	return v, nil
 }
 
 // Item returns the stored item with the given ID.
@@ -439,5 +466,17 @@ func (c *Core) SaveSettings(s settings.Settings) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	return c.write(func() error { return c.st.SaveSettings(s) })
+	return c.write(func() error {
+		// The stamp is the store's, not the caller's.
+		old, err := c.st.LoadSettings(runtime.GOOS)
+		if err != nil {
+			return err
+		}
+		s.SharedUpdatedAt, s.SharedUpdatedBy = old.SharedUpdatedAt, old.SharedUpdatedBy
+		if s.Shared().Equal(old.Shared()) {
+			return c.st.SaveSettings(s)
+		}
+		s.SharedUpdatedAt, s.SharedUpdatedBy = nextStamp(c.now(), old.SharedUpdatedAt), c.st.DeviceID()
+		return c.st.SaveSettingsShared(s)
+	})
 }

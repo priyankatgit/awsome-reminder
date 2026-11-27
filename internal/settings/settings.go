@@ -33,6 +33,44 @@ type Settings struct {
 	// Windows taskbar button and the macOS Dock (true; also for settings
 	// saved before the field existed).
 	ShowPendingCount bool `json:"showPendingCount"`
+	// SharedUpdatedAt and SharedUpdatedBy stamp the last change to the shared
+	// fields (see Shared), for last-writer-wins sync. JSON: unix ms and the
+	// device id; missing means zero and "".
+	SharedUpdatedAt time.Time `json:"sharedUpdatedAt"`
+	SharedUpdatedBy string    `json:"sharedUpdatedBy"`
+}
+
+// Shared is the subset of Settings that syncs between devices: the reminder
+// defaults. The hotkey, export path, autostart and pending-count flag stay
+// per machine.
+type Shared struct {
+	LeadTimes                              []time.Duration
+	DefaultTime, NextWeekDay, NextWeekTime string
+}
+
+// Shared returns the synced fields.
+func (s Settings) Shared() Shared {
+	return Shared{append([]time.Duration(nil), s.LeadTimes...), s.DefaultTime, s.NextWeekDay, s.NextWeekTime}
+}
+
+// WithShared returns s with only the shared fields replaced by p.
+func (s Settings) WithShared(p Shared) Settings {
+	s.LeadTimes = append([]time.Duration(nil), p.LeadTimes...)
+	s.DefaultTime, s.NextWeekDay, s.NextWeekTime = p.DefaultTime, p.NextWeekDay, p.NextWeekTime
+	return s
+}
+
+// Equal reports whether p and q hold the same values.
+func (p Shared) Equal(q Shared) bool {
+	if len(p.LeadTimes) != len(q.LeadTimes) {
+		return false
+	}
+	for i := range p.LeadTimes {
+		if p.LeadTimes[i] != q.LeadTimes[i] {
+			return false
+		}
+	}
+	return p.DefaultTime == q.DefaultTime && p.NextWeekDay == q.NextWeekDay && p.NextWeekTime == q.NextWeekTime
 }
 
 // wire mirrors Settings with lead times as duration strings.
@@ -47,11 +85,18 @@ type wire struct {
 	// A pointer so a missing field (settings saved before Phase 1.6) can
 	// default to true.
 	ShowPendingCount *bool `json:"showPendingCount"`
+	// Unix ms; a pointer so a missing field decodes to the zero time.
+	SharedUpdatedAt *int64 `json:"sharedUpdatedAt"`
+	SharedUpdatedBy string `json:"sharedUpdatedBy"`
 }
 
 // MarshalJSON encodes LeadTimes as duration strings such as "1h0m0s".
 func (s Settings) MarshalJSON() ([]byte, error) {
-	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount}
+	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount, nil, s.SharedUpdatedBy}
+	if !s.SharedUpdatedAt.IsZero() {
+		ms := s.SharedUpdatedAt.UnixMilli()
+		w.SharedUpdatedAt = &ms
+	}
 	for i, d := range s.LeadTimes {
 		w.LeadTimes[i] = d.String()
 	}
@@ -74,7 +119,11 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		leads[i] = d
 	}
 	show := w.ShowPendingCount == nil || *w.ShowPendingCount
-	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show}
+	var at time.Time
+	if w.SharedUpdatedAt != nil {
+		at = time.UnixMilli(*w.SharedUpdatedAt)
+	}
+	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show, at, w.SharedUpdatedBy}
 	return nil
 }
 

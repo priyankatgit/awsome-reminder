@@ -47,6 +47,11 @@ var migrations = []string{
 		unreferenced_since INTEGER
 	);
 	CREATE INDEX attachments_item ON attachments(item_id);`,
+	// v3: sync outbox, seeded with every existing record
+	`CREATE TABLE outbox (kind TEXT NOT NULL, id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(kind,id));
+	INSERT INTO outbox(kind,id,seq) SELECT 'item', id, 1 FROM items;
+	INSERT INTO outbox(kind,id,seq) SELECT 'attachment', id, 1 FROM attachments;
+	INSERT INTO outbox(kind,id,seq) SELECT 'settings', 'settings', 1 FROM settings WHERE id=1;`,
 }
 
 func migrate(db *sql.DB) error {
