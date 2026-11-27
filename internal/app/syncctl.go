@@ -54,6 +54,8 @@ type syncDeps struct {
 	OnApplied func([]core.Applied)
 	// Engine timing; zero takes the cloudsync defaults (tests shorten them).
 	Poll, Debounce, ErrorRetry time.Duration
+	// Logf writes a log line (default log.Printf); lines are redacted.
+	Logf func(format string, args ...any)
 }
 
 // atlasOpen is the production syncDeps.Open.
@@ -98,6 +100,10 @@ type syncController struct {
 	host       string
 	openCancel context.CancelFunc // the startup opener, nil when none runs
 	openDone   chan struct{}
+
+	logMu     sync.Mutex // guards logged
+	logged    cloudsync.Status
+	hasLogged bool
 }
 
 func offStatus(host string) cloudsync.Status {
@@ -105,12 +111,40 @@ func offStatus(host string) cloudsync.Status {
 }
 
 func newSyncController(d syncDeps) *syncController {
+	if d.Logf == nil {
+		d.Logf = log.Printf
+	}
 	root, cancel := context.WithCancel(context.Background())
 	return &syncController{d: d, root: root, rootCancel: cancel, retry: make(chan struct{}, 1), idle: offStatus("")}
 }
 
 func (c *syncController) opts() cloudsync.Options {
-	return cloudsync.Options{Poll: c.d.Poll, Debounce: c.d.Debounce, ErrorRetry: c.d.ErrorRetry}
+	return cloudsync.Options{Poll: c.d.Poll, Debounce: c.d.Debounce, ErrorRetry: c.d.ErrorRetry, Logf: c.d.Logf}
+}
+
+// logf logs a line with any connection string's credentials redacted.
+func (c *syncController) logf(format string, args ...any) {
+	c.d.Logf("%s", cloudsync.Redact(fmt.Sprintf(format, args...)))
+}
+
+// logStatus logs st when its settled state or error differs from the last
+// one logged. Syncing is transient and not logged, so quiet polls and pushes
+// write nothing here.
+func (c *syncController) logStatus(st cloudsync.Status) {
+	if st.State == cloudsync.StateSyncing {
+		return
+	}
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.hasLogged && c.logged.State == st.State && c.logged.Error == st.Error {
+		return
+	}
+	c.logged, c.hasLogged = st, true
+	line := fmt.Sprintf("sync: status %s, %d pending", st.State, st.Pending)
+	if st.Error != "" {
+		line += ": " + st.Error
+	}
+	c.logf("%s", line)
 }
 
 // Start opens the saved connection string, if any, in a goroutine and
@@ -137,7 +171,7 @@ func (c *syncController) opener(ctx context.Context, gen int, done chan struct{}
 	uri, err := c.d.Secret.Get()
 	if err != nil {
 		if !errors.Is(err, secret.ErrNotFound) {
-			log.Printf("sync: read the connection string: %v", err)
+			c.logf("sync: read the connection string: %v", err)
 		}
 		return
 	}
@@ -145,26 +179,29 @@ func (c *syncController) opener(ctx context.Context, gen int, done chan struct{}
 	if !c.setIdle(gen, offStatus(host), false) {
 		return
 	}
-	failures := 0
+	failures, lastText := 0, ""
 	for {
 		s, err := c.d.Open(ctx, uri)
 		if err == nil {
 			if ctx.Err() != nil {
-				closeSyncer(s)
+				c.closeSyncer(s)
 				return
 			}
 			if err = c.prepareTarget(host); err == nil {
 				c.install(gen, s, host)
 				return
 			}
-			closeSyncer(s)
+			c.closeSyncer(s)
 		}
 		if ctx.Err() != nil {
 			return
 		}
 		failures++
 		state, text := c.d.Classify(err, uri)
-		log.Printf("sync: connect to %s: %s", host, text)
+		if text != lastText { // a retry that fails the same way logs nothing
+			lastText = text
+			c.logf("sync: connect to %s: %s", host, text)
+		}
 		st := cloudsync.Status{State: state, Error: text, Host: host, Pending: c.pending(), Warnings: []string{}}
 		if !c.setIdle(gen, st, true) {
 			return
@@ -201,6 +238,7 @@ func (c *syncController) setIdle(gen int, st cloudsync.Status, emit bool) bool {
 }
 
 func (c *syncController) emit(st cloudsync.Status) {
+	c.logStatus(st)
 	if c.d.OnStatus != nil {
 		c.d.OnStatus(st)
 	}
@@ -211,7 +249,7 @@ func (c *syncController) install(gen int, s cloudsync.Syncer, host string) {
 	c.mu.Lock()
 	if gen != c.gen || c.stopped {
 		c.mu.Unlock()
-		closeSyncer(s)
+		c.closeSyncer(s)
 		return
 	}
 	var e *cloudsync.Engine
@@ -231,7 +269,8 @@ func (c *syncController) install(gen int, s cloudsync.Syncer, host string) {
 	e = cloudsync.NewEngine(c.d.Core, s, o)
 	c.eng, c.syncer, c.connected, c.host = e, s, true, host
 	c.idle = offStatus(host)
-	e.Start(c.root) // returns at once
+	c.logf("sync: connected to %s", host) // before the engine's first status
+	e.Start(c.root)                       // returns at once
 	c.mu.Unlock()
 }
 
@@ -276,16 +315,16 @@ func (c *syncController) prepareTarget(host string) error {
 func (c *syncController) pending() int {
 	n, err := c.d.Core.OutboxCount()
 	if err != nil {
-		log.Printf("sync: outbox count: %v", err)
+		c.logf("sync: outbox count: %v", err)
 	}
 	return n
 }
 
-func closeSyncer(s cloudsync.Syncer) {
+func (c *syncController) closeSyncer(s cloudsync.Syncer) {
 	ctx, cancel := context.WithTimeout(context.Background(), syncCloseTimeout)
 	defer cancel()
 	if err := s.Close(ctx); err != nil {
-		log.Printf("sync: close: %v", err)
+		c.logf("sync: close: %v", err)
 	}
 }
 
@@ -309,10 +348,12 @@ func (c *syncController) Connect(ctx context.Context, uri string) (cloudsync.Sta
 	s, err := c.d.Open(ctx, uri)
 	if err != nil {
 		_, text := c.d.Classify(err, uri)
+		c.logf("sync: connect failed: %s", text)
 		return c.Status(), errors.New(text)
 	}
 	if err := c.d.Secret.Set(uri); err != nil {
-		closeSyncer(s)
+		c.closeSyncer(s)
+		c.logf("sync: save the connection string: %v", err)
 		return c.Status(), fmt.Errorf("Couldn't save the connection string: %v", err)
 	}
 	host := c.d.Host(uri)
@@ -321,8 +362,9 @@ func (c *syncController) Connect(ctx context.Context, uri string) (cloudsync.Sta
 	gen := c.gen
 	c.mu.Unlock()
 	if err := c.prepareTarget(host); err != nil {
-		closeSyncer(s)
+		c.closeSyncer(s)
 		st := cloudsync.Status{State: cloudsync.StateError, Error: "Couldn't prepare this computer's data for sync: " + err.Error(), Host: host, Pending: c.pending(), Warnings: []string{}}
+		c.logf("sync: prepare the sync target: %v", err)
 		c.setIdle(gen, st, true)
 		return st, errors.New(st.Error)
 	}
@@ -336,10 +378,16 @@ func (c *syncController) Connect(ctx context.Context, uri string) (cloudsync.Sta
 func (c *syncController) Disconnect() error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
+	c.mu.Lock()
+	host := c.host
+	c.mu.Unlock()
 	c.halt()
+	if host != "" {
+		c.logf("sync: disconnected from %s", host)
+	}
 	err := c.d.Secret.Delete()
 	if err != nil {
-		log.Printf("sync: forget the connection string: %v", err)
+		c.logf("sync: forget the connection string: %v", err)
 	}
 	c.idleMu.Lock()
 	defer c.idleMu.Unlock()
@@ -447,7 +495,7 @@ func (c *syncController) Info(ctx context.Context) SyncInfo {
 	defer context.AfterFunc(c.root, cancel)()
 	if n, err := s.AttachmentBytes(ctx); err != nil {
 		_, text := s.Classify(err)
-		log.Printf("sync: attachment size: %s", text)
+		c.logf("sync: attachment size: %s", text)
 	} else {
 		info.AttachmentBytes = n
 	}

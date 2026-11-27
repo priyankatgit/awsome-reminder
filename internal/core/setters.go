@@ -56,7 +56,8 @@ func (c *Core) SetOwedTo(id, person string) (model.Item, error) {
 }
 
 // DropReply closes a reply without answering it: done, with the outcome
-// "dropped". Any recurrence stops mattering since the item is closed. Only
+// "dropped". The rule is kept, so Reopen brings a recurring reply back
+// recurring. Only
 // an open reply can be dropped: one another device deleted or closed is left
 // as it is (ErrReplyClosed), so it is not brought back as done.
 func (c *Core) DropReply(id string) (model.Item, error) {

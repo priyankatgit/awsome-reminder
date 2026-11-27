@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"sync"
 	"time"
@@ -60,6 +59,11 @@ type Engine struct {
 	// start (srvKnown). Pull starts are stamped in server time with it.
 	srvOffset time.Duration
 	srvKnown  bool
+	// pushFail and clockFail are the last failures logged by the cycle, so
+	// a cycle that keeps failing the same way logs once.
+	pushFail, clockFail string
+	// cycleFail is runLogged's (the loop goroutine's) last failure logged.
+	cycleFail string
 
 	mu       sync.Mutex // guards st, failures, started, stopped, cancel, done
 	st       Status
@@ -80,7 +84,7 @@ func NewEngine(l Local, s Syncer, o Options) *Engine {
 		st:         Status{State: StateOff, Warnings: []string{}, Host: o.Host},
 	}
 	if v, ok, err := l.SyncMeta(metaLastAt); err != nil {
-		log.Printf("sync: read last sync time: %v", err)
+		e.logf("sync: read last sync time: %v", err)
 	} else if ok {
 		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
 			e.st.LastSyncAt = &t
@@ -125,7 +129,7 @@ func (e *Engine) Stop() {
 		ctx, cancelClose := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancelClose()
 		if err := e.s.Close(ctx); err != nil {
-			log.Printf("sync: close: %v", err)
+			e.logf("sync: close: %v", err)
 		}
 	})
 }
@@ -252,9 +256,33 @@ func (e *Engine) loop(ctx context.Context) {
 	}
 }
 
+// logf logs a line with any connection string's credentials redacted.
+func (e *Engine) logf(format string, args ...any) {
+	e.o.Logf("%s", Redact(fmt.Sprintf(format, args...)))
+}
+
+// failKey identifies a failure for logging: retries that fail with the same
+// state and reason log once.
+func (e *Engine) failKey(err error) string {
+	st, text := e.s.Classify(err)
+	return string(st) + " | " + text
+}
+
+// logFailure logs a failure unless *last says it was the last one logged.
+func (e *Engine) logFailure(last *string, err error, format string, args ...any) {
+	if k := e.failKey(err); k != *last {
+		*last = k
+		e.logf(format, args...)
+	}
+}
+
 func (e *Engine) runLogged(ctx context.Context, manual bool) {
-	if err := e.RunOnce(ctx, manual); err != nil && ctx.Err() == nil {
-		log.Printf("sync: cycle failed: %v", err)
+	err := e.RunOnce(ctx, manual)
+	switch {
+	case err == nil:
+		e.cycleFail = ""
+	case ctx.Err() == nil:
+		e.logFailure(&e.cycleFail, err, "sync: cycle failed: %v", err)
 	}
 }
 
@@ -302,7 +330,7 @@ func (e *Engine) finish(ctx context.Context, prev State, err error) {
 	now := e.o.Now()
 	if err == nil {
 		if serr := e.l.SetSyncMeta(metaLastAt, now.UTC().Format(time.RFC3339Nano)); serr != nil {
-			log.Printf("sync: save last sync time: %v", serr)
+			e.logf("sync: save last sync time: %v", serr)
 		}
 	}
 	pending, perr := e.l.OutboxCount()
@@ -335,7 +363,9 @@ func (e *Engine) cycle(ctx context.Context) error {
 		if st, _ := e.s.Classify(pushErr); st != StateError || ctx.Err() != nil {
 			return pushErr
 		}
-		log.Printf("sync: push failed, pulling anyway: %v", pushErr)
+		e.logFailure(&e.pushFail, pushErr, "sync: push failed, pulling anyway: %v", pushErr)
+	} else {
+		e.pushFail = ""
 	}
 	if e.needChecks {
 		e.readServerClock(ctx)
@@ -368,10 +398,16 @@ func (e *Engine) push(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, en := range entries {
+		for i, en := range entries {
 			if err := e.pushOne(ctx, en); err != nil {
+				if i > 0 {
+					e.logf("sync: pushed %d change(s) before an error", i)
+				}
 				return err
 			}
+		}
+		if len(entries) > 0 {
+			e.logf("sync: pushed %d change(s)", len(entries))
 		}
 		if len(entries) < pushBatch {
 			return nil
@@ -400,11 +436,11 @@ func (e *Engine) pushOne(ctx context.Context, en store.OutboxEntry) error {
 			err = e.s.PushShared(ctx, d)
 		}
 	default:
-		log.Printf("sync: dropping outbox entry of unknown kind %q", en.Kind)
+		e.logf("sync: dropping outbox entry of unknown kind %q", en.Kind)
 	}
 	switch {
 	case errors.Is(err, core.ErrAttachmentFileMissing), errors.Is(err, store.ErrNotFound):
-		log.Printf("sync: dropping %s %s: %v", en.Kind, en.ID, err)
+		e.logf("sync: dropping %s %s: %v", en.Kind, en.ID, err)
 	case err != nil:
 		return fmt.Errorf("push %s %s: %w", en.Kind, en.ID, err)
 	}
@@ -415,13 +451,13 @@ func (e *Engine) loadWatermark(key string) Watermark {
 	v, ok, err := e.l.SyncMeta(key)
 	if err != nil || !ok {
 		if err != nil {
-			log.Printf("sync: read %s: %v", key, err)
+			e.logf("sync: read %s: %v", key, err)
 		}
 		return Watermark{}
 	}
 	var wm Watermark
 	if err := json.Unmarshal([]byte(v), &wm); err != nil {
-		log.Printf("sync: bad %s, pulling from the start: %v", key, err)
+		e.logf("sync: bad %s, pulling from the start: %v", key, err)
 		return Watermark{}
 	}
 	return wm
@@ -476,13 +512,13 @@ func (e *Engine) startOf(key string) (time.Time, bool) {
 	v, ok, err := e.l.SyncMeta(key)
 	if err != nil || !ok {
 		if err != nil {
-			log.Printf("sync: read %s: %v", key, err)
+			e.logf("sync: read %s: %v", key, err)
 		}
 		return time.Time{}, false
 	}
 	t, err := time.Parse(time.RFC3339Nano, v)
 	if err != nil {
-		log.Printf("sync: bad %s, overlapping from the watermark: %v", key, err)
+		e.logf("sync: bad %s, overlapping from the watermark: %v", key, err)
 		return time.Time{}, false
 	}
 	return t, true
@@ -503,9 +539,10 @@ func (e *Engine) serverNow() time.Time {
 func (e *Engine) readServerClock(ctx context.Context) {
 	srv, err := e.s.ServerTime(ctx)
 	if err != nil {
-		log.Printf("sync: server time: %v", err)
+		e.logFailure(&e.clockFail, err, "sync: server time: %v", err)
 		return
 	}
+	e.clockFail = ""
 	e.srvOffset, e.srvKnown = srv.Sub(e.o.Now()), true
 }
 
@@ -525,15 +562,25 @@ func (e *Engine) pullAttachments(ctx context.Context) error {
 		if err != nil {
 			return errors.Join(err, e.saveWatermark(metaWMAttachments, saved, done))
 		}
+		n := 0
 		for _, d := range page {
-			if _, err := e.l.ApplyRemoteAttachment(d.Attachment, d.Data); err != nil {
+			ok, err := e.l.ApplyRemoteAttachment(d.Attachment, d.Data)
+			if ok {
+				n++
+			}
+			if err != nil {
 				if !errors.Is(err, core.ErrInvalidRemote) {
 					// Keep the progress of earlier pages only, so this
 					// document is pulled again.
 					return errors.Join(err, e.saveWatermark(metaWMAttachments, saved, done))
 				}
-				log.Printf("sync: skipping remote attachment: %v", err)
+				e.logf("sync: skipping remote attachment: %v", err)
 			}
+		}
+		// Only pages that changed something are logged: the overlap
+		// re-read of a quiet collection stays silent.
+		if n > 0 {
+			e.logf("sync: pulled %d attachment(s), applied %d", len(page), n)
 		}
 		// The watermark may move even on an empty page (a backend that
 		// skipped an undecodable document); a page with documents must move
@@ -571,6 +618,9 @@ func (e *Engine) pullItems(ctx context.Context) error {
 		// Invalid items are skipped inside; an error is a store failure.
 		applied, err := e.l.ApplyRemoteItems(page)
 		all = append(all, applied...)
+		if len(applied) > 0 {
+			e.logf("sync: pulled %d item(s), applied %d", len(page), len(applied))
+		}
 		if err != nil {
 			return errors.Join(err, e.saveWatermark(metaWMItems, saved, done))
 		}
@@ -596,7 +646,10 @@ func (e *Engine) pullShared(ctx context.Context) error {
 	if err != nil || d == nil {
 		return err
 	}
-	_, err = e.l.ApplyRemoteShared(d.Shared, d.UpdatedAt, d.UpdatedBy)
+	ok, err := e.l.ApplyRemoteShared(d.Shared, d.UpdatedAt, d.UpdatedBy)
+	if ok {
+		e.logf("sync: applied the shared settings")
+	}
 	return err
 }
 
@@ -608,7 +661,7 @@ func (e *Engine) check(ctx context.Context) {
 		warnings = append(warnings, fmt.Sprintf("This computer's clock is %d min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.", int(math.Round(skew.Minutes()))))
 	}
 	if broad, err := e.s.ScopeTooBroad(ctx); err != nil {
-		log.Printf("sync: scope check: %v", err)
+		e.logf("sync: scope check: %v", err)
 	} else if broad {
 		warnings = append(warnings, ScopeWarning)
 	}

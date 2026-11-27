@@ -124,22 +124,20 @@ func (s *Service) SnoozeReplies() error {
 		return err
 	}
 	r := core.SchedulerRules(st, time.Local)
-	until := r.NextWorkDay(s.d.Core.Now(), r.DefaultTime)
+	until := r.NextWorkMorning(s.d.Core.Now())
 	if until.IsZero() {
 		return errNoWorkDays
 	}
-	if err := s.d.Core.SnoozeRepliesUntil(until); err != nil {
-		return err
-	}
-	v, err := s.d.Core.View()
-	if err != nil {
-		return err
-	}
+	ids, err := s.d.Core.SnoozeRepliesUntil(until)
 	snoozed := map[string]bool{}
-	for _, g := range v.Waiting {
-		for _, it := range g.Items {
-			snoozed[it.ID] = true
-		}
+	for _, id := range ids {
+		snoozed[id] = true
+	}
+	if err != nil {
+		// Only the cards of the replies that were snoozed go; the sweep
+		// card stays for another try.
+		s.removeAlerts(func(c AlertCard) bool { return snoozed[c.ItemID] }, true)
+		return err
 	}
 	s.removeAlerts(func(c AlertCard) bool { return c.Kind == scheduler.KindSweep || snoozed[c.ItemID] }, true)
 	return nil

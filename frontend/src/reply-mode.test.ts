@@ -164,6 +164,21 @@ describe("capture box in reply mode", () => {
     expect(calls).toEqual([{ input: "send Sam the figures", meta: { owedTo: "", source: "", quote: "" } }]);
   });
 
+  it("a keepText press on a box already in reply mode keeps its person, source and quote", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    const input = q<HTMLInputElement>("#cap-input");
+    h.handlers.get("reply:open")!(prefill({ line: "", owedTo: "", source: "", quote: "", grabbed: false, keepText: true }));
+    await tick();
+    expect(q("#cap-preview").textContent).toContain("for Priya");
+    expect(q("#cap-quote").hidden).toBe(false);
+    key(input, "Enter");
+    await tick();
+    expect(calls).toEqual([
+      { input: 'Reply to Priya: "can you check the deploy?"', meta: { owedTo: "Priya", source: "Teams", quote: "can you check the deploy?" } },
+    ]);
+  });
+
   it("keeps the person editor focused when the window takes focus after reply:open", async () => {
     h.handlers.get("reply:open")!(prefill({ owedTo: "", line: 'Reply: "can you check?"' }));
     await tick();
@@ -257,6 +272,15 @@ describe("capture box in reply mode", () => {
     key(q("#cap-input"), "Enter");
     await tick();
     expect(calls).toEqual([{ input: 'Reply to Priya: "can you check the deploy?"', meta: { owedTo: "Priya", source: "Teams", quote: "" } }]);
+  });
+
+  it("a click on × gives focus back to the line even when the button never took focus (macOS WebKit)", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    (document.activeElement as HTMLElement | null)?.blur();
+    q<HTMLButtonElement>(".cap-quote-remove").click();
+    expect(q("#cap-quote").hidden).toBe(true);
+    expect(document.activeElement).toBe(q("#cap-input"));
   });
 
   it("Alt+Q removes the quote from the keyboard", async () => {

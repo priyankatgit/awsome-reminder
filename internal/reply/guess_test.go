@@ -72,6 +72,8 @@ func TestLine(t *testing.T) {
 		{"runes not bytes", Meta{Quote: strings.Repeat("é", 201)}, `Reply: "` + strings.Repeat("é", 200) + `…"`},
 		{"newlines become spaces", Meta{OwedTo: "P", Quote: "a\n\n  b\r\nc"}, `Reply to P: "a b c"`},
 		{"inner quotes become closing curly quotes", Meta{OwedTo: "P", Quote: `say "yes" or "no"`}, `Reply to P: "say ”yes” or ”no”"`},
+		{"a quote mark in the person cannot unbalance the line", Meta{OwedTo: `Sam "Ops`, Quote: "go"}, `Reply to Sam ”Ops: "go"`},
+		{"a quote mark in the person alone", Meta{OwedTo: `"Sam"`}, `Reply to ”Sam”`},
 		{"nothing", Meta{}, "Reply"},
 	}
 	for _, c := range cases {
