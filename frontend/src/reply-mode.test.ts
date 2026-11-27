@@ -150,6 +150,38 @@ describe("capture box in reply mode", () => {
     expect(calls).toEqual([{ input: "send Sam the figures", meta: { owedTo: "", source: "", quote: "" } }]);
   });
 
+  it("keeps the person editor focused when the window takes focus after reply:open", async () => {
+    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: "Reply: can you check?" }));
+    await tick();
+    const person = q<HTMLInputElement>(".cap-person");
+    expect(document.activeElement).toBe(person);
+    person.value = "Sa";
+    window.dispatchEvent(new Event("focus"));
+    expect(document.activeElement).toBe(person);
+    expect(person.hidden).toBe(false);
+    expect(person.value).toBe("Sa");
+    expect(q(".chip-person").hidden).toBe(true);
+  });
+
+  it("ends in the person editor when the window takes focus before reply:open", async () => {
+    window.dispatchEvent(new Event("focus"));
+    expect(document.activeElement).toBe(q("#cap-input"));
+    h.handlers.get("reply:open")!(prefill({ owedTo: "", line: "Reply: can you check?" }));
+    await new Promise((r) => window.requestAnimationFrame(r));
+    const person = q<HTMLInputElement>(".cap-person");
+    expect(document.activeElement).toBe(person);
+    expect(person.hidden).toBe(false);
+  });
+
+  it("keeps the person controls out of the live preview but the name in its text", async () => {
+    h.handlers.get("reply:open")!(prefill());
+    await tick();
+    expect(q("#cap-preview").getAttribute("aria-live")).toBe("polite");
+    expect(q(".chip-person").getAttribute("aria-live")).toBe("off");
+    expect(q(".cap-person").getAttribute("aria-live")).toBe("off");
+    expect(q(".cap-reply-say").textContent).toBe("Priya");
+  });
+
   it("explains the macOS Accessibility setting when the grab needs it", async () => {
     h.handlers.get("reply:open")!(prefill({ needsAccess: true, grabbed: false }));
     await tick();

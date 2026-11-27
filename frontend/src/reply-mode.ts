@@ -107,6 +107,8 @@ export interface ReplyHost {
 
 export interface ReplyMode {
   readonly active: boolean;
+  /** Whether the person editor is open. */
+  readonly editing: boolean;
   /** Enters reply mode with what the hotkey found (the caller sets the line). */
   enter(p: ReplyPrefill): void;
   /** Back to normal mode; a no-op when not active. */
@@ -115,7 +117,7 @@ export interface ReplyMode {
   meta(): ReplyMeta;
   /** Updates the reply parts of the preview for the latest parse. */
   render(p: Preview | null): void;
-  /** Opens the person editor and focuses it. */
+  /** Opens the person editor and focuses it (selecting its text when it opens). */
   editPerson(): void;
   /** Handles Alt+P; true when the key was taken. */
   handleKey(e: KeyboardEvent): boolean;
@@ -143,8 +145,13 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   personInput.placeholder = "Someone";
   personInput.setAttribute("aria-label", "Reply owed to");
   personInput.hidden = true;
+  // The preview row is a polite live region: the controls stay out of it, and
+  // a visually hidden copy of the name keeps the summary complete when read.
+  person.setAttribute("aria-live", "off");
+  personInput.setAttribute("aria-live", "off");
+  const personSay = el("span", "sr-only cap-reply-say");
   const metaText = el("span", "cap-sub cap-reply-meta");
-  parts.append(chip, forWord, person, personInput, metaText);
+  parts.append(chip, forWord, person, personInput, personSay, metaText);
   host.line.prepend(parts);
 
   const note = el("p", "cap-access", ACCESS_NOTE);
@@ -171,6 +178,7 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   function paint(): void {
     const label = personLabel(state.owedTo);
     person.textContent = label;
+    personSay.textContent = label;
     person.setAttribute("aria-label", `Change person, now ${label}`);
     const bits = [state.source.trim() ? `from ${state.source.trim()}` : "", nudgeSummary(new Date(), rules, due)].filter(Boolean);
     metaText.textContent = `· ${bits.join(" · ")}`;
@@ -192,12 +200,14 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
 
   function editPerson(): void {
     if (!active) return;
-    if (!editing) {
-      editing = true;
-      personInput.value = state.owedTo;
-      person.hidden = true;
-      personInput.hidden = false;
+    if (editing) {
+      personInput.focus(); // a refocus keeps the caret where it was
+      return;
     }
+    editing = true;
+    personInput.value = state.owedTo;
+    person.hidden = true;
+    personInput.hidden = false;
     personInput.focus();
     personInput.select();
   }
@@ -256,6 +266,9 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   return {
     get active() {
       return active;
+    },
+    get editing() {
+      return editing;
     },
     enter,
     exit,

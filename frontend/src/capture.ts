@@ -537,7 +537,10 @@ export function mountCapture(root: HTMLElement): void {
   });
   window.addEventListener("focus", () => {
     box.classList.remove("is-hidden");
-    if (picker.hidden) input.focus();
+    if (!picker.hidden) return;
+    // Go focuses the window after reply:open: keep an open person editor.
+    if (reply.editing) reply.editPerson();
+    else input.focus();
   });
 
   // Size the native window to the content; the top edge stays put.
@@ -567,6 +570,10 @@ export function mountCapture(root: HTMLElement): void {
     showError("");
     if (!p.keepText && p.owedTo.trim() === "") {
       reply.editPerson();
+      // The window may take focus a moment later; end in the editor.
+      window.requestAnimationFrame(() => {
+        if (reply.editing) reply.editPerson();
+      });
     } else if (picker.hidden) {
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
