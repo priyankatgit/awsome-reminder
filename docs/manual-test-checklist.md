@@ -110,7 +110,7 @@ The rows need an Atlas cluster set up as in [atlas-setup.md](atlas-setup.md); mo
 | S8 | Restore on a fresh profile | New profile (or machine), same connection string: items, images and lead times come back, and no stack of "missed" cards appears for the overdue items. | needs human (an empty local server cannot show it; covered by `TestRestoreFreshDevice` and `TestApplyRemoteNewItemSuppressesPastAlerts`) | | | |
 | S9 | Tray dot and tooltip | The tray icon shows the dot (green synced, alternating ring/dot syncing, grey ring offline, red error; macOS uses shapes instead); the tooltip ends with the matching text. | needs human (the tray icon and tooltip were not inspected; covered by `TestBadgeWiringSyncChanged`) | | | |
 | S10 | Sleep and wake | Sleep for longer than 5 minutes with sync on; on wake the status returns to synced within a minute and no item is lost. | needs human (sleep) | | | |
-| S11 | Idle RAM with sync on after 10 min < 150 MB | As row 6, with sync connected. | **pass: 143.6 MB private (334.9 MB working set) summed over 6 processes after 10 min idle, fresh start, sync connected, no window opened** (Phase 1 baseline 137.0 MB; an empty server, so no data to hold). A run in which the list and Settings windows had been opened and closed first, with a second renderer still alive, read 188.9 MB: see measurements | | | |
+| S11 | Idle RAM with sync on after 10 min < 150 MB | As row 6, with sync connected. | **Fresh start, no window opened: pass** (143.6 MB private, 10 min idle). **After the list and Settings windows have been opened and closed: fail, 151.7 MB** (just over 150; 60 s settle). The same round with sync off also reads 151.8 MB, so the breach is not caused by sync; see measurements | | | |
 | S12 | ~0% idle CPU with sync on | As row 7 with sync connected (a poll every 30 s). | pass: 0.15% of one core for the whole tree over 60 s (Go process 0.03%), with a poll every 30 s | | | |
 
 ### Windows 11 measurements with sync on
@@ -128,6 +128,13 @@ Fresh start (the app opened the saved string by itself), no window opened, 10 mi
 | msedgewebview2 crashpad-handler | 13.5 MB | 3.1 MB | 0.03 |
 | **Total (6 processes)** | **334.9 MB** | **143.6 MB** | **0.15** |
 
-Against Phase 1 (137.0 MB private, Go process 52.4 MB) sync adds about 6.6 MB private, nearly all in the Go process (55.9 MB) and the WebView2 browser process. That leaves 6.4 MB below the 150 MB limit, so the margin is small; a large database or many images could eat into it.
+Against Phase 1 (137.0 MB private, Go process 52.4 MB) sync adds about 6.6 MB private, nearly all in the Go process (55.9 MB) and the WebView2 browser process. That leaves 6.4 MB below the 150 MB limit for the fresh-start case only. After opening and closing windows the figure is 151.7 MB with sync on, which is over the limit, and equal to sync off (see below).
 
-For comparison, an earlier run in the same session, after the capture, list and Settings windows had been opened and closed (the list window's renderer stays alive, a second renderer), 10 minutes idle: 7 processes, 188.9 MB private, 435.6 MB working set, 0.23% CPU. That is above 150 MB; the extra renderer alone accounts for about 35 MB, and Phase 1's own figure after opening windows was 143.6 MB with the windows closed again. It was not repeated without sync, so how much of the difference is sync is not measured.
+After a window round, sync off against sync on (same build, scratch profile each, 6 processes each; the round is `--capture`, `--list`, `--settings` against the running copy, then Settings and the list closed with WM_CLOSE through UI Automation, with no synthetic keyboard input; 15 s after start before the round, 60 s settle, 60 s window; no alerts fired, unlike Phase 1's "After" row, and no 10-minute idle first):
+
+| Case | Working set | Private | CPU (% of one core) | Verdict (< 150 MB private) |
+|---|---|---|---|---|
+| Sync off | 335.8 MB | 151.8 MB | 0.54 | fail (by 1.8 MB) |
+| Sync on (local server, empty database) | 340.4 MB | 151.7 MB | 0.67 | fail (by 1.7 MB) |
+
+Both cases are about 8 MB above the fresh-start 143.6 MB, and sync on and off are the same within 0.1 MB, so the post-windows figure is not caused by sync. It is the existing Phase 1 window-round growth (Phase 1's own 143.6 MB "After" row was taken with a different alert sequence and a 10-minute idle first; this run did not reproduce that figure on this build and machine state). The earlier 188.9 MB reading, with a second renderer still alive after the list and Settings windows had been opened and closed in a different order, was not reproduced here (6 processes both times) and should not be relied on; why that run kept a second renderer is not established.
