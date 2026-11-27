@@ -276,6 +276,20 @@ The spike also confirms: the program's name and arguments, its stdout format, wh
 - The macOS "show without focus" mechanism.
 - Whether the session controller lives in `voice.ts` or a new `voice-session.ts`.
 
+## Measurements
+
+Raw numbers, commands and the asset table are in `docs/superpowers/notes/2026-phase3-spike.md`. Accuracy figures are a **TTS proxy** (Windows SAPI voices Hazel and Zira); the spike could not speak into a microphone.
+
+- **Release:** sherpa-onnx v2.0.3. The release ships **no Windows microphone spotter** (the Windows archives hold only the file-based `sherpa-onnx-keyword-spotter.exe`), so Windows uses our own helper (the app exe started with `--wake-helper`: it loads `sherpa-onnx-c-api.dll` without cgo, captures with winmm waveIn, applies an RMS gate, and prints detection lines in the stock program's format). Linux and macOS use the stock `bin/sherpa-onnx-keyword-spotter-microphone` (present in all four archives; not run in the spike).
+- **Windows asset:** `sherpa-onnx-v2.0.3-win-x64-shared-MT-Release-no-tts-lib.tar.bz2` (8307815 bytes). It keeps `lib/sherpa-onnx-c-api.dll`, `lib/onnxruntime.dll`, `lib/onnxruntime_providers_shared.dll`. The static-CRT (MT) build imports only Windows system DLLs, so **no Visual C++ runtime is needed** (the MD build needs MSVCP140/VCRUNTIME140). A `ctypes` test of this DLL with the header's structs detected "Hey Awesome".
+- **Model files** (`sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`, 17626723 bytes): the int8 encoder, decoder and joiner (`*-epoch-12-avg-2-chunk-16-left-64.int8.onnx`) plus `tokens.txt`, about 5.25 MB. fp32 gave the same accuracy and is slower, so int8 is used.
+- **Keyword line** (`internal/voice/wake_keywords.txt`): `▁HE Y ▁A W ES OM E :1.0 #0.25 @HEY_AWESOME`. Boost 1.0 with threshold 0.25; a boost of 1.5 or more produced false wakes on near-miss sentences (5 to 25 per hour), a boost of 1.0 produced none.
+- **Output format (stock program):** detections go to **stderr**, as `<n>:{"start_time":0.00, "keyword": "HEY_AWESOME", "timestamps": [...], "tokens":[...]}`; on Linux and macOS the line has no trailing newline (the newline comes before the next detection), so the parser must scan for the JSON object rather than wait for end of line. Start-up lines and exit codes are in the notes.
+- **Accuracy (TTS proxy):** 18/18 "Hey Awesome" (2 voices x 3 rates x 3 lead-ins; 18/18 also with low noise) and 0 false detections in 24.3 min of varied speech with near-misses (about 0/h; the sample is too short to prove 1/h).
+- **CPU:** file-based spotter, int8, 1 thread, 5 min of speech: real-time factor 0.023, that is 2.3 % of one core (gate 10 %). Near-silent input fed ungated costs the same 2.3 %; our helper's RMS gate skips silence, so the quiet-room figure is expected near zero (gate 3 %), to be re-measured on the real helper.
+- **RAM:** 55 to 61 MB working set for the engine with the int8 model (gate 80 MB); the 5 min runs show about 100 MB only because the stock program loads the whole wav. The helper's own overhead (Go runtime, winmm) is to be measured on the real helper.
+- **Left for the user by voice:** 10 "Hey Awesome" at normal voice from 1 m, 1 h of podcast or meeting audio through the speakers for false wakes, quiet-room and speech CPU of the real helper through the mic, the Linux and macOS stock programs (start-up, mic permission, shared libraries; unverified by `ldd`/`otool`), and WebView2 autoplay.
+
 ## Summary of my calls
 
 All decisions in this document are mine, made at the user's request. The ones most worth checking:
