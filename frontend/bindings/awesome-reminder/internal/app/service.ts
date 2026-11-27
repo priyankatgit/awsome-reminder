@@ -244,7 +244,8 @@ export function Status(): $CancellablePromise<$models.Status> {
 }
 
 /**
- * StopRepeating clears an item's recurrence.
+ * StopRepeating clears an item's recurrence. Look-ahead cards for a later
+ * occurrence go (see dropIfMoved).
  */
 export function StopRepeating(id: string): $CancellablePromise<void> {
     return $Call.ByID(113615805, id);

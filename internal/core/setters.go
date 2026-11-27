@@ -48,7 +48,8 @@ func (c *Core) SetPriority(id, p string) (model.Item, error) {
 // SetDue sets the due time and clears any snooze. A recurring item keeps its
 // rule, with the new due time as the series anchor; a single-day weekly rule
 // re-anchors to the weekday of the new due time. nil makes the item a
-// to-do and clears its recurrence.
+// to-do and clears its recurrence (and, like StopRepeating, the DoneAt an
+// open item kept from being marked done while recurring).
 func (c *Core) SetDue(id string, due *time.Time) (model.Item, error) {
 	var d *time.Time
 	if due != nil {
@@ -60,6 +61,7 @@ func (c *Core) SetDue(id string, due *time.Time) (model.Item, error) {
 		switch {
 		case d == nil:
 			it.RRule = ""
+			clearStaleDone(it)
 		case isSingleDayWeekly(it.RRule):
 			it.RRule = c.weeklyRule(*it)
 		}
@@ -90,7 +92,8 @@ func (c *Core) weeklyRule(it model.Item) string {
 
 // SetRepeat sets the recurrence: "none", "daily", "weekdays" or "weekly"
 // (on the weekday of the due time in the item's zone). Anything but "none"
-// needs a due time.
+// needs a due time. "none" is StopRepeating: an open item also drops the
+// DoneAt it kept from being marked done while recurring.
 func (c *Core) SetRepeat(id, repeat string) (model.Item, error) {
 	switch repeat {
 	case "none", "daily", "weekdays", "weekly":
@@ -100,6 +103,7 @@ func (c *Core) SetRepeat(id, repeat string) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, _ time.Time) error {
 		if repeat == "none" {
 			it.RRule = ""
+			clearStaleDone(it)
 			return nil
 		}
 		if it.DueAt == nil {

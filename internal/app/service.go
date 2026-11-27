@@ -97,7 +97,11 @@ func (s *Service) Update(id, input string) (model.Item, error) {
 }
 
 // dropIfMoved runs edit on item id and, like Update, removes the item's
-// alert cards when the edit moved its due time or changed its status.
+// alert cards when the edit moved its due time or changed its status. When
+// only the rule changed, the cards for the current occurrence stay but
+// look-ahead cards for a later occurrence (planned from the old rule) go:
+// that occurrence may not exist any more, and Done on its card would skip to
+// it.
 func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model.Item, error) {
 	before, err := s.d.Core.Item(id)
 	if err != nil {
@@ -107,8 +111,12 @@ func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model
 	if err != nil {
 		return after, err
 	}
-	if !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status {
+	switch {
+	case !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status:
 		s.dropItemAlerts(id)
+	case before.RRule != after.RRule && after.DueAt != nil:
+		due := *after.DueAt
+		s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id && c.DueAt.After(due) }, true)
 	}
 	return after, nil
 }
@@ -136,8 +144,17 @@ func (s *Service) Done(id string) error {
 // Reopen marks a done item open again.
 func (s *Service) Reopen(id string) error { return s.d.Core.Reopen(id) }
 
-// StopRepeating clears an item's recurrence.
-func (s *Service) StopRepeating(id string) error { return s.d.Core.StopRepeating(id) }
+// StopRepeating clears an item's recurrence. Look-ahead cards for a later
+// occurrence go (see dropIfMoved).
+func (s *Service) StopRepeating(id string) error {
+	_, err := s.dropIfMoved(id, func() (model.Item, error) {
+		if err := s.d.Core.StopRepeating(id); err != nil {
+			return model.Item{}, err
+		}
+		return s.d.Core.Item(id)
+	})
+	return err
+}
 
 // Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
 // are removed.

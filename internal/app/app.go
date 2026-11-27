@@ -159,6 +159,8 @@ func Run(opts Options) error {
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the
 	// export (deferred after exp.Close and st.Close, so it runs before them).
+	// Any other goroutine that reads the store (e.g. a debounced badge
+	// refresh) must be stopped by cancel() and joined here too.
 	defer func() {
 		cancel()
 		sched.Wait()

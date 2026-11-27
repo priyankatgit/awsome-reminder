@@ -251,3 +251,51 @@ func TestUndeleteKeepsPriorityAndDescription(t *testing.T) {
 		t.Fatalf("after undelete: status %q priority %q description %q", got.Status, got.Priority, got.Description)
 	}
 }
+
+// SetRepeat("none") and SetDue(nil) stop an item repeating, so like
+// StopRepeating they drop the DoneAt an open item kept from being marked done
+// while recurring; otherwise Delete then Undelete would restore it as done.
+// Changing to another rule keeps DoneAt.
+func TestStopRepeatingSettersClearDoneAt(t *testing.T) {
+	for name, stop := range map[string]func(c *Core, id string) (model.Item, error){
+		"SetRepeat none": func(c *Core, id string) (model.Item, error) { return c.SetRepeat(id, "none") },
+		"SetDue nil":     func(c *Core, id string) (model.Item, error) { return c.SetDue(id, nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			it := mustCapture(t, e, "every monday 10am standup")
+			if _, err := e.c.Done(it.ID); err != nil { // advances, stays open, DoneAt set
+				t.Fatal(err)
+			}
+			if got, err := e.c.SetRepeat(it.ID, "daily"); err != nil || got.DoneAt == nil {
+				t.Fatalf("rule change: %+v %v", got, err)
+			}
+			got, err := stop(e.c, it.ID)
+			if err != nil || got.RRule != "" || got.DoneAt != nil || got.Status != model.StatusOpen {
+				t.Fatalf("after stop: %+v %v", got, err)
+			}
+			if err := e.c.Delete(it.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.c.Undelete(it.ID); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := e.st.Get(it.ID); got.Status != model.StatusOpen {
+				t.Fatalf("after undo delete: status %s, want open", got.Status)
+			}
+		})
+	}
+}
+
+// A done (non-recurring) item keeps its DoneAt when its due time is cleared.
+func TestSetDueNilKeepsDoneAtOfDoneItem(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "tomorrow 5pm deploy")
+	if _, err := e.c.Done(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.c.SetDue(it.ID, nil)
+	if err != nil || got.Status != model.StatusDone || got.DoneAt == nil {
+		t.Fatalf("got %+v %v", got, err)
+	}
+}
