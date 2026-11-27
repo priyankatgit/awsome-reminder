@@ -20,17 +20,26 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--fg` | `#F8FAFC` | `#0F172A` | primary text |
 | `--fg-muted` | `#94A3B8` | `#475569` | secondary text, hints |
 | `--border` | `#334155` | `#E2E8F0` | dividers (1px) |
-| `--accent` | `#22C55E` | `#16A34A` | primary action, focus ring, "saved" |
-| `--on-accent` | `#0F172A` | `#FFFFFF` | text on accent |
-| `--time` | `#F59E0B` | `#B45309` | due-time chip, reminder icon |
-| `--danger` | `#EF4444` | `#DC2626` | overdue, delete, **listening** |
+| `--accent` | `#22C55E` | `#16A34A` | focus ring, "saved" flash, decorative accent (not text, not button fill in light) |
+| `--accent-fill` | `var(--accent)` | `#15803D` | primary button fill (white text 5.0:1; `#16A34A` gives only 3.3:1) |
+| `--accent-text` | `#4ADE80` | `#15803D` | accent used as text (the alert's "now"): 10.3:1 dark, 5.0:1 light |
+| `--on-accent` | `#0F172A` | `#FFFFFF` | text on `--accent-fill` |
+| `--time` | `#F59E0B` | `#B45309` | reminder icon, decorative time color |
+| `--time-text` | `#F59E0B` | `#92400E` | due-time text on rows that may sit on `--muted` |
+| `--time-chip-fg` / `--time-chip-bg` | `#F59E0B` / `rgba(245,158,11,.14)` | `#92400E` / `#FEF3C7` | due-time chip (6.6:1 dark, 6.4:1 light) |
+| `--danger` | `#EF4444` | `#DC2626` | overdue/delete/**listening** icons and borders |
+| `--danger-text` | `#F87171` | `#B91C1C` | danger as text on `--muted` hover rows (4.8:1 dark) |
 | `--ring` | `#22C55E` | `#16A34A` | 2px focus outline, 2px offset |
+| `--highlight` | `rgba(34,197,94,.16)` | `rgba(22,163,74,.16)` | row highlight after the list opens on an item; fades out |
+| `--shadow-menu` | `0 8px 24px rgba(0,0,0,.28)` + 1px `--border` | `0 8px 24px rgba(15,23,42,.12)` + 1px `--border` | row `⋯` menu (softer than the window shadow) |
 
-Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desaturated: slate-blue, teal, violet, rose, amber, cyan, lime, orange). Text and background must keep ≥ 4.5:1 contrast in both themes. `#inbox` is always neutral.
+Rule: text uses the `-text` / `-fg` variants, never the plain `--accent` / `--time` / `--danger`, so contrast holds on `--bg`, `--surface` and `--muted` in both themes. `frontend/src/tokens.css` is authoritative if this table drifts.
+
+Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desaturated: slate-blue, teal, violet, rose, amber, cyan, lime, orange). Text and background must keep ≥ 4.5:1 contrast in both themes (shipped pairs: dark ≥ 7.4:1). `#inbox` is always neutral (`--tag-inbox-*`).
 
 **Type:** IBM Plex Sans (400/500/600) for UI text; JetBrains Mono (400/500) for tags, times, hotkeys, and the capture input. Fonts are bundled locally via `@fontsource/ibm-plex-sans` and `@fontsource/jetbrains-mono`, Latin subset, woff2 only. Sizes: capture input 20px; body 14px; secondary 12px (the minimum); section headers 12px uppercase, letter-spacing .06em, `--fg-muted`.
 
-**Spacing** (4-pt scale): 4, 8, 12, 16, 24, 32. **Radius:** windows 14, cards 10, chips/buttons 8, pills 999. **Shadow** (floating windows only): `0 20px 50px rgba(0,0,0,.35), 0 0 0 1px var(--border)`.
+**Spacing** (4-pt scale): 4, 8, 12, 16, 24, 32. **Radius:** windows 14, cards 10, chips/buttons 8, pills 999. **Shadow** (floating windows only, `--shadow-float`): `0 20px 50px rgba(0,0,0,.35), 0 0 0 1px var(--border)`; menus use `--shadow-menu`.
 
 **Icons:** Lucide SVG (`lucide` package, import individual icons), 18px, stroke 1.75. **No emoji as icons anywhere**; this overrides the ⏰/☐ in the plan text.
 
@@ -98,7 +107,8 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 ```
 - 380 px, glass surface, bottom-right with 16 px inset. Slides up 8 px + fades in 160 ms. Multiple alerts stack as cards inside the one window (max 3 visible, then "+N more").
 - "Missed · was due 14:00" uses `--danger`; "now" uses `--accent`.
-- Done is the primary button (accent); Snooze and Open are ghost buttons. Buttons are 32 px tall with a 40 px hit area. Never steal focus.
+- Done is the primary button (`--accent-fill`); Snooze and Open are ghost buttons. Buttons are 32 px tall with a 40 px hit area. Never steal focus.
+- **Shipped deviation:** Snooze does not open a dropdown. The Snooze button toggles an inline row ("Snooze for" + preset buttons) inside the same card, so the small alert window never needs a popup layer of its own and the choices stay keyboard reachable (`aria-expanded` / `aria-controls`).
 
 ## Settings
 - A single scrolling form, 520 px, with labeled fields (labels above, helper text below in `--fg-muted`, errors inline in `--danger`).
