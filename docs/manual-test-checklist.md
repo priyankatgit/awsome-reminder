@@ -52,3 +52,25 @@ How it got there (3 min idle unless noted; private / working set of the whole tr
 | Same, 10 min idle | 137.0 / 308 MB | 143.6 / 323 MB | 0 |
 
 Reading the numbers: the working-set sum double counts pages shared between the WebView2 processes, so private is the fairer total. The Go runtime itself holds only about 12 MB (`runtime.MemStats.Sys`, heap in use about 3 MB); the rest of the app process's 52 MB is native WebView2 host code and data loaded into it. The remaining tree is the minimum for one live WebView2 (the pre-created capture window, which keeps hotkey latency low): browser, renderer, network and storage utilities, crashpad.
+
+## Voice dictation (Phase 1.5)
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| V1 | Consent before download | Fresh voice folder; click the mic. A panel names the size ("157 MB" on Windows) and offers Download / Not now; nothing is downloaded until Download. | pass (2026-11-27, driven over DevTools) | | | |
+| V2 | Download with progress, verified | Click Download: progress bar and "Downloading … MB of 157 MB"; the box can be closed meanwhile. Engine files and `models/ggml-base.en.bin` (147,964,211 bytes) appear in the voice folder; a wrong checksum discards the file and shows an inline error (covered by `TestInstallFailureReportsError`). | pass (download ~40 s) | | | |
+| V3 | Dictation to the input, no auto-save | Mic or Ctrl+M, say "remind me tomorrow at 5 pm to check the deploy hashtag backend". Listening row (ring, waveform, timer), auto-stop after a pause, "Transcribing…", then the text in the input with the preview. Nothing is saved until Enter. | pass with a TTS phrase as a fake mic: input "Remind me tomorrow at 5pm to check the deploy #Back", preview "Reminder Sat 28 Nov, 17:00 #back"; 1.4 s from auto-stop to text | | | |
+| V4 | Esc / blur / Ctrl+M | Esc while listening cancels; losing focus while listening drops the recording; Ctrl+M starts and stops. | pass (DevTools-dispatched keys and blur) | | | |
+| V5 | Real microphone and permission | Speak into a real mic; then turn off Settings › Privacy & security › Microphone › desktop apps and try again: an inline message explains the fix. On macOS the OS asks once. | needs human (no mic used in the automated run) | | | |
+| V6 | whisper exits after idle and with the app | ~30 s after the last dictation no `whisper-server` process is left; killing the app while it runs takes it down too (Windows job object). | pass | | | |
+
+Windows run (same machine as above; temp copy, `APPDATA`/`LOCALAPPDATA` pointed at scratch folders). The automated run used a test-only build that also passes `--remote-debugging-port` and Chromium's fake-mic flags (`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>`) through `AdditionalBrowserArgs`; the shipped build has no such hook, and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is ignored because Wails sets its own arguments.
+
+| Moment | App (Go) WS / private | WebView2 tree WS / private | whisper-server WS / private |
+|---|---|---|---|
+| Before any voice use | 35 / 53 MB | 322 / 141 MB (6 processes) | none |
+| Listening (engine warmed) | 47 / 61 MB | 387 / 164 MB (7 processes) | 207 / 736 MB |
+| Right after transcription | 50 / 63 MB | 390 / 164 MB | 256 / 746 MB |
+| 35 s after the last dictation | 50 / 63 MB | 387 / 161 MB (7 processes) | none |
+
+Notes: whisper-server (8 threads on 16 cores, `base.en`) commits about 740 MB private while it runs (working set about 250 MB); it is gone 30 s after use. After the first dictation WebView2 keeps one extra utility process (the audio service), about +16 MB private, until the app restarts.

@@ -8,14 +8,17 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Download,
   Ellipsis,
   Inbox,
+  Mic,
   Pencil,
   Plus,
   Repeat,
   RepeatOff,
   Search,
   Settings,
+  Square,
   SquareCheckBig,
   Trash2,
   TriangleAlert,
@@ -63,6 +66,9 @@ export const icons = {
   close: render(X as IconNode),
   chevronDown: render(ChevronDown as IconNode),
   plus: render(Plus as IconNode),
+  mic: render(Mic as IconNode),
+  stop: render(Square as IconNode),
+  download: render(Download as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

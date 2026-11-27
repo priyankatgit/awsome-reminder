@@ -1,0 +1,66 @@
+package app
+
+import (
+	"context"
+	"log"
+	"os"
+	"path/filepath"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+
+	"awesome-reminder/internal/paths"
+	"awesome-reminder/internal/voice"
+)
+
+// EventVoiceStatus carries voice.Status whenever it changes (install
+// progress included).
+const EventVoiceStatus = "voice:status"
+
+func init() {
+	application.RegisterEvent[voice.Status](EventVoiceStatus)
+}
+
+// VoiceService is the capture box's dictation backend, bound to the
+// frontend next to Service. It is a separate service so voice stays out of
+// the core wiring.
+type VoiceService struct {
+	m *voice.Manager
+}
+
+// Status reports whether voice is ready, downloadable or unsupported.
+func (v *VoiceService) Status() voice.Status { return v.m.Status() }
+
+// Install starts the download the user just agreed to; progress arrives as
+// EventVoiceStatus.
+func (v *VoiceService) Install() error { return v.m.Install() }
+
+// CancelInstall stops a running download.
+func (v *VoiceService) CancelInstall() { v.m.CancelInstall() }
+
+// Warm starts the speech engine while the user speaks.
+func (v *VoiceService) Warm(ctx context.Context) error { return v.m.Warm(ctx) }
+
+// Transcribe turns base64 16 kHz mono Int16 PCM into one capture line.
+func (v *VoiceService) Transcribe(ctx context.Context, pcm string) (string, error) {
+	return v.m.Transcribe(ctx, pcm)
+}
+
+// ServiceShutdown stops the engine and any download when the app quits.
+func (v *VoiceService) ServiceShutdown() error {
+	v.m.Close()
+	return nil
+}
+
+// registerVoice binds VoiceService to app.
+func registerVoice(app *application.App) {
+	dir, err := paths.VoiceDir()
+	if err != nil {
+		log.Printf("voice dir: %v", err)
+		dir = filepath.Join(os.TempDir(), "awesome-reminder-voice")
+	}
+	m := voice.NewManager(voice.Config{
+		Dir:      dir,
+		OnStatus: func(s voice.Status) { app.Event.Emit(EventVoiceStatus, s) },
+	})
+	app.RegisterService(application.NewService(&VoiceService{m: m}))
+}

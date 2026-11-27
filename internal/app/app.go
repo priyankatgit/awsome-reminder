@@ -182,6 +182,7 @@ func Run(opts Options) error {
 		Emit:          func(name string, data any) { emit(name, data) },
 	})
 	app.RegisterService(application.NewService(svc))
+	registerVoice(app)
 	win.onAlertsClosed = svc.alertsClosed
 	// A settings window closed while recording a hotkey must not leave the
 	// global hotkey released.

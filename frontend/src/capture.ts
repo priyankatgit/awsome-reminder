@@ -3,6 +3,7 @@
 import { api, errorText, events, on, type Preview } from "./api";
 import { chip, el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
+import { mountVoice } from "./voice";
 
 const PREVIEW_DEBOUNCE_MS = 80;
 
@@ -20,10 +21,27 @@ const TEMPLATE = `
       <input class="cap-input" id="cap-input" type="text" autocomplete="off" spellcheck="false"
              aria-label="To-do or reminder" aria-describedby="cap-preview cap-hint"
              placeholder="remind me tomorrow 5pm check deploy #backend" />
-      <div class="cap-action-slot" aria-hidden="true"></div>
+      <div class="cap-listen" id="cap-listen" hidden>
+        <span class="cap-listen-label" id="cap-listen-label">Listening…</span>
+        <canvas class="cap-wave" id="cap-wave" aria-hidden="true"></canvas>
+        <span class="cap-timer" id="cap-timer">0:00</span>
+      </div>
+      <div class="cap-action-slot">
+        <button class="mic-btn" id="cap-mic" type="button" aria-label="Start dictation" aria-pressed="false"
+                title="Dictate (Ctrl+M)"><span class="mic-ring" aria-hidden="true"></span><span class="mic-icon" id="cap-mic-icon"></span></button>
+      </div>
       <span class="cap-flash" id="cap-flash" aria-hidden="true"></span>
     </div>
     <p class="cap-error" id="cap-error" role="alert" hidden></p>
+    <p class="sr-only" id="cap-voice-live" role="status" aria-live="polite"></p>
+    <section class="cap-voice" id="cap-voice" aria-labelledby="cap-voice-title" hidden>
+      <h2 class="cap-voice-title" id="cap-voice-title"></h2>
+      <p class="cap-voice-body" id="cap-voice-body"></p>
+      <div class="cap-progress" id="cap-progress" role="progressbar" aria-label="Voice download"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span class="cap-progress-bar" id="cap-progress-bar"></span></div>
+      <p class="cap-voice-meta" id="cap-voice-meta"></p>
+      <div class="cap-voice-actions" id="cap-voice-actions"></div>
+    </section>
     <div class="cap-picker" id="cap-picker" hidden>
       <label class="cap-picker-label" for="cap-due">Due</label>
       <input class="cap-due" id="cap-due" type="datetime-local" />
@@ -31,10 +49,17 @@ const TEMPLATE = `
       <span class="cap-picker-hint"><kbd>↵</kbd> set <kbd>Esc</kbd> cancel</span>
     </div>
     <div class="cap-preview" id="cap-preview" role="status" aria-live="polite"></div>
+    <div class="cap-listen-sub">Speak naturally — “remind me tomorrow at 5 pm to call Sam”</div>
     <footer class="cap-hint" id="cap-hint">
       <span><kbd>↵</kbd> save</span>
       <span><kbd>Tab</kbd> time</span>
+      <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> dictate</span>
       <span><kbd>Esc</kbd> close</span>
+    </footer>
+    <footer class="cap-hint cap-hint-voice">
+      <span>auto-stops after a pause</span>
+      <span><kbd>Esc</kbd> cancel</span>
+      <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> stop</span>
     </footer>
   </div>
 </main>`;
@@ -59,7 +84,16 @@ export function mountCapture(root: HTMLElement): void {
   let hideTimer: number | undefined; // pending flash/fade before hiding
   let endDraft = false; // the current text was saved or dismissed
 
+  let leadIcon: IconName = "search"; // what the parse preview wants
+  let listeningLead = false; // voice shows a mic instead while recording
+
   function setLead(name: IconName): void {
+    leadIcon = name;
+    if (listeningLead) return;
+    paintLead(name);
+  }
+
+  function paintLead(name: IconName): void {
     if (lead.dataset.icon === name && lead.firstChild) return;
     lead.dataset.icon = name;
     lead.innerHTML = icons[name];
@@ -142,6 +176,7 @@ export function mountCapture(root: HTMLElement): void {
    * kept so open() can cancel it if the box is reopened meanwhile.
    */
   function hide(): void {
+    voice.cancel();
     endDraft = true;
     box.classList.add("is-hidden");
     window.clearTimeout(hideTimer);
@@ -243,9 +278,36 @@ export function mountCapture(root: HTMLElement): void {
   });
   dueSet.addEventListener("click", () => void confirmPicker());
 
+  const voice = mountVoice(root, {
+    box,
+    input,
+    insert(text: string): void {
+      input.value = input.value.trim() === "" ? text : `${input.value.trimEnd()} ${text}`;
+      input.classList.remove("is-dictated");
+      void input.offsetWidth; // restart the fade-in
+      input.classList.add("is-dictated");
+      showError("");
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      void runPreview();
+    },
+    showError,
+    setListeningLead(on: boolean): void {
+      listeningLead = on;
+      lead.classList.toggle("is-listening", on);
+      paintLead(on ? "mic" : leadIcon);
+    },
+  });
+
   document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      if (!busy && picker.hidden) voice.toggle();
+      return;
+    }
     if (e.key !== "Escape") return;
     e.preventDefault();
+    if (voice.escape()) return;
     if (!picker.hidden) closePicker(true);
     else if (!busy) hide();
   });
@@ -256,6 +318,7 @@ export function mountCapture(root: HTMLElement): void {
   window.addEventListener("blur", () => {
     box.classList.add("is-hidden");
     closePicker(false);
+    voice.cancel(); // never keep the mic open behind a hidden box
   });
   window.addEventListener("focus", () => {
     box.classList.remove("is-hidden");

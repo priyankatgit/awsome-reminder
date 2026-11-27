@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,28 @@ func TestDataDirUnderUserConfig(t *testing.T) {
 	}
 	if filepath.Base(lg) != "awesome.log" || filepath.Dir(lg) != dir {
 		t.Errorf("LogPath = %q, want awesome.log inside %q", lg, dir)
+	}
+}
+
+func TestVoiceDirUnderUserCache(t *testing.T) {
+	tmp := t.TempDir()
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("LOCALAPPDATA", tmp)
+	case "darwin":
+		t.Setenv("HOME", tmp)
+	default:
+		t.Setenv("XDG_CACHE_HOME", tmp)
+		t.Setenv("HOME", tmp)
+	}
+	dir, err := VoiceDir()
+	if err != nil {
+		t.Fatalf("VoiceDir: %v", err)
+	}
+	if !strings.HasPrefix(dir, tmp) || filepath.Base(dir) != "voice" || filepath.Base(filepath.Dir(dir)) != "awesome-reminder" {
+		t.Errorf("VoiceDir = %q, want <cache>/awesome-reminder/voice under %q", dir, tmp)
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		t.Errorf("VoiceDir should exist (err=%v)", err)
 	}
 }

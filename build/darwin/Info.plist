@@ -22,6 +22,8 @@
 		<string>12.0.0</string>
 		<key>NSHighResolutionCapable</key>
 		<string>true</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Awesome Reminder listens only while you dictate a reminder. Audio is transcribed on this computer.</string>
 		<key>NSHumanReadableCopyright</key>
 		<string>(c) 2026 Awesome Reminder contributors</string>
 	</dict>

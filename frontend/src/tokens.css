@@ -206,3 +206,28 @@
     --tag-7-fg: #9A3412; --tag-7-bg: #FFEDD5;
   }
 }
+
+/* Voice dictation in the capture box (Phase 1.5). Kept in its own block so
+   it merges cleanly with other token changes. */
+:root {
+  --on-danger: #FFFFFF; /* icon on the --danger stop button */
+  --mic-size: 36px; /* visible circle inside the 48px hit area */
+  --wave-bars: 24;
+  --wave-bar: 3px;
+  --wave-gap: 2px;
+  --wave-width: 118px; /* 24 bars * 3px + 23 gaps * 2px */
+  --wave-height: 24px;
+  --wave-opacity: 0.8;
+  --wave-fps: 30;
+  --pulse-scale: 1.35;
+  --pulse-opacity: 0.5;
+  --pulse-static-scale: 1.18; /* reduced motion: a still ring */
+  --pulse-ring: 2px;
+  --dur-pulse: 1400ms;
+  --dur-shimmer: 1200ms;
+  --dur-dictated: 160ms;
+  --dur-progress: 150ms;
+  --dot-size: 4px;
+  --dot-dim: 0.25;
+  --progress-height: 4px;
+}

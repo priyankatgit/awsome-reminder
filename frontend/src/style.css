@@ -1460,3 +1460,305 @@ legend.field-label {
     transition: none !important;
   }
 }
+
+/* ---------- Capture box: voice dictation (Phase 1.5) ---------- */
+
+.cap-action-slot {
+  display: grid;
+  place-items: center;
+}
+
+.mic-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--hit-area);
+  height: var(--hit-area);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.mic-icon {
+  display: grid;
+  place-items: center;
+  width: var(--mic-size);
+  height: var(--mic-size);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--dur-hover), color var(--dur-hover);
+}
+
+.mic-btn:hover .mic-icon {
+  background: var(--muted);
+  color: var(--fg);
+}
+
+.mic-ring {
+  position: absolute;
+  top: calc((var(--hit-area) - var(--mic-size)) / 2);
+  left: calc((var(--hit-area) - var(--mic-size)) / 2);
+  width: var(--mic-size);
+  height: var(--mic-size);
+  border: var(--pulse-ring) solid var(--danger);
+  border-radius: var(--radius-pill);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.capture[data-voice="listening"] .mic-icon,
+.capture[data-voice="listening"] .mic-btn:hover .mic-icon {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.capture[data-voice="listening"] .mic-icon .icon {
+  fill: currentColor;
+}
+
+.capture[data-voice="listening"] .mic-ring {
+  animation: mic-pulse var(--dur-pulse) ease-out infinite;
+}
+
+.capture[data-voice="transcribing"] .mic-btn {
+  cursor: default;
+}
+
+.capture[data-voice="transcribing"] .mic-icon {
+  opacity: var(--completing-opacity);
+}
+
+@keyframes mic-pulse {
+  from {
+    opacity: var(--pulse-opacity);
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(var(--pulse-scale));
+  }
+}
+
+.cap-lead.is-listening {
+  color: var(--danger);
+}
+
+/* The listening row takes the input's place; same height, no layout shift. */
+.capture[data-voice="listening"] .cap-input,
+.capture[data-voice="transcribing"] .cap-input {
+  display: none;
+}
+
+.cap-listen {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  height: var(--hit-area);
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+}
+
+.cap-listen[hidden],
+.cap-voice[hidden],
+.cap-progress[hidden] {
+  display: none;
+}
+
+.cap-listen-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  color: var(--danger-text);
+  font-weight: var(--weight-medium);
+}
+
+.capture[data-voice="transcribing"] .cap-listen-label {
+  color: var(--fg);
+}
+
+.cap-wave {
+  width: var(--wave-width);
+  height: var(--wave-height);
+  color: var(--danger);
+}
+
+.capture[data-voice="transcribing"] .cap-wave {
+  visibility: hidden;
+}
+
+.cap-timer {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.cap-dots {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.cap-dots i {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: var(--dot-dim);
+  animation: cap-dot var(--dur-shimmer) ease-in-out infinite;
+}
+
+.cap-dots i:nth-child(2) {
+  animation-delay: calc(var(--dur-shimmer) / 6);
+}
+
+.cap-dots i:nth-child(3) {
+  animation-delay: calc(var(--dur-shimmer) / 3);
+}
+
+@keyframes cap-dot {
+  0%,
+  100% {
+    opacity: var(--dot-dim);
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* While recording, the preview and hint rows swap for the voice versions. */
+.cap-listen-sub,
+.cap-hint-voice {
+  display: none;
+}
+
+.capture[data-voice="listening"] .cap-preview,
+.capture[data-voice="transcribing"] .cap-preview,
+.capture[data-voice="listening"] .cap-hint:not(.cap-hint-voice),
+.capture[data-voice="transcribing"] .cap-hint:not(.cap-hint-voice) {
+  display: none;
+}
+
+.capture[data-voice="listening"] .cap-listen-sub,
+.capture[data-voice="transcribing"] .cap-listen-sub {
+  display: block;
+  min-height: calc(var(--line-body) + 2 * var(--space-2) + var(--hairline));
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+  color: var(--fg-muted);
+}
+
+.capture[data-voice="listening"] .cap-hint-voice,
+.capture[data-voice="transcribing"] .cap-hint-voice {
+  display: flex;
+}
+
+/* Setup panel: consent, download progress, "ready". Replaces the preview. */
+.capture[data-voice="consent"] .cap-preview,
+.capture[data-voice="installing"] .cap-preview,
+.capture[data-voice="ready-note"] .cap-preview {
+  display: none;
+}
+
+.cap-voice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.cap-voice-title {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-body);
+}
+
+.cap-voice-body {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.cap-progress {
+  height: var(--progress-height);
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  overflow: hidden;
+}
+
+.cap-progress-bar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform var(--dur-progress) linear;
+}
+
+.cap-voice-meta {
+  margin: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-voice-meta:empty {
+  display: none;
+}
+
+.cap-voice-meta.is-error {
+  color: var(--danger);
+  font-family: var(--font-ui);
+}
+
+.cap-voice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.cap-voice-actions:empty {
+  display: none;
+}
+
+/* Dictated text fades in (no typing effect). */
+.cap-input.is-dictated {
+  animation: cap-dictated var(--dur-dictated) var(--ease-enter);
+}
+
+@keyframes cap-dictated {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture[data-voice="listening"] .mic-ring {
+    animation: none;
+    opacity: var(--pulse-opacity);
+    transform: scale(var(--pulse-static-scale));
+  }
+
+  .cap-dots i,
+  .cap-input.is-dictated {
+    animation: none;
+  }
+
+  .cap-dots i {
+    opacity: 1;
+  }
+
+  .cap-progress-bar {
+    transition: none;
+  }
+}

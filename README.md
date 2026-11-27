@@ -61,6 +61,25 @@ Date and time may come in either order, and a leading `at`, `on`, `for` or `by` 
 
 If the resulting time is already in the past the preview warns "time is in the past". Bare-hour rule: 1-7 is pm, 8-12 is as written, 13-23 is 24-hour.
 
+### Voice
+
+Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself after about 1.5 seconds of silence (or at 30 seconds). Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
+
+- Say "hashtag" or "hash tag" before a word to tag it (`#backend`). Spoken times such as "five p.m." and "in two hours" become `5 pm` and `in 2 hours` so the parser understands them.
+- **Everything stays on your computer.** Speech is turned into text locally by [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with the English `base.en` model. No audio or text is sent anywhere.
+- **First use asks before downloading.** The first time you press the mic, the box explains what is needed and offers a one-time download: about 9 MB for the speech engine and 148 MB for the model (157 MB on Windows). Nothing is downloaded until you click **Download**. A progress bar shows the download; you can close the box and it continues. Each file is checked against a pinned SHA-256 before it is used (whisper.cpp release `b5454` = v1.9.5).
+- **No memory cost while idle.** The speech engine starts when you start listening (so the model loads while you talk), and exits 30 seconds after your last dictation. It uses at most half your CPU cores (8 at most) and no GPU. Measured on Windows 11 (16 cores): while you dictate the engine takes about 250 MB of working set (about 740 MB committed); once it exits, voice adds nothing but one small WebView2 audio process (about 16 MB).
+- **Microphone access.** On Windows, if dictation says the microphone is blocked, turn on Settings › Privacy & security › Microphone › "Let desktop apps access your microphone". On macOS the system asks once. If the box loses focus while listening, the recording is dropped and the mic is released.
+- **Removing voice:** delete the `voice` folder listed under "Where data lives".
+
+Engine per OS:
+
+| OS | Engine |
+|---|---|
+| Windows x64 | Official whisper.cpp release build, downloaded on consent. It needs the Microsoft Visual C++ Redistributable (x64), which most PCs already have; if it is missing the box links to [the installer](https://aka.ms/vs/17/release/vc_redist.x64.exe). |
+| Linux x64 / arm64 | Official whisper.cpp Ubuntu build, downloaded on consent (needs glibc from Ubuntu 22.04 or newer). |
+| macOS | whisper.cpp publishes no macOS binaries. Install the engine with Homebrew, `brew install whisper.cpp`; the app then downloads only the model. Each dictation runs `whisper-cli` once, so there is no warm start. A `whisper-server` you built yourself and put on `PATH` is used instead when present. |
+
 ### Alerts
 
 A reminder alerts at each lead time before it is due (default 1 hour and 10 minutes) and again at the due time. The alert pop-up appears at the bottom right without taking keyboard focus. Each card offers **Done**, **Snooze** (10 min, 1 hour, tomorrow) and **Open**. If the computer was asleep or the app was not running through a due time, you get one "missed" card per item when it wakes, not a burst of every alert you skipped.
@@ -105,6 +124,8 @@ Everything is under the per-user config directory, in an `awesome-reminder` fold
 
 It holds `awesome.db` (the SQLite database) and `awesome.log`. Settings are stored in the database. Delete the folder to reset the app.
 
+The voice engine and model (Phase 1.5, about 160 MB) live in the local cache instead, so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux. Delete that folder to remove voice; the next mic press offers the download again.
+
 ### Command-line flags
 
 Only one copy of the app runs. Starting it again with a flag asks the running copy to do something and exits:
@@ -135,12 +156,11 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Nothing leaves your machine.
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
 
 Planned, in order:
 
-1. **Phase 1.5:** voice dictation in the capture box (click to dictate, the text goes through the same parser; Enter always saves).
-2. **Phase 2:** optional sync across your machines through your own MongoDB Atlas cluster, with sync status indicators in the tray and list.
-3. **Phase 3:** optional phone push for reminders through ntfy.
+1. **Phase 2:** optional sync across your machines through your own MongoDB Atlas cluster, with sync status indicators in the tray and list.
+2. **Phase 3:** optional phone push for reminders through ntfy.
 
 The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).
