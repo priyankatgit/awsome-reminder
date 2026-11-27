@@ -6,10 +6,12 @@ import {
   Bell,
   CalendarClock,
   Check,
+  ChevronDown,
   ChevronRight,
   Ellipsis,
   Inbox,
   Pencil,
+  Plus,
   Repeat,
   RepeatOff,
   Search,
@@ -17,6 +19,7 @@ import {
   SquareCheckBig,
   Trash2,
   TriangleAlert,
+  X,
 } from "lucide";
 
 type IconNode = [tag: string, attrs: Record<string, string | number | undefined>][];
@@ -57,6 +60,9 @@ export const icons = {
   snooze: render(AlarmClock as IconNode),
   edit: render(Pencil as IconNode),
   trash: render(Trash2 as IconNode),
+  close: render(X as IconNode),
+  chevronDown: render(ChevronDown as IconNode),
+  plus: render(Plus as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

@@ -59,7 +59,7 @@ kbd {
 }
 
 .btn-primary {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 
@@ -917,6 +917,506 @@ html[data-view="list"] body {
 
 .toast-action:focus-visible {
   outline-color: var(--bg);
+}
+
+/* ---------- Shared controls ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.btn .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.btn-ghost {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg);
+  transition: background-color var(--dur-hover);
+}
+
+.btn-ghost:hover {
+  background: var(--muted);
+  opacity: 1;
+}
+
+.btn:disabled {
+  cursor: default;
+  opacity: var(--completing-opacity);
+}
+
+/* ---------- Alert popup ---------- */
+
+/* Like the capture box: over a native backdrop the window is the box. */
+.alert-app {
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--surface-glass);
+}
+
+html[data-backdrop="solid"] .alert-app {
+  background: var(--bg);
+  border-radius: var(--radius-window);
+  box-shadow: var(--shadow-float);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .alert-app {
+    background: var(--bg);
+  }
+}
+
+/* Dev preview in a plain browser: size the box like the native window. */
+html[data-demo] .alert-app {
+  width: var(--alert-width);
+  height: auto;
+  margin: var(--space-4);
+}
+
+.alert-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  transition: opacity var(--dur-exit) var(--ease-exit), transform var(--dur-exit) var(--ease-exit);
+}
+
+.alert-card + .alert-card {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.alert-card.is-entering {
+  animation: alert-enter var(--dur-alert-enter) var(--ease-enter);
+}
+
+.alert-card.is-leaving {
+  opacity: 0;
+  transform: translateY(var(--alert-enter-offset));
+  pointer-events: none;
+}
+
+@keyframes alert-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--alert-enter-offset));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.alert-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+}
+
+.alert-bell {
+  display: inline-flex;
+  color: var(--time-text);
+}
+
+.alert-when {
+  flex: 1;
+  min-width: 0;
+  color: var(--time-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.alert-card[data-when="now"] .alert-bell,
+.alert-card[data-when="now"] .alert-when {
+  color: var(--accent-text);
+}
+
+.alert-card[data-when="missed"] .alert-bell,
+.alert-card[data-when="missed"] .alert-when,
+.alert-card[data-when="overdue"] .alert-bell,
+.alert-card[data-when="overdue"] .alert-when {
+  color: var(--danger-text);
+}
+
+.alert-card[data-when="snoozed"] .alert-when {
+  color: var(--fg-muted);
+}
+
+.alert-close {
+  margin-right: calc(-1 * var(--space-1));
+}
+
+.alert-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--alert-text-lines);
+  user-select: text;
+}
+
+.alert-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.alert-repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.alert-repeat .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.alert-error {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.alert-error[hidden],
+.alert-snooze[hidden],
+.alert-foot[hidden],
+.alert-more[hidden] {
+  display: none;
+}
+
+.alert-actions,
+.alert-snooze {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--hit-pad) 0;
+}
+
+/* 32px buttons with a 40px hit area. */
+.alert-btn {
+  position: relative;
+}
+
+.alert-btn::after {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--hit-pad)) 0;
+}
+
+.alert-snooze-label {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+}
+
+.alert-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.alert-clear {
+  margin-left: auto;
+}
+
+/* ---------- Settings window ---------- */
+
+html[data-view="settings"],
+html[data-view="settings"] body {
+  background: var(--bg);
+}
+
+.settings-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.settings-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: var(--settings-max);
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field-label {
+  padding: 0;
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+/* A legend is not a flex item of its fieldset: give it the row gap. */
+legend.field-label {
+  margin-bottom: var(--space-2);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.field-joiner,
+.field-help {
+  color: var(--fg-muted);
+}
+
+.field-help,
+.field-error {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.field-error {
+  color: var(--danger-text);
+}
+
+.field-error[hidden] {
+  display: none;
+}
+
+.field-switch {
+  justify-content: space-between;
+}
+
+.input {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  user-select: text;
+}
+
+.input[aria-invalid="true"],
+.hotkey-pill[aria-invalid="true"],
+.lead-box:has(.lead-add[aria-invalid="true"]) {
+  border-color: var(--danger);
+}
+
+.input-time {
+  font-family: var(--font-mono);
+}
+
+.input-path {
+  flex: 1;
+  min-width: var(--path-min);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
+.input-path::placeholder,
+.lead-add::placeholder {
+  color: var(--fg-muted);
+}
+
+/* Hotkey recorder: a pill of keycaps; "Press keys…" while recording. */
+.hotkey-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--dur-hover);
+}
+
+.hotkey-pill:hover {
+  border-color: var(--fg-muted);
+}
+
+.hotkey-pill.is-recording {
+  border-color: var(--accent);
+}
+
+.hotkey-prompt {
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
+/* Lead-time chips with an inline "+ add" input. */
+.lead-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  cursor: text;
+}
+
+.lead-box:focus-within {
+  border-color: var(--fg-muted);
+}
+
+.lead-chips {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--chip-height);
+  padding: 0 0 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  background: var(--time-chip-bg);
+  color: var(--time-chip-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.lead-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--chip-height);
+  height: var(--chip-height);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.lead-remove:hover {
+  background: var(--muted);
+}
+
+.lead-remove .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.lead-add {
+  flex: 1;
+  min-width: var(--lead-input-width);
+  height: var(--chip-height);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  user-select: text;
+}
+
+.lead-add:focus-visible {
+  outline: none;
+}
+
+.lead-box:has(.lead-add:focus-visible) {
+  outline: var(--ring-width) solid var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+/* Autostart switch: a styled checkbox (role=switch). */
+.switch {
+  position: relative;
+  flex: none;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  margin: 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  appearance: none;
+  cursor: pointer;
+  transition: background-color var(--dur-hover);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--switch-inset) - var(--hairline));
+  left: calc(var(--switch-inset) - var(--hairline));
+  width: var(--switch-knob);
+  height: var(--switch-knob);
+  border-radius: var(--radius-pill);
+  background: var(--fg-muted);
+  transition: transform var(--dur-hover);
+}
+
+.switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  background: var(--on-accent);
+  transform: translateX(var(--switch-travel));
+}
+
+.settings-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: var(--hairline) solid var(--border);
+  background: var(--bg);
+}
+
+.settings-form-error {
+  flex-basis: 100%;
+  text-align: right;
+}
+
+.settings-status {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -2,14 +2,17 @@ import "./fonts.css";
 import "./tokens.css";
 import "./style.css";
 import { hasNativeBackdrop } from "./api";
+import { mountAlert } from "./alert";
 import { mountCapture } from "./capture";
 import { mountList } from "./list";
+import { mountSettings } from "./settings";
 
 // One page, one view per window, chosen by location.hash.
-// Later tasks add "alert" and "settings".
 const routes: Record<string, (root: HTMLElement) => void> = {
   capture: mountCapture,
   list: mountList,
+  alert: mountAlert,
+  settings: mountSettings,
 };
 
 const root = document.getElementById("app");
