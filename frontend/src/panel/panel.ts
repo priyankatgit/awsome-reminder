@@ -373,6 +373,11 @@ export function panelItemId(): string | null {
   return openId;
 }
 
+/** The title input: where the row's title lands when the panel opens with a morph. */
+export function panelTitle(): HTMLElement {
+  return title.input;
+}
+
 /**
  * Shows itemId in the panel, opening it if needed. A switch from another item
  * sends that item's pending edits first. focus "title" focuses the title once
@@ -425,5 +430,5 @@ export async function closePanel(): Promise<void> {
     if (openId !== null) return; // reopened during the slide
     root.hidden = true;
     quiet(() => api.restoreListWidth());
-  }, motionMs("--dur-exit"));
+  }, motionMs("--dur-panel-exit"));
 }

@@ -23,12 +23,62 @@ html[data-panel="open"] .toast {
   border-left: var(--hairline) solid var(--border);
   background: var(--surface);
   transform: translateX(100%);
-  transition: transform var(--dur-exit) var(--ease-exit);
+  transition: transform var(--dur-panel-exit) var(--ease-exit);
 }
 
 .panel.is-open {
   transform: none;
-  transition: transform var(--dur-panel) var(--ease-enter);
+  transition: transform var(--dur-panel) var(--ease-spring);
+}
+
+/* The spring overshoots a little past its rest: surface past the right edge
+   so no gap opens there. */
+.panel::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: var(--panel-overshoot-cover);
+  background: var(--surface);
+}
+
+/* Row grows into the panel (same-document View Transitions, where the engine
+   has them; list.ts falls back to the slide above). The clicked row's title
+   and the panel's title share view-transition-name "item-title"; list.ts
+   replaces the UA's size morph of that group with a translate, so only
+   transform and opacity animate. The panel springs in as its own layer and
+   the rest of the page switches at once. */
+html[data-vt] .panel {
+  transition: none;
+  view-transition-name: detail-panel;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-new(detail-panel) {
+  animation: panel-in var(--dur-panel) var(--ease-spring);
+}
+
+::view-transition-group(item-title) {
+  animation-duration: var(--dur-panel);
+  animation-timing-function: var(--ease-spring);
+}
+
+::view-transition-old(item-title),
+::view-transition-new(item-title) {
+  width: auto;
+  height: auto;
+  animation-duration: var(--dur-panel);
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(100%);
+  }
 }
 
 .panel[hidden] {

@@ -3,6 +3,7 @@
 import { api, errorText, events, on, type Preview } from "./api";
 import { el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
+import { canAnimate, easing, pop, ring, tokenNumber } from "./motion";
 import { priorityLabel, setPriorityToken, type Priority } from "./priority";
 import { mountVoice } from "./voice";
 
@@ -124,6 +125,8 @@ export function mountCapture(root: HTMLElement): void {
   let restingLead: IconName = "search"; // the lead once the reminder fades out
   let remindTimer: number | undefined; // pending end of the fade-out
 
+  let fly: Animation | null = null; // the saved line flying to the tray
+
   function setLead(name: IconName): void {
     leadIcon = name;
     if (listeningLead) return;
@@ -167,6 +170,8 @@ export function mountCapture(root: HTMLElement): void {
         setLead("bell");
         play(lead, "is-pop");
         play(badge, "is-pop");
+        const bell = lead.querySelector("svg");
+        if (bell && !listeningLead) ring(bell); // once, after the pop
       }
       remindOn = true;
       remindHuman = human;
@@ -181,7 +186,7 @@ export function mountCapture(root: HTMLElement): void {
     remindSay.textContent = "Reminder removed";
     lead.classList.add("is-leaving");
     badge.classList.add("is-leaving");
-    remindTimer = window.setTimeout(endRemind, motionMs("--dur-exit"));
+    remindTimer = window.setTimeout(endRemind, motionMs("--dur-pop-exit"));
   }
 
   /** Puts the indicator away at once (end of the fade-out, or a reset). */
@@ -195,8 +200,14 @@ export function mountCapture(root: HTMLElement): void {
     setLead(restingLead);
   }
 
+  /** Shows priority p on the chips; a chip turning on pops on the spring. */
   function showPriority(p: string): void {
-    for (const c of prioChips) c.setAttribute("aria-pressed", String(c.dataset.prio === p));
+    for (const c of prioChips) {
+      const on = c.dataset.prio === p;
+      const was = c.getAttribute("aria-pressed") === "true";
+      c.setAttribute("aria-pressed", String(on));
+      if (on && !was) pop(c, "--chip-pop-scale", "--dur-chip");
+    }
   }
 
   function renderPreview(p: Preview | null): void {
@@ -268,7 +279,55 @@ export function mountCapture(root: HTMLElement): void {
       renderPreview(null);
     }
     flash.classList.remove("is-on");
+    endFly();
     busy = false;
+  }
+
+  /**
+   * After a save: a copy of the typed line shrinks and flies to the
+   * bottom-right corner (towards the tray) while the input shows nothing.
+   * Returns false when motion is off, and the caller hides as before.
+   */
+  function flyAway(): boolean {
+    if (!canAnimate(input) || input.value.trim() === "") return false;
+    const r = input.getBoundingClientRect();
+    const cs = getComputedStyle(input);
+    const padL = parseFloat(cs.paddingLeft) || 0;
+    const padR = parseFloat(cs.paddingRight) || 0;
+    const ghost = el("span", "cap-fly", input.value);
+    ghost.setAttribute("aria-hidden", "true");
+    Object.assign(ghost.style, {
+      left: `${r.left + padL}px`,
+      top: `${r.top}px`,
+      maxWidth: `${Math.max(r.width - padL - padR, 0)}px`,
+      height: `${r.height}px`,
+      lineHeight: `${r.height}px`,
+    });
+    box.append(ghost);
+    box.classList.add("is-flying"); // the input's own text and caret go blank
+    const g = ghost.getBoundingClientRect();
+    const dx = window.innerWidth - g.right;
+    const dy = window.innerHeight - g.bottom;
+    const lift = tokenNumber("--fly-lift");
+    fly = ghost.animate(
+      [
+        // A quick rise (ease-out), then the dive into the corner (ease-in).
+        { transform: "none", opacity: 1, easing: easing("--ease-enter") },
+        { transform: `translateY(${lift}px)`, opacity: 1, offset: 0.2, easing: easing("--ease-fly") },
+        { transform: `translate(${dx}px, ${dy}px) scale(${tokenNumber("--fly-scale")})`, opacity: 0 },
+      ],
+      { duration: motionMs("--dur-fly"), fill: "forwards" },
+    );
+    return true;
+  }
+
+  /** Drops the flying line at once (end of the hide, or a reopen mid-flight). */
+  function endFly(): void {
+    const a = fly;
+    fly = null;
+    a?.cancel();
+    box.querySelectorAll(".cap-fly").forEach((n) => n.remove());
+    box.classList.remove("is-flying");
   }
 
   /**
@@ -314,7 +373,10 @@ export function mountCapture(root: HTMLElement): void {
     endDraft = true;
     flash.classList.add("is-on");
     window.clearTimeout(hideTimer);
-    hideTimer = window.setTimeout(hide, motionMs("--dur-flash"));
+    // Saved already; now the line flies off and the box fades over the
+    // flight's last --dur-exit, so the window hides as the line arrives.
+    const wait = flyAway() ? Math.max(motionMs("--dur-fly") - motionMs("--dur-exit"), 0) : motionMs("--dur-flash");
+    hideTimer = window.setTimeout(hide, wait);
   }
 
   async function openPicker(): Promise<void> {

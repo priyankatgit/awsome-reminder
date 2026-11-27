@@ -9,8 +9,9 @@
 import { api, errorText, events, on, type Item, type SnoozePreset, type View } from "./api";
 import { el, keycaps, motionMs } from "./dom";
 import { icons } from "./icons";
-import { createRow, editRow, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
+import { createRow, editRow, effectiveDue, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
+import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide } from "./motion";
 
 const REFRESH_DEBOUNCE_MS = 50;
 const RETICK_MS = 60_000; // relative times and the Upcoming horizon move on
@@ -107,6 +108,7 @@ const TEMPLATE = `
     <span class="toast-text" id="list-toast-text"></span>
     <span class="toast-sep" id="list-toast-sep" aria-hidden="true" hidden>·</span>
     <button class="toast-action" id="list-toast-action" type="button" hidden></button>
+    <span class="toast-timer" id="list-toast-timer" aria-hidden="true" hidden></span>
   </div>
 </div>`;
 
@@ -124,6 +126,8 @@ export function mountList(root: HTMLElement): void {
   const toastText = root.querySelector<HTMLElement>("#list-toast-text")!;
   const toastAction = root.querySelector<HTMLButtonElement>("#list-toast-action")!;
   const toastSep = root.querySelector<HTMLElement>("#list-toast-sep")!;
+  const toastBar = root.querySelector<HTMLElement>("#list-toast-timer")!;
+  const content = root.querySelector<HTMLElement>(".list-content")!;
 
   let view: View | null = null; // null until the first fetch settles
   let nextView: View | null = null; // fetched while a done animation held rendering
@@ -139,6 +143,7 @@ export function mountList(root: HTMLElement): void {
   let refreshTimer: number | undefined;
   let focusAfterLoad: string | null = null; // item to focus once the first view renders
   let selectIdAfterRefresh: string | null = null;
+  const completing = new Set<string>(); // items whose done animation is running
 
   const sectionEls = new Map<string, SectionEls>();
   let sectionSeq = 0; // monotonic: section ids never repeat, even after a section is dropped
@@ -198,7 +203,7 @@ export function mountList(root: HTMLElement): void {
       btn.addEventListener("click", () => {
         doneOpen = !doneOpen;
         saveDoneOpen(doneOpen);
-        render();
+        render(true);
       });
       head.append(btn);
     } else {
@@ -228,13 +233,56 @@ export function mountList(root: HTMLElement): void {
     emptyText.replaceChildren("Nothing here. Press ", keycaps(hotkey), " to capture.");
   }
 
-  function render(): void {
+  /**
+   * Renders the model. animate (data changes, the Done toggle; not typing in
+   * search) glides rows and headers from where they were to where they land
+   * (FLIP), carries a row that changed section across, fades new rows in and
+   * leaves a fading ghost where a row went away.
+   */
+  function render(animate = false): void {
+    const before = animate && !reducedMotion() ? measure(reflowEls()) : null;
     rendering = true;
     try {
       renderNow();
     } finally {
       rendering = false;
     }
+    if (before) reflow(before);
+  }
+
+  function reflowEls(): HTMLElement[] {
+    return Array.from(sectionsBox.querySelectorAll<HTMLElement>(".sec-head, .sec-rows:not([hidden]) > .row"));
+  }
+
+  function reflow(before: Map<Element, DOMRect>): void {
+    const els = reflowEls();
+    for (const e of els) stopGlide(e);
+    const after = measure(els); // one layout pass, then only writes
+    const live = new Set<Element>(els);
+    const gone = new Map<string, { el: HTMLElement; rect: DOMRect }>(); // removed rows by item id
+    const goneHeads: { el: HTMLElement; rect: DOMRect }[] = [];
+    for (const [e, rect] of before) {
+      if (live.has(e) || !(e instanceof HTMLElement)) continue;
+      const id = e.dataset.id;
+      if (id && !gone.has(id)) gone.set(id, { el: e, rect });
+      else if (!id) goneHeads.push({ el: e, rect });
+    }
+    for (const e of els) {
+      const last = after.get(e)!;
+      const first = before.get(e);
+      if (first) {
+        glide(e, first, last);
+        continue;
+      }
+      const from = e.dataset.id ? gone.get(e.dataset.id) : undefined;
+      if (from) {
+        gone.delete(e.dataset.id!); // moved to another section: carry it across
+        glide(e, from.rect, last);
+      } else {
+        enter(e, "--row-enter-offset", last);
+      }
+    }
+    for (const g of [...gone.values(), ...goneHeads]) ghost(g.el, g.rect, content);
   }
 
   function renderNow(): void {
@@ -400,7 +448,7 @@ export function mountList(root: HTMLElement): void {
       view = nextView;
       nextView = null;
     }
-    render();
+    render(!first);
     if (first) {
       void consumeFocus();
       if (focusAfterLoad) {
@@ -457,8 +505,23 @@ export function mountList(root: HTMLElement): void {
   let toastTimer: number | undefined;
   let toastRun: (() => void) | null = null;
 
+  let toastBarRun: Animation | null = null;
+
+  /** The undo bar runs down over TOAST_MS; stopped, it rests full (paused toast). */
+  function runToastBar(on: boolean): void {
+    toastBarRun?.cancel();
+    toastBarRun = null;
+    if (!on || toastBar.hidden || !canAnimate(toastBar)) return;
+    toastBarRun = toastBar.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }], {
+      duration: TOAST_MS,
+      easing: "linear",
+      fill: "forwards",
+    });
+  }
+
   function hideToast(): void {
     window.clearTimeout(toastTimer);
+    runToastBar(false);
     toast.classList.remove("is-visible");
     toastRun = null;
   }
@@ -466,6 +529,13 @@ export function mountList(root: HTMLElement): void {
   function armToast(): void {
     window.clearTimeout(toastTimer);
     toastTimer = window.setTimeout(hideToast, TOAST_MS);
+    runToastBar(true);
+  }
+
+  /** Pointer or focus on the toast: it stays, and its bar rests full. */
+  function pauseToast(): void {
+    window.clearTimeout(toastTimer);
+    runToastBar(false);
   }
 
   function showToast(message: string, action?: { label: string; run: () => void }): void {
@@ -473,6 +543,7 @@ export function mountList(root: HTMLElement): void {
     toastAction.hidden = toastSep.hidden = !action;
     toastAction.textContent = action?.label ?? "";
     toastRun = action?.run ?? null;
+    toastBar.hidden = !action || reducedMotion(); // a still bar would say nothing
     toast.classList.add("is-visible");
     armToast();
   }
@@ -484,9 +555,9 @@ export function mountList(root: HTMLElement): void {
     selectedRow()?.focus({ preventScroll: true });
   });
   // Don't let the toast vanish while the pointer or focus is on it.
-  toast.addEventListener("pointerenter", () => window.clearTimeout(toastTimer));
+  toast.addEventListener("pointerenter", pauseToast);
   toast.addEventListener("pointerleave", () => toast.classList.contains("is-visible") && armToast());
-  toast.addEventListener("focusin", () => window.clearTimeout(toastTimer));
+  toast.addEventListener("focusin", pauseToast);
   toast.addEventListener("focusout", () => toast.classList.contains("is-visible") && armToast());
 
   function fail(err: unknown): void {
@@ -511,19 +582,43 @@ export function mountList(root: HTMLElement): void {
     }
     const rows = Array.from(sectionsBox.querySelectorAll<HTMLElement>(".row")).filter((r) => r.dataset.id === it.id);
     rows.forEach((r) => r.classList.add("is-completing"));
+    const party = clearsToday(it);
+    completing.add(it.id);
     holds++;
-    const wait = new Promise((res) => window.setTimeout(res, motionMs("--dur-done")));
+    // The check draws, then the strike follows (--done-stagger later).
+    const wait = new Promise((res) => window.setTimeout(res, motionMs("--dur-done") + motionMs("--done-stagger")));
     try {
       await Promise.all([api.done(it.id), wait]);
+      if (party && row.isConnected) {
+        const box = row.querySelector(".check-box")?.getBoundingClientRect();
+        if (box) celebrate(box.left + box.width / 2, box.top + box.height / 2);
+      }
     } catch (err) {
       fail(err);
     } finally {
+      completing.delete(it.id);
       holds--;
       // Force a refill so a failed or recurring Done drops the strike-through.
       rows.forEach((r) => r.dataset.key && rowSigs.delete(r.dataset.key));
       if (it.rrule) selectIdAfterRefresh = it.id;
       applyIfIdle();
     }
+  }
+
+  /**
+   * Whether completing it leaves nothing due today: it is due by the end of
+   * today (overdue counts) and no other open reminder is, apart from ones
+   * whose done animation is already running.
+   */
+  function clearsToday(it: Item): boolean {
+    if (!view) return false;
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    const dueToday = (i: Item) => {
+      const d = effectiveDue(i, now);
+      return isReminder(i) && !isDone(i) && d !== null && d.getTime() < end;
+    };
+    return dueToday(it) && !(view.upcoming ?? []).some((i) => i.id !== it.id && !completing.has(i.id) && dueToday(i));
   }
 
   async function remove(row: HTMLElement): Promise<void> {
@@ -617,9 +712,71 @@ export function mountList(root: HTMLElement): void {
   /** Opens the panel on row's item; focus "title" puts the caret in its title. */
   async function openDetails(row: HTMLElement | null | undefined, focus?: "title"): Promise<void> {
     const m = modelOf(row ?? null);
-    if (!m) return;
+    if (!m || !row) return;
     const mod = await loadPanel();
+    if (!mod.isPanelOpen() && canMorph()) return morphOpen(mod, row, m.item.id, focus);
     await mod.openPanel(m.item.id, focus);
+  }
+
+  /** Same-document View Transitions (Chromium/WebView2), motion allowed. */
+  function canMorph(): boolean {
+    return typeof document.startViewTransition === "function" && !reducedMotion();
+  }
+
+  /**
+   * Opens the panel with the row's title growing into the panel's title: a
+   * view transition in which both carry the name "item-title" (panel.css).
+   * Any key press or click skips it, so input acts at once.
+   */
+  async function morphOpen(mod: PanelModule, row: HTMLElement, id: string, focus?: "title"): Promise<void> {
+    const src = row.querySelector<HTMLElement>(".row-text");
+    if (!src || !row.isConnected) return mod.openPanel(id, focus);
+    const dst = mod.panelTitle();
+    const from = src.getBoundingClientRect();
+    const html = document.documentElement;
+    src.style.viewTransitionName = "item-title";
+    html.dataset.vt = "";
+    const t = document.startViewTransition(async () => {
+      src.style.viewTransitionName = "";
+      dst.style.viewTransitionName = "item-title";
+      await mod.openPanel(id, focus);
+    });
+    const skip = () => t.skipTransition();
+    document.addEventListener("keydown", skip, true);
+    document.addEventListener("pointerdown", skip, true);
+    // A window that gets no frames (hidden, occluded) never captures the old
+    // state, and the panel would wait for the UA timeout: open it plainly.
+    const stall = window.setTimeout(skip, motionMs("--dur-panel"));
+    void t.updateCallbackDone.finally(() => window.clearTimeout(stall)).catch(() => undefined);
+    t.ready.then(() => slideTitle(from, dst)).catch(() => undefined);
+    void t.finished
+      .catch(() => undefined)
+      .finally(() => {
+        src.style.viewTransitionName = "";
+        dst.style.viewTransitionName = "";
+        delete html.dataset.vt;
+        document.removeEventListener("keydown", skip, true);
+        document.removeEventListener("pointerdown", skip, true);
+      });
+    await t.updateCallbackDone.catch(() => undefined);
+  }
+
+  /**
+   * Replaces the UA's morph of the title group (which animates width and
+   * height) with a translate from the row's title to the panel's: only
+   * transform moves, while the old and new title cross-fade at their own size.
+   */
+  function slideTitle(from: DOMRect, dst: HTMLElement): void {
+    const pseudo = "::view-transition-group(item-title)";
+    const html = document.documentElement;
+    for (const a of html.getAnimations({ subtree: true })) {
+      if ((a.effect as KeyframeEffect | null)?.pseudoElement === pseudo) a.cancel();
+    }
+    const to = dst.getBoundingClientRect();
+    html.animate(
+      [{ transform: `translate(${from.left}px, ${from.top}px)` }, { transform: `translate(${to.left}px, ${to.top}px)` }],
+      { duration: motionMs("--dur-panel"), easing: easing("--ease-spring"), pseudoElement: pseudo },
+    );
   }
 
   /** After a keyboard move: an open panel follows the selection. */
