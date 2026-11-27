@@ -65,7 +65,7 @@ export function mountSyncSection(host: HTMLElement): void {
   uriError.hidden = true;
   const connect = el("button", "btn btn-primary", "Connect");
   connect.type = "button";
-  connect.disabled = true;
+  connect.setAttribute("aria-disabled", "true");
   const connectRow = el("div", "field-row");
   connectRow.append(connect);
   off.append(uriLabel, box, uriHelp, uriError, connectRow);
@@ -122,8 +122,15 @@ export function mountSyncSection(host: HTMLElement): void {
     target.hidden = text === "";
   };
 
+  function setDisabled(b: HTMLButtonElement, v: boolean): void {
+    if (v) b.setAttribute("aria-disabled", "true");
+    else b.removeAttribute("aria-disabled");
+  }
+  const isDisabled = (b: HTMLElement) => b.getAttribute("aria-disabled") === "true";
+
   function renderOff(): void {
-    connect.disabled = busy || !looksLikeMongoURI(uri.value);
+    // aria-disabled, not disabled: the focused button keeps focus.
+    setDisabled(connect, busy || !looksLikeMongoURI(uri.value));
     connect.textContent = busy ? "Connecting…" : "Connect";
     connect.setAttribute("aria-busy", String(busy));
     if (uriError.hidden) uri.removeAttribute("aria-invalid");
@@ -150,7 +157,7 @@ export function mountSyncSection(host: HTMLElement): void {
         return p;
       }),
     );
-    nowBtn.disabled = syncing || status?.state === "syncing";
+    setDisabled(nowBtn, syncing || status?.state === "syncing");
   }
 
   function renderInfo(): void {
@@ -173,10 +180,11 @@ export function mountSyncSection(host: HTMLElement): void {
   async function refreshInfo(): Promise<void> {
     try {
       info = await api.sync.info();
-      connected = info.connected;
     } catch {
       info = info ? { ...info, attachmentBytes: -1 } : null;
     }
+    // Connected comes from the status; info only supplies the facts.
+    connected = status ? status.state !== "off" : (info?.connected ?? false);
     showView();
     renderInfo();
     renderStatusLine();
@@ -221,7 +229,7 @@ export function mountSyncSection(host: HTMLElement): void {
   connect.addEventListener("click", () => void doConnect());
 
   async function doConnect(): Promise<void> {
-    if (busy || !looksLikeMongoURI(uri.value)) return;
+    if (busy || isDisabled(connect) || !looksLikeMongoURI(uri.value)) return;
     busy = true;
     setError(uriError, "");
     renderOff();
@@ -250,7 +258,7 @@ export function mountSyncSection(host: HTMLElement): void {
 
   // ----- Sync now / Disconnect -----
   nowBtn.addEventListener("click", async () => {
-    if (syncing) return;
+    if (syncing || isDisabled(nowBtn)) return;
     syncing = true;
     setError(actionError, "");
     renderStatusLine();
