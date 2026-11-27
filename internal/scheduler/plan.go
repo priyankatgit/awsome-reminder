@@ -4,6 +4,7 @@ package scheduler
 import (
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -183,10 +184,12 @@ func Plan(items []model.Item, r Rules, now time.Time, notified func(key string) 
 			shown = append(shown, *latest)
 		}
 	}
-	c, at := sweep(replies, r, now, notified)
+	c, silent, at := sweep(replies, r, now, notified)
 	if c != nil {
 		covered = append(covered, c.alert.Key)
-		shown = append(shown, *c)
+		if !silent {
+			shown = append(shown, *c)
+		}
 	}
 	if !at.IsZero() && (next.IsZero() || at.Before(next)) {
 		next = at
@@ -206,13 +209,16 @@ func Plan(items []model.Item, r Rules, now time.Time, notified func(key string) 
 // sweep plans the end-of-day sweep of the open replies. If today (in r.Loc)
 // is a working day, its sweep time EndOfDay has passed and its key is not
 // notified, it returns the sweep to show now (missed if more than 2 minutes
-// late). It also returns the next sweep time to wake for: today's if still
-// ahead, else the next working day's. A sweep for an earlier day is never
+// late). If every open reply was saved at or after the sweep time, the
+// sweep would only list replies saved since, so it is returned silent:
+// covered without showing, and so not shown later that day either (like the
+// lead alerts before an item's creation). It also returns the next sweep
+// time to wake for: today's if still ahead, else the next working day's. A sweep for an earlier day is never
 // returned: one slept through is dropped. Nothing at all without r.Sweep or
 // replies; a reply saved later re-plans anyway.
-func sweep(replies []model.Item, r Rules, now time.Time, notified func(string) bool) (*candidate, time.Time) {
+func sweep(replies []model.Item, r Rules, now time.Time, notified func(string) bool) (c *candidate, silent bool, next time.Time) {
 	if !r.Sweep || len(replies) == 0 {
-		return nil, time.Time{}
+		return nil, false, time.Time{}
 	}
 	loc := r.loc()
 	today := now.In(loc)
@@ -222,17 +228,18 @@ func sweep(replies []model.Item, r Rules, now time.Time, notified func(string) b
 		switch {
 		case now.Before(at):
 			if !notified(key) {
-				return nil, at
+				return nil, false, at
 			}
 		case !notified(key):
+			silent := !slices.ContainsFunc(replies, func(it model.Item) bool { return it.CreatedAt.Before(at) })
 			return &candidate{
 				alert: Alert{Key: key, DueAt: at, Kind: KindSweep, People: people(replies),
 					Missed: now.Sub(at) > missedAfter},
 				fire: at,
-			}, r.nextWorkDay(now, r.EndOfDay, 17, 30)
+			}, silent, r.nextWorkDay(now, r.EndOfDay, 17, 30)
 		}
 	}
-	return nil, r.nextWorkDay(now, r.EndOfDay, 17, 30)
+	return nil, false, r.nextWorkDay(now, r.EndOfDay, 17, 30)
 }
 
 // people lists who the replies are owed to, once each (matched trimmed and

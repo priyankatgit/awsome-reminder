@@ -83,7 +83,7 @@ export const api = {
   preview: (input: string): Promise<Preview> => Service.Preview(input),
   withDue: (input: string, due: Date): Promise<string> => Service.WithDue(input, due.toISOString()),
   capture: (input: string): Promise<Item> => Service.Capture(input),
-  /** Saves a reply owed; meta keys are Go's field names (OwedTo, Source, Quote). */
+  /** Saves a reply owed: who it is owed to, where it came from, the quoted message. */
   captureReply: (input: string, meta: ReplyMeta): Promise<Item> => Service.CaptureReply(input, meta),
   /** Closes a reply without answering it. */
   dropReply: (id: string): Promise<void> => Service.DropReply(id),

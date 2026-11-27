@@ -528,3 +528,33 @@ func TestSweepSameDayOnly(t *testing.T) {
 		t.Fatalf("wed 22:00: %+v", sw)
 	}
 }
+
+// A reply first saved after today's sweep time does not bring the sweep up
+// late: the day's sweep is covered silently and does not fire later that
+// evening either. One saved before it does (missed).
+func TestSweepNotForReplyAfterEndOfDay(t *testing.T) {
+	loc := kolkata(t)
+	late := reply("late", wed(loc, 18, 5))
+	fire, cov, next := Plan([]model.Item{late}, sweepRules(loc), wed(loc, 18, 5), none)
+	if sw := sweeps(fire); len(sw) != 0 {
+		t.Fatalf("reply saved at 18:05 fired the sweep: %+v", sw)
+	}
+	covered := false
+	for _, k := range cov {
+		covered = covered || k == "sweep|2026-12-02"
+	}
+	if !covered {
+		t.Fatalf("sweep key not covered: %v", cov)
+	}
+	if thu := time.Date(2026, 12, 3, 17, 30, 0, 0, loc); next.After(thu) || next.IsZero() {
+		t.Fatalf("next=%v, want no later than Thursday's sweep", next.In(loc))
+	}
+
+	early := reply("early", wed(loc, 16, 0))
+	early.OwedTo = "Priya"
+	fire, _, _ = Plan([]model.Item{late, early}, sweepRules(loc), wed(loc, 18, 5), none)
+	sw := sweeps(fire)
+	if len(sw) != 1 || !sw[0].Missed || len(sw[0].People) != 2 {
+		t.Fatalf("reply saved at 16:00: %+v", sw)
+	}
+}

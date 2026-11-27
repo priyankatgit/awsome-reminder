@@ -575,6 +575,7 @@ func TestApplyRemoteReplyKeepsSweep(t *testing.T) {
 	e.now = time.Date(2026, 11, 25, 18, 0, 0, 0, ny) // Wednesday, after 17:30
 	r := remoteItem(idA, "R", e.now.Add(-time.Hour))
 	r.Reply, r.OwedTo = true, "Priya"
+	r.CreatedAt = time.Date(2026, 11, 25, 16, 0, 0, 0, ny) // before the sweep time, so it sweeps
 	if _, err := e.c.ApplyRemoteItems([]model.Item{r}); err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@
  * Meta is what we could infer about a message someone is waiting on.
  */
 export interface Meta {
-    "OwedTo": string;
-    "Source": string;
-    "Quote": string;
+    "owedTo": string;
+    "source": string;
+    "quote": string;
 }

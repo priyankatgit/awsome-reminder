@@ -10,7 +10,11 @@ import (
 )
 
 // Meta is what we could infer about a message someone is waiting on.
-type Meta struct{ OwedTo, Source, Quote string }
+type Meta struct {
+	OwedTo string `json:"owedTo"`
+	Source string `json:"source"`
+	Quote  string `json:"quote"`
+}
 
 const quoteRunes = 200
 
