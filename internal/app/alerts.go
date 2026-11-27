@@ -34,37 +34,47 @@ type alertQueue struct {
 }
 
 // card enriches a scheduler alert with the item's tags and recurrence. An
-// item that can't be read still gets a card from the alert alone.
-func (s *Service) card(a scheduler.Alert) AlertCard {
-	c := AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
+// item that can't be read still gets a card from the alert alone. stale
+// reports an alert for an occurrence before the item's current DueAt: it was
+// fired before the item moved on or was marked done, and reached here late.
+func (s *Service) card(a scheduler.Alert) (c AlertCard, stale bool) {
+	c = AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
 	if s.d.Core == nil {
-		return c
+		return c, false
 	}
 	it, err := s.d.Core.Item(a.ItemID)
 	if err != nil {
 		log.Printf("alert %s: item: %v", a.Key, err)
-		return c
+		return c, false
 	}
 	c.Tags = append(c.Tags, it.Tags...)
 	c.Recurring = it.RRule != ""
-	return c
+	return c, it.DueAt != nil && a.DueAt.Before(*it.DueAt)
 }
 
 // showAlerts adds alerts the queue doesn't hold yet and shows the alert
-// window. It is called from the scheduler's fire callback (off its loop).
+// window. It is called from the scheduler's fire callback (off its loop). A
+// card for a later occurrence of a recurring item replaces the item's cards
+// for earlier ones, and one for an earlier occurrence than a queued card is
+// dropped, so an item never shows cards for two occurrences.
 func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	cards := make([]AlertCard, 0, len(alerts))
 	for _, a := range alerts {
-		cards = append(cards, s.card(a))
+		if c, stale := s.card(a); !stale {
+			cards = append(cards, c)
+		}
 	}
 	q := &s.alerts
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	added := 0
 	for _, c := range cards {
-		if slices.ContainsFunc(q.cards, func(o AlertCard) bool { return o.Key == c.Key }) {
+		if slices.ContainsFunc(q.cards, func(o AlertCard) bool {
+			return o.Key == c.Key || (o.ItemID == c.ItemID && o.DueAt.After(c.DueAt))
+		}) {
 			continue
 		}
+		q.cards = slices.DeleteFunc(q.cards, func(o AlertCard) bool { return o.ItemID == c.ItemID && o.DueAt.Before(c.DueAt) })
 		q.cards = append(q.cards, c)
 		added++
 	}
@@ -103,6 +113,35 @@ func (s *Service) emitAlertsLocked() {
 // deleted, from the alert window or anywhere else).
 func (s *Service) dropItemAlerts(id string) {
 	s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id }, true)
+}
+
+// advanceRecurring is the scheduler's before-plan step: it moves recurring
+// reminders not marked done to their latest occurrence (core.AdvanceRecurring,
+// ruling R15) and drops the moved items' cards, which were for an earlier
+// occurrence. It returns when the scheduler must run it again.
+func (s *Service) advanceRecurring(now time.Time) (time.Time, error) {
+	moved, wake, err := s.d.Core.AdvanceRecurring(now)
+	if len(moved) > 0 {
+		log.Printf("recurring: moved %d item(s) to their latest occurrence", len(moved))
+	}
+	for _, id := range moved {
+		s.dropItemAlerts(id)
+	}
+	return wake, err
+}
+
+// latestCardDue is the latest occurrence an item has a card for (zero if
+// none).
+func (s *Service) latestCardDue(id string) time.Time {
+	s.alerts.mu.Lock()
+	defer s.alerts.mu.Unlock()
+	var due time.Time
+	for _, c := range s.alerts.cards {
+		if c.ItemID == id && c.DueAt.After(due) {
+			due = c.DueAt
+		}
+	}
+	return due
 }
 
 // alertsClosed forgets the queue when the alert window was closed by the

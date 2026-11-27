@@ -3,10 +3,12 @@ package scheduler
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/recur"
 )
 
 // missedAfter is how late an alert must be to count as missed.
@@ -34,6 +36,13 @@ type candidate struct {
 // max(CreatedAt, UpdatedAt) are skipped; the at-time alert is never skipped
 // for that reason. A snoozed item also gets an alert at SnoozeUntil, and only
 // its lead and at-time alerts that fire after SnoozeUntil are kept.
+//
+// An open recurring item also gets the lead and at-time alerts of its next
+// occurrence after DueAt (evaluated in its TZ, else the local zone). An item
+// left un-done keeps its old DueAt until core.AdvanceRecurring moves it at
+// that occurrence, and by then the moved item's leads are past its new
+// UpdatedAt; looking ahead lets them fire on time. Keys are per occurrence,
+// so an alert fired before the move is not fired again after it.
 func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notified func(key string) bool) (fireNow []Alert, covered []string, next time.Time) {
 	var shown []candidate
 	for _, it := range items {
@@ -62,24 +71,36 @@ func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notif
 			leads = defaultLeads
 		}
 		all := append([]time.Duration{0}, leads...)
-		seen := map[time.Duration]bool{}
-		for _, l := range all {
-			if seen[l] {
-				continue
+		occurrence := func(due time.Time) {
+			seen := map[time.Duration]bool{}
+			for _, l := range all {
+				if seen[l] {
+					continue
+				}
+				seen[l] = true
+				fire := due.Add(-l)
+				if l != 0 && fire.Before(ref) {
+					continue
+				}
+				if it.SnoozeUntil != nil && !fire.After(after) {
+					continue
+				}
+				cands = append(cands, candidate{
+					alert: Alert{Key: fmt.Sprintf("%s|%d|%d", it.ID, due.Unix(), int64(l/time.Second)),
+						ItemID: it.ID, Text: it.Text, DueAt: due, Lead: l},
+					fire: fire,
+				})
 			}
-			seen[l] = true
-			fire := it.DueAt.Add(-l)
-			if l != 0 && fire.Before(ref) {
-				continue
+		}
+		occurrence(*it.DueAt)
+		if it.RRule != "" {
+			// The first occurrence after DueAt; zero if the rule has ended.
+			_, nextDue, err := recur.CatchUp(it.RRule, *it.DueAt, *it.DueAt, recur.Loc(it.TZ, time.Local))
+			if err != nil {
+				log.Printf("scheduler: next occurrence of %s: %v", it.ID, err)
+			} else if !nextDue.IsZero() {
+				occurrence(nextDue)
 			}
-			if it.SnoozeUntil != nil && !fire.After(after) {
-				continue
-			}
-			cands = append(cands, candidate{
-				alert: Alert{Key: fmt.Sprintf("%s|%d|%d", it.ID, it.DueAt.Unix(), int64(l/time.Second)),
-					ItemID: it.ID, Text: it.Text, DueAt: *it.DueAt, Lead: l},
-				fire: fire,
-			})
 		}
 
 		var latest *candidate

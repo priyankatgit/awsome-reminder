@@ -61,7 +61,9 @@ export function DismissAlerts(): $CancellablePromise<void> {
 
 /**
  * Done completes an item (a recurring one advances instead) and removes its
- * alert cards.
+ * alert cards. If a card is up for a later occurrence than the item's DueAt
+ * (the scheduler alerts ahead for an item left un-done), that occurrence is
+ * completed too.
  */
 export function Done(id: string): $CancellablePromise<void> {
     return $Call.ByID(3388264204, id);

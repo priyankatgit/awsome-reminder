@@ -15,12 +15,17 @@ import (
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/parser"
+	"awesome-reminder/internal/recur"
 	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
 // ErrEmpty is returned when the input has no text left after parsing.
 var ErrEmpty = errors.New("empty input")
+
+// errUnchanged, returned by a write or mutate function, ends it successfully
+// without saving or notifying listeners.
+var errUnchanged = errors.New("unchanged")
 
 // Core implements the domain operations on top of a store.
 type Core struct {
@@ -87,12 +92,7 @@ func (c *Core) parse(input string) (parser.Result, settings.Settings, error) {
 
 // itemLoc is the zone of an item, falling back to the core's zone.
 func (c *Core) itemLoc(it model.Item) *time.Location {
-	if it.TZ != "" {
-		if l, err := time.LoadLocation(it.TZ); err == nil {
-			return l
-		}
-	}
-	return c.loc
+	return recur.Loc(it.TZ, c.loc)
 }
 
 func withInbox(tags []string) []string {
@@ -162,11 +162,15 @@ func (c *Core) Capture(input string) (model.Item, error) {
 }
 
 // write runs fn under the operation lock and, if it succeeded, notifies
-// listeners after the lock is released.
+// listeners after the lock is released. fn returning errUnchanged is a
+// success that notifies no one.
 func (c *Core) write(fn func() error) error {
 	c.opMu.Lock()
 	err := fn()
 	c.opMu.Unlock()
+	if errors.Is(err, errUnchanged) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -182,7 +186,7 @@ func (c *Core) save(it *model.Item, now time.Time) error {
 }
 
 // mutate loads an item, applies fn, and saves it, all under the operation
-// lock.
+// lock. If fn returns errUnchanged the item is returned as loaded, unsaved.
 func (c *Core) mutate(id string, fn func(it *model.Item, now time.Time) error) (model.Item, error) {
 	var it model.Item
 	err := c.write(func() error {
@@ -217,7 +221,8 @@ func (c *Core) EditText(id string) (string, error) {
 }
 
 // Update re-parses input for an existing item. ID, CreatedAt, LeadTimes, TZ
-// and Status are kept; any snooze is cleared.
+// and Status are kept; any snooze is cleared. An open item left without a
+// rule drops the DoneAt it kept from being marked done while recurring.
 func (c *Core) Update(id, input string) (model.Item, error) {
 	r, _, err := c.parse(input)
 	if err != nil {
@@ -230,6 +235,7 @@ func (c *Core) Update(id, input string) (model.Item, error) {
 		it.Kind, it.Text, it.Tags = kindFor(r.DueAt), r.Text, withInbox(r.Tags)
 		it.DueAt, it.RRule, it.SnoozeUntil = r.DueAt, r.RRule, nil
 		it.Priority = r.Priority
+		clearStaleDone(it)
 		return nil
 	})
 }
@@ -237,11 +243,24 @@ func (c *Core) Update(id, input string) (model.Item, error) {
 // Done completes an item. A recurring item instead advances DueAt to its next
 // occurrence after now and stays open.
 func (c *Core) Done(id string) (model.Item, error) {
+	return c.DoneThrough(id, time.Time{})
+}
+
+// DoneThrough is Done for an alert about the occurrence due at through: a
+// recurring item advances to its first occurrence after through as well,
+// even when through is after DueAt. The scheduler alerts ahead for the next
+// occurrence of an item left un-done, so Done on that alert completes it
+// rather than the overdue one. A zero through is plain Done.
+func (c *Core) DoneThrough(id string, through time.Time) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, now time.Time) error {
 		done := now
 		it.DoneAt, it.SnoozeUntil = &done, nil
 		if it.RRule != "" && it.DueAt != nil {
-			next, err := nextOccurrence(it.RRule, *it.DueAt, now, c.itemLoc(*it))
+			after := now
+			if through.After(after) {
+				after = through
+			}
+			next, err := recur.Next(it.RRule, *it.DueAt, after, c.itemLoc(*it))
 			if err != nil {
 				return err
 			}
@@ -258,33 +277,35 @@ func (c *Core) Done(id string) (model.Item, error) {
 // after DueAt is at or before now moves to its latest occurrence at or before
 // now; missed occurrences in between collapse into it and any snooze is
 // cleared. The scheduler calls it before each plan, so the new occurrence's
-// at-time alert fires through the normal catch-up path (its leads are in the
-// past of the bumped UpdatedAt and are skipped, ruling R6). It returns how
-// many items moved and wake, the earliest next occurrence still to come (zero
-// if none), when it must run again. Listeners are notified only if an item
-// moved. An item whose rule can't be evaluated is logged and left alone.
-func (c *Core) AdvanceRecurring(now time.Time) (advanced int, wake time.Time, err error) {
+// at-time alert fires through the normal catch-up path. Its leads are in the
+// past of the bumped UpdatedAt (ruling R6); the scheduler fired them before
+// the move by planning each recurring item's next occurrence. It returns the
+// IDs of the items that moved and wake, the earliest next occurrence still to
+// come (zero if none), when it must run again. Listeners are notified only if
+// an item moved. An item whose rule can't be evaluated is logged and left
+// alone.
+func (c *Core) AdvanceRecurring(now time.Time) (moved []string, wake time.Time, err error) {
 	c.opMu.Lock()
-	advanced, wake, err = c.advanceRecurringLocked(now)
+	moved, wake, err = c.advanceRecurringLocked(now)
 	c.opMu.Unlock()
-	if advanced > 0 {
+	if len(moved) > 0 {
 		c.changed()
 	}
-	return advanced, wake, err
+	return moved, wake, err
 }
 
-func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
+func (c *Core) advanceRecurringLocked(now time.Time) ([]string, time.Time, error) {
 	items, err := c.st.ListOpen()
 	if err != nil {
-		return 0, time.Time{}, err
+		return nil, time.Time{}, err
 	}
-	n := 0
+	var moved []string
 	var wake time.Time
 	for _, it := range items {
 		if it.Status != model.StatusOpen || it.RRule == "" || it.DueAt == nil {
 			continue
 		}
-		latest, next, err := catchUp(it.RRule, *it.DueAt, now, c.itemLoc(it))
+		latest, next, err := recur.CatchUp(it.RRule, *it.DueAt, now, c.itemLoc(it))
 		if err != nil {
 			log.Printf("recurring %s: %v", it.ID, err)
 			continue
@@ -292,15 +313,15 @@ func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
 		if !latest.IsZero() {
 			it.DueAt, it.SnoozeUntil = &latest, nil
 			if err := c.save(&it, now); err != nil {
-				return n, wake, fmt.Errorf("item %s: %w", it.ID, err)
+				return moved, wake, fmt.Errorf("item %s: %w", it.ID, err)
 			}
-			n++
+			moved = append(moved, it.ID)
 		}
 		if !next.IsZero() && (wake.IsZero() || next.Before(wake)) {
 			wake = next
 		}
 	}
-	return n, wake, nil
+	return moved, wake, nil
 }
 
 // Reopen marks a done item open again.
@@ -313,12 +334,24 @@ func (c *Core) Reopen(id string) error {
 }
 
 // StopRepeating clears the recurrence; the item keeps its current due time.
+// An open item also drops the DoneAt it kept from being marked done while
+// recurring.
 func (c *Core) StopRepeating(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.RRule = ""
+		clearStaleDone(it)
 		return nil
 	})
 	return err
+}
+
+// clearStaleDone drops DoneAt from an open item with no rule. Done keeps
+// DoneAt on a recurring item that stays open; once it stops recurring that
+// DoneAt is stale, and Undelete would read it as "was done".
+func clearStaleDone(it *model.Item) {
+	if it.Status == model.StatusOpen && it.RRule == "" {
+		it.DoneAt = nil
+	}
 }
 
 // Snooze postpones a reminder: "10m", "1h" or "tomorrow" (tomorrow at the
@@ -365,11 +398,11 @@ func (c *Core) Delete(id string) error {
 // Undelete undoes Delete, restoring the status the item had: done for a
 // completed one-off item (DoneAt set, no recurrence), open otherwise. DoneAt
 // and SnoozeUntil are kept as they were, unlike Reopen. An item that is not
-// deleted is left as it is.
+// deleted is left as it is: not saved, and listeners are not notified.
 func (c *Core) Undelete(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		if it.Status != model.StatusDeleted {
-			return nil
+			return errUnchanged
 		}
 		it.Status = model.StatusOpen
 		if it.DoneAt != nil && it.RRule == "" {

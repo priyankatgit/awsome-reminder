@@ -146,3 +146,45 @@ func TestSchedulerBeforePlan(t *testing.T) {
 		t.Fatalf("hook error: next=%v, want retry", next)
 	}
 }
+
+// Wait must not return while a plan is in flight, so the app can close the
+// store after it; it returns once ctx is cancelled and the plan is done.
+func TestSchedulerWaitJoinsAfterCancel(t *testing.T) {
+	src := newSrc(nil)
+	s := New(src, func() []time.Duration { return nil }, func([]Alert) {}, func() time.Time { return t0 })
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.SetBeforePlan(func(time.Time) (time.Time, error) {
+		close(entered)
+		<-release
+		return time.Time{}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	<-entered
+	cancel()
+
+	done := make(chan struct{})
+	go func() { s.Wait(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Wait returned while a plan was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Wait did not return after cancel")
+	}
+}
+
+func TestSchedulerWaitWithoutStart(t *testing.T) {
+	s := New(newSrc(nil), func() []time.Duration { return nil }, func([]Alert) {}, time.Now)
+	done := make(chan struct{})
+	go func() { s.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Wait blocked on a scheduler that was never started")
+	}
+}

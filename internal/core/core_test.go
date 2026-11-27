@@ -404,9 +404,9 @@ func TestAdvanceRecurringDaily(t *testing.T) {
 	e.c.OnChange(func() { changes++ })
 	e.now = time.Date(2026, 11, 27, 10, 0, 0, 0, ny) // due yesterday, 10:00 today
 
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 1 || changes != 1 {
-		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || !reflect.DeepEqual(moved, []string{it.ID}) || changes != 1 {
+		t.Fatalf("moved=%v changes=%d err=%v", moved, changes, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(utc(2026, 11, 27, 14, 0)) || got.SnoozeUntil != nil || got.Status != model.StatusOpen {
@@ -424,8 +424,8 @@ func TestAdvanceRecurringDaily(t *testing.T) {
 	}
 
 	// Again with nothing to do: no change, no notification.
-	if n, _, err := e.c.AdvanceRecurring(e.now); n != 0 || err != nil || changes != 1 {
-		t.Fatalf("second pass n=%d err=%v changes=%d", n, err, changes)
+	if moved, _, err := e.c.AdvanceRecurring(e.now); len(moved) != 0 || err != nil || changes != 1 {
+		t.Fatalf("second pass moved=%v err=%v changes=%d", moved, err, changes)
 	}
 }
 
@@ -435,9 +435,9 @@ func TestAdvanceRecurringNotYet(t *testing.T) {
 	changes := 0
 	e.c.OnChange(func() { changes++ })
 	e.now = time.Date(2026, 11, 27, 8, 59, 0, 0, ny) // next occurrence (27th 09:00) not reached
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 0 || changes != 0 {
-		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || len(moved) != 0 || changes != 0 {
+		t.Fatalf("moved=%v changes=%d err=%v", moved, changes, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(*it.DueAt) || !got.UpdatedAt.Equal(it.UpdatedAt) {
@@ -453,9 +453,9 @@ func TestAdvanceRecurringWeeklyCollapses(t *testing.T) {
 	it := mustCapture(t, e, "every monday 10am standup") // Mon 30 Nov 10:00
 	one := mustCapture(t, e, "tomorrow 5pm one-off")
 	e.now = time.Date(2026, 12, 23, 12, 0, 0, 0, ny) // Wed, three Mondays later
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || !reflect.DeepEqual(moved, []string{it.ID}) {
+		t.Fatalf("moved=%v err=%v", moved, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(utc(2026, 12, 21, 15, 0)) {
@@ -508,5 +508,147 @@ func TestUndeleteRestoresState(t *testing.T) {
 	}
 	if err := e.c.Undelete("nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+// A recurring item marked done once carries DoneAt. Once it stops repeating
+// it is a plain open item, so the stale DoneAt must go: otherwise Delete then
+// Undelete would restore it as done.
+func TestStopRepeatingClearsDoneAt(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every monday 10am standup")
+	if _, err := e.c.Done(it.ID); err != nil { // advances, stays open, DoneAt set
+		t.Fatal(err)
+	}
+	if err := e.c.StopRepeating(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.DoneAt != nil || got.Status != model.StatusOpen {
+		t.Fatalf("after stop repeating: %+v", got)
+	}
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.Status != model.StatusOpen {
+		t.Fatalf("after undo delete: status %s, want open", got.Status)
+	}
+}
+
+func TestUpdateRemovingRuleClearsDoneAt(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every monday 10am standup")
+	if _, err := e.c.Done(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Editing a still-recurring item keeps its DoneAt.
+	if _, err := e.c.Update(it.ID, "every monday 11am standup"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.Get(it.ID); got.DoneAt == nil {
+		t.Fatalf("recurring edit dropped DoneAt: %+v", got)
+	}
+	got, err := e.c.Update(it.ID, "monday 10am standup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RRule != "" || got.DoneAt != nil || got.Status != model.StatusOpen {
+		t.Fatalf("after removing the rule: %+v", got)
+	}
+}
+
+func TestUndeleteNotDeletedIsNoOp(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "tomorrow 5pm deploy")
+	changes := 0
+	e.c.OnChange(func() { changes++ })
+	e.now = e.now.Add(time.Minute) // a save would move UpdatedAt
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.st.Get(it.ID)
+	if changes != 0 || !got.UpdatedAt.Equal(it.UpdatedAt) || got.Status != model.StatusOpen {
+		t.Fatalf("changes=%d item %+v", changes, got)
+	}
+}
+
+// A daily 09:00 reminder left un-done still gets tomorrow's 1h and 10m lead
+// alerts, then tomorrow's at-time alert once AdvanceRecurring moves it, with
+// no alert repeated. This runs the scheduler's steps (advance, then plan)
+// by hand.
+func TestRecurringUndoneKeepsLeadAlerts(t *testing.T) {
+	e := newEnv(t) // Wed 25 Nov 10:00 New York
+	it := mustCapture(t, e, "every day at 9am vitamins")
+	leads := []time.Duration{time.Hour, 10 * time.Minute}
+	notified := map[string]bool{}
+	step := func(at time.Time) ([]scheduler.Alert, time.Time) {
+		t.Helper()
+		e.now = at
+		if _, _, err := e.c.AdvanceRecurring(at); err != nil {
+			t.Fatal(err)
+		}
+		open, err := e.st.ListOpen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fire, cov, next := scheduler.Plan(open, leads, at, func(k string) bool { return notified[k] })
+		for _, k := range cov {
+			notified[k] = true
+		}
+		return fire, next
+	}
+	at := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, ny) }
+
+	for _, l := range leads { // today's (26th) leads, then its at-time alert
+		step(it.DueAt.Add(-l))
+	}
+	fire, next := step(at(26, 9, 0))
+	if len(fire) != 1 || fire[0].Lead != 0 {
+		t.Fatalf("26th 09:00: %+v", fire)
+	}
+	if !next.Equal(at(27, 8, 0)) {
+		t.Fatalf("after the 26th, next %v, want 27th 08:00", next.In(ny))
+	}
+	tomorrow := at(27, 9, 0)
+	for _, c := range []struct {
+		at   time.Time
+		lead time.Duration
+	}{{at(27, 8, 0), time.Hour}, {at(27, 8, 50), 10 * time.Minute}, {tomorrow, 0}} {
+		fire, _ := step(c.at)
+		if len(fire) != 1 || fire[0].Lead != c.lead || !fire[0].DueAt.Equal(tomorrow) || fire[0].Missed {
+			t.Fatalf("%v: got %+v, want the %v alert for the 27th", c.at.In(ny), fire, c.lead)
+		}
+	}
+	if fire, _ := step(at(27, 9, 1)); len(fire) != 0 {
+		t.Fatalf("repeat: %+v", fire)
+	}
+}
+
+// Done on the alert for today's occurrence of a daily item left un-done since
+// yesterday (its lead alert fires before AdvanceRecurring moves it) completes
+// today's occurrence too; plain Done completes only the overdue one.
+func TestDoneThroughOccurrence(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every day at 9am vitamins") // due Thu 26 Nov 09:00
+	e.now = time.Date(2026, 11, 27, 8, 30, 0, 0, ny)     // today's 09:00 not reached
+	today := utc(2026, 11, 27, 14, 0)
+
+	got, err := e.c.DoneThrough(it.ID, today)
+	if err != nil || !got.DueAt.Equal(utc(2026, 11, 28, 14, 0)) || got.DoneAt == nil || got.Status != model.StatusOpen {
+		t.Fatalf("done through today: %+v %v", got, err)
+	}
+
+	other := mustCapture(t, e, "every day at 9am stretch") // due Fri 27 Nov 09:00 (captured at 08:30)
+	if _, err := e.c.DoneThrough(other.ID, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := e.st.Get(other.ID); !o.DueAt.Equal(utc(2026, 11, 28, 14, 0)) {
+		t.Fatalf("zero through: due %v", o.DueAt)
+	}
+	one := mustCapture(t, e, "tomorrow 5pm deploy")
+	if d, err := e.c.DoneThrough(one.ID, today); err != nil || d.Status != model.StatusDone {
+		t.Fatalf("one-off: %+v %v", d, err)
 	}
 }

@@ -142,15 +142,6 @@ func Run(opts Options) error {
 		}
 		go svc.showAlerts(alerts)
 	}, time.Now)
-	// Recurring reminders not marked done move on to their latest occurrence
-	// before each plan (ruling R15); the scheduler wakes at the next one.
-	sched.SetBeforePlan(func(now time.Time) (time.Time, error) {
-		n, wake, err := c.AdvanceRecurring(now)
-		if n > 0 {
-			log.Printf("recurring: moved %d item(s) to their latest occurrence", n)
-		}
-		return wake, err
-	})
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {
@@ -165,6 +156,13 @@ func Run(opts Options) error {
 		return s.ExportPath
 	}, c.View, time.Local, exportDebounce)
 	defer exp.Close() // writes a pending export; runs before st.Close
+	// On the way out, stop the scheduler and wait for a plan in flight, so it
+	// never reaches a closed store and its last change still reaches the
+	// export (deferred after exp.Close and st.Close, so it runs before them).
+	defer func() {
+		cancel()
+		sched.Wait()
+	}()
 
 	win = newWindows(app)
 	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
@@ -187,6 +185,9 @@ func Run(opts Options) error {
 		OpenURL:       app.Browser.OpenURL,
 	})
 	app.RegisterService(application.NewService(svc))
+	// Recurring reminders not marked done move on to their latest occurrence
+	// before each plan (ruling R15); the scheduler wakes at the next one.
+	sched.SetBeforePlan(svc.advanceRecurring)
 	registerVoice(app)
 	win.onAlertsClosed = svc.alertsClosed
 	// A settings window closed while recording a hotkey must not leave the
