@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -35,6 +37,13 @@ type Syncer struct {
 
 var _ cloudsync.Syncer = (*Syncer)(nil)
 
+// lookupSRV checks that the SRV record of an mongodb+srv host resolves. A
+// variable so tests need no DNS.
+var lookupSRV = func(ctx context.Context, host string) error {
+	_, _, err := net.DefaultResolver.LookupSRV(ctx, "mongodb", "tcp", host)
+	return err
+}
+
 // Open connects to the cluster, checks it with a ping and creates the pull
 // indexes. A URI that is not mongodb:// or mongodb+srv:// gives ErrBadURI
 // without touching the network. Errors never contain the password.
@@ -44,6 +53,16 @@ func Open(ctx context.Context, uri string, o Options) (*Syncer, error) {
 	}
 	if o.Database == "" {
 		o.Database = Database
+	}
+	// ApplyURI resolves SRV records itself and reports any DNS failure as an
+	// invalid connection string, which would hide "offline". Resolve here,
+	// bounded by ctx, so the DNS error reaches Classify.
+	if strings.HasPrefix(uri, "mongodb+srv://") {
+		if h := Host(uri); h != "" {
+			if err := lookupSRV(ctx, h); err != nil {
+				return nil, redactedError{fmt.Errorf("atlas: %w", err)}
+			}
+		}
 	}
 	opts := options.Client().ApplyURI(uri).
 		SetMaxPoolSize(2).SetMinPoolSize(0).
@@ -105,11 +124,23 @@ func push(ctx context.Context, c *mongo.Collection, id string, at time.Time, by 
 		}
 		update = append(update, bson.E{Key: "$unset", Value: u})
 	}
-	_, err := c.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
-	if err != nil && !mongo.IsDuplicateKeyError(err) {
-		return err
+	// A duplicate key is either "the remote is equal or newer" (the filter did
+	// not match an existing document) or a lost first-insert race against
+	// another device. Retry once: if the document now exists and is older the
+	// retry updates it; if it still collides, the remote really is newer
+	// (nothing is ever purged).
+	for attempt := 0; ; attempt++ {
+		_, err := c.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
+		if err == nil {
+			return nil
+		}
+		if !mongo.IsDuplicateKeyError(err) {
+			return err
+		}
+		if attempt >= 1 {
+			return nil
+		}
 	}
-	return nil
 }
 
 // PushItem implements cloudsync.Syncer.

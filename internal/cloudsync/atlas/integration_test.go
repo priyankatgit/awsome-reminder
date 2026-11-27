@@ -209,3 +209,27 @@ func TestTwoDevicesAgainstMongo(t *testing.T) {
 		t.Fatalf("not converged:\nA %v\nB %v", ga, gb)
 	}
 }
+
+// A newer push must land on a document that another writer inserted first
+// (the state a lost first-insert race leaves behind). The race itself cannot
+// be reproduced deterministically; this covers the state it produces.
+func TestPushNewerOverExistingDoc(t *testing.T) {
+	c, db, prefix := rawClient(t)
+	s := openAt(t, prefix)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	coll := c.Database(db).Collection(prefix + "settings")
+	if _, err := coll.InsertOne(ctx, bson.D{{Key: "_id", Value: "settings"}, {Key: "default_time", Value: "09:00"},
+		{Key: "updated_at", Value: bson.NewDateTimeFromTime(base)}, {Key: "updated_by", Value: "A"}}); err != nil {
+		t.Fatal(err)
+	}
+	d := cloudsync.SharedDoc{UpdatedAt: base.Add(time.Second), UpdatedBy: "B"}
+	d.Shared.DefaultTime = "10:30"
+	if err := s.PushShared(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.PullShared(ctx)
+	if err != nil || got == nil || got.Shared.DefaultTime != "10:30" || got.UpdatedBy != "B" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+}

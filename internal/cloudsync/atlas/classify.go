@@ -87,7 +87,7 @@ func Classify(err error, host string) (cloudsync.State, string) {
 		return cloudsync.StateError, ErrBadURI.Error()
 	case errors.As(err, &ce) && ce.HasErrorCode(18):
 		return cloudsync.StateError, textAuth
-	case errors.As(err, &ce) && (ce.HasErrorCode(13) || ce.HasErrorCode(8000)):
+	case errors.As(err, &ce) && (ce.HasErrorCode(13) || (ce.HasErrorCode(8000) && authorizationText(err))):
 		return cloudsync.StateError, textPermissions
 	case errors.As(err, &sel):
 		if resolves(host) {
@@ -98,6 +98,19 @@ func Classify(err error, host string) (cloudsync.State, string) {
 		return cloudsync.StateOffline, textOffline
 	}
 	return cloudsync.StateError, Redact(err.Error())
+}
+
+// authorizationText reports whether a server message names an authorization
+// failure. Atlas uses code 8000 for other failures too (e.g. an M0 over its
+// space quota).
+func authorizationText(err error) bool {
+	m := strings.ToLower(err.Error())
+	for _, k := range []string{"not allowed", "not authorized", "unauthorized", "permission"} {
+		if strings.Contains(m, k) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolves(host string) bool {

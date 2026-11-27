@@ -73,7 +73,8 @@ func TestClassify(t *testing.T) {
 		{"bad uri", fmt.Errorf("open: %w", ErrBadURI), "", cloudsync.StateError, ErrBadURI.Error()},
 		{"auth", mongo.CommandError{Code: 18, Message: "bad creds"}, "", cloudsync.StateError, "Atlas rejected the username or password."},
 		{"unauthorized", mongo.CommandError{Code: 13}, "", cloudsync.StateError, "This database user can't read and write awesome_reminder."},
-		{"atlas 8000", mongo.CommandError{Code: 8000}, "", cloudsync.StateError, "This database user can't read and write awesome_reminder."},
+		{"atlas 8000 authorization text", mongo.CommandError{Code: 8000, Message: "user is not allowed to do action [find]"}, "", cloudsync.StateError, "This database user can't read and write awesome_reminder."},
+		{"atlas 8000 quota", mongo.CommandError{Code: 8000, Message: "you are over your space quota"}, "", cloudsync.StateError, ""},
 		{"dns", &net.DNSError{Err: "no such host"}, "", cloudsync.StateOffline, "No connection to Atlas."},
 		{"deadline", fmt.Errorf("pull: %w", context.DeadlineExceeded), "", cloudsync.StateOffline, "No connection to Atlas."},
 		{"op error", &net.OpError{Op: "dial", Err: errors.New("refused")}, "", cloudsync.StateOffline, "No connection to Atlas."},
@@ -96,6 +97,9 @@ func TestClassify(t *testing.T) {
 				t.Errorf("text leaks the password: %q", text)
 			}
 		})
+	}
+	if _, text := Classify(mongo.CommandError{Code: 8000, Message: "you are over your space quota"}, ""); !strings.Contains(text, "over your space quota") {
+		t.Errorf("8000 quota text lost: %q", text)
 	}
 	if _, text := Classify(errors.New("boom mongodb+srv://u:"+password+"@c.mongodb.net/x failed"), ""); !strings.Contains(text, "boom") {
 		t.Errorf("other error lost its text: %q", text)
@@ -225,4 +229,23 @@ func withID(t *testing.T, set []byte, id string) bson.Raw {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestOpenSRVLookupFailureIsOffline(t *testing.T) {
+	old := lookupSRV
+	t.Cleanup(func() { lookupSRV = old })
+	lookupSRV = func(context.Context, string) error {
+		return &net.DNSError{Err: "no such host", Name: "_mongodb._tcp.c.invalid"}
+	}
+	uri := "mongodb+srv://u:" + password + "@c.invalid/x"
+	s, err := Open(context.Background(), uri, Options{})
+	if s != nil || err == nil {
+		t.Fatalf("Open = %v, %v", s, err)
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Errorf("leaks password: %v", err)
+	}
+	if st, text := Classify(err, Host(uri)); st != cloudsync.StateOffline || text != "No connection to Atlas." {
+		t.Errorf("classified %v %q (%v)", st, text, err)
+	}
 }
