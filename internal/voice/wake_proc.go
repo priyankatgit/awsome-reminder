@@ -116,6 +116,10 @@ func parseDetection(s string) bool {
 	return found
 }
 
+// ParseDetection is parseDetection for the Windows wake helper's tests
+// (internal/wakehelper), which check its output with this same parser.
+func ParseDetection(s string) bool { return parseDetection(s) }
+
 // capLine trims a stderr line and cuts it to wakeErrMax bytes on a rune
 // boundary.
 func capLine(s string) string {

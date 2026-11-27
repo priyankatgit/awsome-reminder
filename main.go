@@ -11,6 +11,7 @@ import (
 
 	"awesome-reminder/internal/app"
 	"awesome-reminder/internal/paths"
+	"awesome-reminder/internal/wakehelper"
 )
 
 // Embedded frontend assets (built by `wails3 build`).
@@ -29,6 +30,12 @@ var (
 )
 
 func main() {
+	// Wake word helper mode (Windows): the app's exe started by its own
+	// supervisor. It must return before any Wails, single-instance, logging
+	// or database setup.
+	if len(os.Args) > 1 && os.Args[1] == "--wake-helper" {
+		os.Exit(wakehelper.Run(os.Args[2:]))
+	}
 	logger := setupLogging()
 	if err := app.Run(app.Options{Assets: assets, TrayIconLight: trayIconLight, TrayIconDark: trayIconDark, TrayIconTemplate: trayIconTemplate, Logger: logger}); err != nil {
 		// A tray app has no window to fail in: tell the user why it isn't
