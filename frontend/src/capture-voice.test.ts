@@ -142,4 +142,19 @@ describe("capture box voice host", () => {
     expect(document.querySelector<HTMLElement>("#cap-note")!.hidden).toBe(false);
     expect(document.querySelector<HTMLElement>("#cap-note-undo")!.hidden).toBe(true);
   });
+
+  it("the listening hint row shows ↵ save N when Enter would save several", () => {
+    const hint = document.querySelector<HTMLElement>("#cap-voice-save")!;
+    expect(hint.closest(".cap-hint-voice")).not.toBeNull();
+    expect(hint.hidden).toBe(true);
+    h.host.insert("call Sam");
+    expect(hint.hidden).toBe(true); // one task
+    h.host.addTask();
+    expect(hint.hidden).toBe(true); // one row, empty input
+    h.host.insert("buy milk");
+    expect(hint.hidden).toBe(false);
+    expect(hint.textContent).toBe("↵ save 2");
+    h.host.scratch();
+    expect(hint.hidden).toBe(true);
+  });
 });

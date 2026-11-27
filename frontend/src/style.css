@@ -1697,7 +1697,8 @@ legend.field-label {
 .cap-listen[hidden],
 .cap-voice[hidden],
 .cap-progress[hidden],
-.cap-busy[hidden] {
+.cap-busy[hidden],
+.cap-voice-save[hidden] {
   display: none;
 }
 

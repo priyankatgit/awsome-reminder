@@ -3,7 +3,7 @@
 // and hands each to Go, which runs whisper.cpp locally; voice-session.ts turns
 // the text into tasks and spoken commands. Layout follows "Listening state"
 // in the UI design guide.
-import { api, errorText, events, on, type VoiceStatus } from "./api";
+import { api, errorText, events, on, type Cancellable, type VoiceStatus } from "./api";
 import { el } from "./dom";
 import { icons } from "./icons";
 import { Segmenter, type PcmSegment, type SessionMode } from "./voice-segment";
@@ -385,6 +385,8 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
   let status: VoiceStatus | null = null;
   let session: VoiceSession | null = null;
   let starting = false; // the status check before a session is running
+  let hiddenGen = 0; // bumped by blur/hide: a start still awaiting must not open the mic
+  let inflight: Cancellable<string> | null = null; // the segment request being transcribed
   let ticker: number | undefined;
   let noteTimer: number | undefined;
 
@@ -535,9 +537,11 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
   async function startSession(mode: SessionMode): Promise<void> {
     if (starting || session || (state !== "idle" && state !== "ready-note")) return;
     starting = true;
+    const gen = hiddenGen;
     host.showError(""); // a new session starts without the last one's errors
     const st = await refreshStatus();
     starting = false;
+    if (gen !== hiddenGen) return; // the box was blurred or hidden meanwhile
     if (!st || session || (state !== "idle" && state !== "ready-note")) return;
     if (st.state !== "ready") {
       if (mode === "wake") return; // no setup panel behind an unfocused box
@@ -547,11 +551,23 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     }
     const rec = new Recorder();
     const s: VoiceSession = new VoiceSession(mode, rec, sessionHost, {
-      transcribe: (seg, prompt) => api.voice.transcribeSegment(seg.pcm, prompt, seg.speechMs),
+      transcribe: (seg, prompt) => {
+        const p = api.voice.transcribeSegment(seg.pcm, prompt, seg.speechMs);
+        inflight = p;
+        const clear = () => {
+          if (inflight === p) inflight = null;
+        };
+        p.then(clear, clear);
+        return p;
+      },
       now: () => performance.now(),
       sessionEnded: () => void api.voice.sessionEnded().catch(() => undefined),
       errorText,
       onPhase: (p) => onPhase(s, p),
+      cancelTranscribe: () => {
+        inflight?.cancel();
+        inflight = null;
+      },
     });
     session = s;
     host.box.dataset.dictation = host.multi() ? "multi" : "single";
@@ -603,6 +619,7 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
 
   /** Blur or hide: release the mic; queued segments still land in the draft. */
   function cancel(): void {
+    hiddenGen++;
     session?.blur();
   }
 
@@ -631,7 +648,9 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
         session?.escape();
         return true;
       case "transcribing":
-        return true; // pending segments still land; nothing to cancel
+        // A second Esc (or a stuck request): give up on the pending segments.
+        session?.escape();
+        return true;
       case "consent":
       case "installing":
       case "ready-note":

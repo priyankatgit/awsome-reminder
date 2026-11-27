@@ -7,6 +7,9 @@ import { endReason, SegmentQueue, type EndReason, type PcmSegment, type SessionM
 
 export const NOTHING_HEARD = "Didn't catch that. Try again closer to the mic.";
 export const LIMIT_NOTE = "Stopped after 5 minutes";
+/** A segment not transcribed by then is cancelled and counts as failed. */
+export const SEGMENT_TIMEOUT_MS = 30000;
+const FAIL_PREFIX = "Couldn't transcribe the last bit: ";
 const PROMPT_TAIL = " new task";
 
 /** The parts of the Recorder (segment mode) a session uses. */
@@ -73,7 +76,7 @@ export class VoiceSession {
     private readonly deps: SessionDeps,
   ) {
     this.queue = new SegmentQueue(
-      (s, prompt) => deps.transcribe(s, prompt),
+      (s, prompt) => this.withTimeout(deps.transcribe(s, prompt)),
       (text) => this.settled(() => this.apply(text)),
       (err) => this.settled(() => this.fail(err)),
       () => (host.sessionText() + PROMPT_TAIL).trim(),
@@ -134,12 +137,25 @@ export class VoiceSession {
     return this.drain();
   }
 
-  /** Esc: drop the audio not yet in a segment; the queue still finishes. */
+  /**
+   * Esc. While listening: drop the audio not yet in a segment; the queue
+   * still finishes. While draining (a second Esc, or a stuck request): give
+   * up on the pending segments and end, keeping everything that landed.
+   */
   escape(): void {
-    if (this.phase !== "listening") return;
-    this.stop("escape", false);
-    this.host.announce("Stopped listening");
-    void this.drain();
+    if (this.phase === "listening") {
+      this.stop("escape", false);
+      this.host.announce("Stopped listening");
+      void this.drain();
+      return;
+    }
+    if (this.phase !== "draining") return;
+    const lost = this.pending > 0;
+    this.saveAfter = false; // Esc means stop, not save
+    this.dropQueue();
+    this.done();
+    if (lost) this.host.showError(`${FAIL_PREFIX}cancelled`);
+    this.host.announce(this.host.sessionText() !== "" ? "Ready to save" : "Stopped listening");
   }
 
   /** Window blur or hide: release the mic; queued segments land in the draft. */
@@ -214,7 +230,27 @@ export class VoiceSession {
 
   private fail(err: unknown): void {
     this.failed = true;
-    this.host.showError(`Couldn't transcribe the last bit: ${this.deps.errorText(err)}`);
+    this.host.showError(`${FAIL_PREFIX}${this.deps.errorText(err)}`);
+  }
+
+  /** Whisper requests have no timeout of their own: cap each segment. */
+  private withTimeout(p: Promise<string>): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.deps.cancelTranscribe?.();
+        reject(new Error("timed out"));
+      }, SEGMENT_TIMEOUT_MS);
+      p.then(
+        (text) => {
+          clearTimeout(timer);
+          resolve(text);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
   }
 
   /** Spoken "cancel": drop the rest and discard (with Undo). */

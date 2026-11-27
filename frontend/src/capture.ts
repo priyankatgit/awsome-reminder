@@ -95,6 +95,7 @@ const TEMPLATE = `
       <span class="cap-voice-multi">“new task” next</span>
       <span class="cap-voice-multi">“save all” done</span>
       <span class="cap-voice-single">auto-stops after a pause</span>
+      <span class="cap-voice-save" id="cap-voice-save" hidden><kbd>↵</kbd> <span id="cap-voice-save-text"></span></span>
       <span><kbd>Esc</kbd> stop</span>
     </footer>
   </div>
@@ -119,6 +120,8 @@ export function mountCapture(root: HTMLElement): void {
   const noteUndo = root.querySelector<HTMLButtonElement>("#cap-note-undo")!;
   const hintStatus = root.querySelector<HTMLElement>("#cap-hint-status")!;
   const hintSave = root.querySelector<HTMLElement>("#cap-hint-save")!;
+  const voiceSave = root.querySelector<HTMLElement>("#cap-voice-save")!;
+  const voiceSaveText = root.querySelector<HTMLElement>("#cap-voice-save-text")!;
   noteUndo.innerHTML = `${icons.undo}<span>Undo</span>`;
 
   // The preview row keeps the reminder badge and its announcement across
@@ -436,6 +439,9 @@ export function mountCapture(root: HTMLElement): void {
     if (rows === 0) leftover = false;
     const n = reply.active ? 0 : pending();
     hintSave.textContent = n > 1 ? `save ${n}` : "save";
+    // The listening hint row shows it too, only when Enter would save several.
+    voiceSave.hidden = n <= 1;
+    voiceSaveText.textContent = n > 1 ? `save ${n}` : "";
     if (confirmTimer !== undefined && rows > 0) {
       hintStatus.textContent = `Discard ${tasks(n)}? Esc again to discard · ↵ to save`;
       hintStatus.hidden = false;

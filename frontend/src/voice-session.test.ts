@@ -1,6 +1,38 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mountVoice, type VoiceHost } from "./voice";
 import type { PcmSegment } from "./voice-segment";
-import { LIMIT_NOTE, NOTHING_HEARD, VoiceSession, type SessionHost, type SessionRecorder } from "./voice-session";
+import { LIMIT_NOTE, NOTHING_HEARD, SEGMENT_TIMEOUT_MS, VoiceSession, type SessionHost, type SessionRecorder } from "./voice-session";
+
+// mountVoice's wiring (below) runs against a fake Wails API and a fake
+// mic / AudioWorklet stack; the VoiceSession tests do not touch either.
+const m = vi.hoisted(() => {
+  window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as never;
+  return {
+  status: (): Promise<unknown> => Promise.resolve({ state: "ready" }),
+  transcribe: (_pcm: Int16Array, _prompt: string, _speechMs: number): Promise<string> & { cancel(): void } =>
+    Object.assign(Promise.resolve(""), { cancel() {} }),
+  ended: 0,
+  getUserMedia: 0,
+  taps: [] as { port: { onmessage: ((e: { data: Float32Array }) => void) | null } }[],
+  };
+});
+vi.mock("./api", () => ({
+  api: {
+    voice: {
+      status: () => m.status(),
+      install: async () => {},
+      cancelInstall: async () => {},
+      warm: () => Promise.resolve(),
+      transcribeSegment: (pcm: Int16Array, prompt: string, speechMs: number) => m.transcribe(pcm, prompt, speechMs),
+      sessionEnded: async () => {
+        m.ended++;
+      },
+    },
+  },
+  errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  events: { voiceStatus: "voice:status" },
+  on: () => () => {},
+}));
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -129,15 +161,18 @@ function setup(opts: { multi?: boolean; mode?: "focused" | "wake" } = {}) {
   const tx = fakeTranscriber();
   let now = 0;
   let ended = 0;
+  let cancels = 0;
   const s = new VoiceSession(opts.mode ?? "focused", rec, host, {
     transcribe: tx.fn,
     now: () => now,
     sessionEnded: () => ended++,
     errorText: (e) => (e instanceof Error ? e.message : String(e)),
     onPhase: (p) => host.phases.push(p),
+    cancelTranscribe: () => cancels++,
   });
   return {
     s,
+    cancels: () => cancels,
     host,
     rec,
     tx,
@@ -423,5 +458,213 @@ describe("VoiceSession", () => {
     expect(t.s.tick()).toBeNull();
     t.s.focusGained();
     expect(t.s.tick()).toBe("silence");
+  });
+
+  describe("stuck transcriptions", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("Esc while draining cancels the pending request and ends, keeping what landed", async () => {
+      const t = setup();
+      t.s.segment(seg(1));
+      t.s.segment(seg(2));
+      t.tx.say(1, "buy milk");
+      await settle();
+      let finished = false;
+      const p = t.s.finish().then(() => (finished = true)); // Enter: segment 2 never returns
+      await settle();
+      expect(t.host.phases).toEqual(["draining"]);
+      t.s.escape();
+      expect(t.cancels()).toBeGreaterThan(0);
+      expect(t.host.errors).toEqual(["Couldn't transcribe the last bit: cancelled"]);
+      expect(t.host.phases).toEqual(["draining", "done"]);
+      expect(t.ended()).toBe(1);
+      await p;
+      expect(finished).toBe(true);
+      expect(t.host.input).toBe("buy milk");
+      t.tx.say(2, "late"); // ignored
+      await settle();
+      expect(t.host.input).toBe("buy milk");
+    });
+
+    it("Esc while draining a spoken save does not save", async () => {
+      const t = setup();
+      t.rec.tail = seg(2);
+      t.s.segment(seg(1));
+      t.tx.say(1, "buy milk. save all");
+      await settle();
+      expect(t.host.phases).toEqual(["draining"]); // tail segment 2 pending
+      t.s.escape();
+      await settle();
+      expect(t.host.calls).toEqual(["insert:buy milk"]);
+    });
+
+    it("a segment with no answer in 30 s fails; the session goes on and finish completes", async () => {
+      vi.useFakeTimers();
+      const t = setup();
+      t.s.segment(seg(1));
+      t.s.segment(seg(2));
+      t.tx.say(2, "call Sam");
+      let finished = false;
+      void t.s.finish().then(() => (finished = true));
+      await vi.advanceTimersByTimeAsync(SEGMENT_TIMEOUT_MS - 1);
+      expect(t.host.errors).toEqual([]);
+      expect(finished).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await settle();
+      expect(t.cancels()).toBe(1); // the stuck request is cancelled
+      expect(t.host.errors).toEqual(["Couldn't transcribe the last bit: timed out"]);
+      expect(t.host.calls).toEqual(["insert:call Sam"]); // later segment still applied
+      expect(finished).toBe(true);
+      expect(t.host.said).toContain("Ready to save");
+      expect(t.ended()).toBe(1);
+    });
+
+    it("a stuck segment holds the silence end only until its timeout", async () => {
+      vi.useFakeTimers();
+      const t = setup();
+      t.s.segment(seg(1));
+      t.at(5000, 3000);
+      expect(t.s.tick()).toBeNull(); // held: segment 1 in flight
+      await vi.advanceTimersByTimeAsync(SEGMENT_TIMEOUT_MS);
+      await settle();
+      expect(t.host.errors).toEqual(["Couldn't transcribe the last bit: timed out"]);
+      expect(t.s.tick()).toBe("silence");
+    });
+  });
+});
+
+describe("mountVoice wiring", () => {
+  const node = () => ({ connect: (n: unknown) => n, disconnect() {} });
+  class FakeContext {
+    sampleRate = 16000;
+    state = "running";
+    destination = {};
+    audioWorklet = { addModule: async () => {} };
+    createMediaStreamSource = node;
+    createGain = () => ({ ...node(), gain: { value: 1 } });
+    close = async () => {};
+  }
+  class FakeTap {
+    port = { onmessage: null as ((e: { data: Float32Array }) => void) | null };
+    connect = (n: unknown) => n;
+    disconnect() {}
+    constructor() {
+      m.taps.push(this);
+    }
+  }
+
+  let root: HTMLElement;
+  let host: VoiceHost & { errors: string[]; inserted: string[] };
+
+  function mount() {
+    document.body.innerHTML = `
+      <main id="capture">
+        <input id="cap-input" />
+        <span id="cap-busy" hidden></span>
+        <button id="cap-mic"><span id="cap-mic-icon"></span></button>
+        <span id="cap-listen" hidden><span id="cap-listen-label"></span><canvas id="cap-wave"></canvas><span id="cap-timer"></span></span>
+        <p id="cap-voice-live"></p>
+        <section id="cap-voice" hidden><h2 id="cap-voice-title"></h2><p id="cap-voice-body"></p>
+          <div id="cap-progress"><span id="cap-progress-bar"></span></div><p id="cap-voice-meta"></p><div id="cap-voice-actions"></div></section>
+      </main>`;
+    root = document.body;
+    const box = root.querySelector<HTMLElement>("#capture")!;
+    const input = root.querySelector<HTMLInputElement>("#cap-input")!;
+    host = {
+      box,
+      input,
+      errors: [],
+      inserted: [],
+      insert(t) {
+        host.inserted.push(t);
+        input.value = `${input.value} ${t}`.trim();
+      },
+      showError(msg) {
+        if (msg) host.errors.push(msg);
+      },
+      setListeningLead() {},
+      addTask: () => 0,
+      scratch: () => false,
+      saveAll: async () => {},
+      cancelAll() {},
+      multi: () => true,
+      sessionText: () => input.value,
+      showNote() {},
+    };
+    return mountVoice(root, host);
+  }
+
+  /** Speech then silence through the fake worklet: one segment. */
+  function speakOneSegment() {
+    const tap = m.taps.at(-1)!;
+    for (let i = 0; i < 64; i++) tap.port.onmessage!({ data: new Float32Array(128).fill(0.3) });
+    for (let i = 0; i < 120; i++) tap.port.onmessage!({ data: new Float32Array(128) });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubAudio() {
+    m.getUserMedia = 0;
+    m.taps = [];
+    vi.stubGlobal("AudioContext", FakeContext);
+    vi.stubGlobal("AudioWorkletNode", FakeTap);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () => {
+          m.getUserMedia++;
+          return { getTracks: () => [] };
+        },
+      },
+    });
+    URL.createObjectURL = () => "blob:tap";
+    URL.revokeObjectURL = () => {};
+    HTMLCanvasElement.prototype.getContext = (() => null) as never;
+  }
+
+  it("a blur during the status check stops the start: no mic, no session", async () => {
+    stubAudio();
+    const st = deferred<unknown>();
+    m.status = () => st.promise;
+    const ctl = mount();
+    ctl.startSession("focused");
+    ctl.cancel(); // the window lost focus while the status was loading
+    st.resolve({ state: "ready" });
+    await settle();
+    expect(m.getUserMedia).toBe(0);
+    expect(ctl.state()).toBe("idle");
+  });
+
+  it("Esc while transcribing cancels the in-flight request and ends the session", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "ready" });
+    const cancel = vi.fn();
+    const prompts: string[] = [];
+    m.transcribe = (_pcm, prompt) => {
+      prompts.push(prompt);
+      return Object.assign(new Promise<string>(() => {}), { cancel }); // never answers
+    };
+    m.ended = 0;
+    const ctl = mount();
+    ctl.startSession("focused");
+    await settle();
+    expect(m.getUserMedia).toBe(1);
+    expect(ctl.state()).toBe("listening");
+    speakOneSegment();
+    await settle();
+    expect(prompts).toEqual(["new task"]);
+    ctl.toggle(); // Ctrl+M: stop, wait for the segment
+    expect(ctl.state()).toBe("transcribing");
+    expect(ctl.escape()).toBe(true);
+    expect(cancel).toHaveBeenCalled();
+    expect(ctl.state()).toBe("idle");
+    expect(host.errors).toContain("Couldn't transcribe the last bit: cancelled");
+    expect(m.ended).toBe(1);
+    await ctl.finish(); // nothing left to wait for
   });
 });
