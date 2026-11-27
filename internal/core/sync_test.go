@@ -260,6 +260,12 @@ func TestApplyRemoteAttachment(t *testing.T) {
 		t.Error("older tombstone removed file")
 	}
 
+	// An equal remote (the pull overlap re-reading it) is skipped before its
+	// bytes are decoded or hashed: garbage bytes give no validation error.
+	if ok, err := e.c.ApplyRemoteAttachment(a, []byte("not an image")); err != nil || ok {
+		t.Fatalf("equal remote: %v %v, want skipped before decoding", ok, err)
+	}
+
 	// local UnreferencedSince kept on a newer update; then a tombstone removes the file
 	ref := at.Add(-time.Hour)
 	loc := got

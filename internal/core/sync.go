@@ -143,6 +143,12 @@ func (c *Core) ApplyRemoteAttachment(a model.Attachment, data []byte) (bool, err
 	if a.Mime != "image/webp" {
 		return false, fmt.Errorf("attachment %s: bad mime %q: %w", a.ID, a.Mime, ErrInvalidRemote)
 	}
+	// An equal or older remote changes nothing: skip it before decoding and
+	// hashing its bytes (the pull overlap re-reads recent documents). The
+	// locked section below checks again.
+	if local, err := c.st.GetAttachment(a.ID); err == nil && !model.Newer(a.UpdatedAt, a.UpdatedBy, local.UpdatedAt, local.UpdatedBy) {
+		return false, nil
+	}
 	if !a.Deleted {
 		if _, err := checkWebP(data); err != nil {
 			return false, fmt.Errorf("attachment %s: %w: %w", a.ID, err, ErrInvalidRemote)
