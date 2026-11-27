@@ -314,8 +314,9 @@ export function mountCapture(root: HTMLElement): void {
     seq++;
     window.clearTimeout(timer);
     if (!keepDraft) {
+      // The review list is never cleared here: reply paths must not destroy
+      // rows. Only a normal save, a confirmed Esc and a spoken cancel clear it.
       input.value = "";
-      list.clear();
       reply.exit();
     }
     clearConfirm();
@@ -597,7 +598,7 @@ export function mountCapture(root: HTMLElement): void {
       busy = false;
       // Saved rows leave the list; the failing row (or the input) shows why.
       const done = Math.min(r.saved.length, rows.length);
-      list.restore(rows.slice(done));
+      dropSaved(done);
       if (r.failedAt < rows.length) {
         list.setError(r.failedAt - done, r.error);
       } else {
@@ -611,7 +612,7 @@ export function mountCapture(root: HTMLElement): void {
       updateReview();
       return;
     }
-    list.clear();
+    dropSaved(rows.length);
     if (spoken) {
       // Keep the box open for the Undo note; it hides when the note ends.
       busy = false;
@@ -627,14 +628,26 @@ export function mountCapture(root: HTMLElement): void {
     finishSave();
   }
 
-  /** Undo of a save: delete what was saved, put the texts back in the list. */
+  /** Removes the saved prefix; rows added while the save ran stay. */
+  function dropSaved(n: number): void {
+    for (let i = 0; i < n; i++) list.removeAt(0);
+  }
+
+  /**
+   * Undo of a save: delete what was saved and put those texts back in the
+   * list. Stops at the first failed delete; only deleted ones come back.
+   */
   async function undoSaved(ids: string[], texts: string[]): Promise<void> {
+    let n = 0;
     try {
-      for (const id of ids) await api.deleteItem(id);
+      for (const id of ids) {
+        await api.deleteItem(id);
+        n++;
+      }
     } catch (err) {
       showError(errorText(err));
     }
-    list.restore([...texts, ...list.items()]);
+    list.restore([...texts.slice(0, n), ...list.items()]);
     endDraft = false;
     updateReview();
   }
@@ -689,6 +702,7 @@ export function mountCapture(root: HTMLElement): void {
 
   input.addEventListener("input", () => {
     showError("");
+    clearConfirm(); // anything else dismisses the discard confirm
     updateReview();
     schedulePreview();
   });
@@ -760,7 +774,17 @@ export function mountCapture(root: HTMLElement): void {
     },
   });
 
+  box.addEventListener("pointerdown", () => {
+    if (confirmTimer === undefined) return;
+    clearConfirm();
+    updateReview();
+  });
+
   document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" && confirmTimer !== undefined) {
+      clearConfirm();
+      updateReview();
+    }
     if (reply.handleKey(e)) return; // Alt+P: the person editor
     if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
       e.preventDefault();
