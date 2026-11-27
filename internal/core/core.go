@@ -262,8 +262,9 @@ func (c *Core) Done(id string) (model.Item, error) {
 // after DueAt is at or before now moves to its latest occurrence at or before
 // now; missed occurrences in between collapse into it and any snooze is
 // cleared. The scheduler calls it before each plan, so the new occurrence's
-// at-time alert fires through the normal catch-up path (its leads are in the
-// past of the bumped UpdatedAt and are skipped, ruling R6). It returns how
+// at-time alert fires through the normal catch-up path. Its leads are in the
+// past of the bumped UpdatedAt (ruling R6); the scheduler fired them before
+// the move by planning each recurring item's next occurrence. It returns how
 // many items moved and wake, the earliest next occurrence still to come (zero
 // if none), when it must run again. Listeners are notified only if an item
 // moved. An item whose rule can't be evaluated is logged and left alone.

@@ -573,3 +573,55 @@ func TestUndeleteNotDeletedIsNoOp(t *testing.T) {
 		t.Fatalf("changes=%d item %+v", changes, got)
 	}
 }
+
+// A daily 09:00 reminder left un-done still gets tomorrow's 1h and 10m lead
+// alerts, then tomorrow's at-time alert once AdvanceRecurring moves it, with
+// no alert repeated. This runs the scheduler's steps (advance, then plan)
+// by hand.
+func TestRecurringUndoneKeepsLeadAlerts(t *testing.T) {
+	e := newEnv(t) // Wed 25 Nov 10:00 New York
+	it := mustCapture(t, e, "every day at 9am vitamins")
+	leads := []time.Duration{time.Hour, 10 * time.Minute}
+	notified := map[string]bool{}
+	step := func(at time.Time) ([]scheduler.Alert, time.Time) {
+		t.Helper()
+		e.now = at
+		if _, _, err := e.c.AdvanceRecurring(at); err != nil {
+			t.Fatal(err)
+		}
+		open, err := e.st.ListOpen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fire, cov, next := scheduler.Plan(open, leads, at, func(k string) bool { return notified[k] })
+		for _, k := range cov {
+			notified[k] = true
+		}
+		return fire, next
+	}
+	at := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, ny) }
+
+	for _, l := range leads { // today's (26th) leads, then its at-time alert
+		step(it.DueAt.Add(-l))
+	}
+	fire, next := step(at(26, 9, 0))
+	if len(fire) != 1 || fire[0].Lead != 0 {
+		t.Fatalf("26th 09:00: %+v", fire)
+	}
+	if !next.Equal(at(27, 8, 0)) {
+		t.Fatalf("after the 26th, next %v, want 27th 08:00", next.In(ny))
+	}
+	tomorrow := at(27, 9, 0)
+	for _, c := range []struct {
+		at   time.Time
+		lead time.Duration
+	}{{at(27, 8, 0), time.Hour}, {at(27, 8, 50), 10 * time.Minute}, {tomorrow, 0}} {
+		fire, _ := step(c.at)
+		if len(fire) != 1 || fire[0].Lead != c.lead || !fire[0].DueAt.Equal(tomorrow) || fire[0].Missed {
+			t.Fatalf("%v: got %+v, want the %v alert for the 27th", c.at.In(ny), fire, c.lead)
+		}
+	}
+	if fire, _ := step(at(27, 9, 1)); len(fire) != 0 {
+		t.Fatalf("repeat: %+v", fire)
+	}
+}

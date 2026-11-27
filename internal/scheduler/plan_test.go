@@ -169,3 +169,52 @@ func TestWallJumped(t *testing.T) {
 		}
 	}
 }
+
+// An open recurring item left un-done keeps yesterday's DueAt until its next
+// occurrence arrives (AdvanceRecurring), so the plan must look ahead to that
+// occurrence for its lead alerts.
+func TestPlanRecurringNextOccurrenceLeads(t *testing.T) {
+	yesterday := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	tomorrow := yesterday.AddDate(0, 0, 1)
+	it := rem("r", yesterday, yesterday.AddDate(0, 0, -1))
+	it.RRule, it.TZ, it.UpdatedAt = "FREQ=DAILY", "UTC", yesterday
+	notified := map[string]bool{key(it.ID, yesterday, 0): true}
+	seen := func(k string) bool { return notified[k] }
+
+	_, _, next := Plan([]model.Item{it}, leads, yesterday.Add(time.Minute), seen)
+	if !next.Equal(tomorrow.Add(-time.Hour)) {
+		t.Fatalf("next=%v, want the 1h lead of the next occurrence", next)
+	}
+	for _, l := range leads {
+		fire, cov, _ := Plan([]model.Item{it}, leads, tomorrow.Add(-l), seen)
+		if len(fire) != 1 || fire[0].Lead != l || !fire[0].DueAt.Equal(tomorrow) || fire[0].Missed ||
+			fire[0].Key != key(it.ID, tomorrow, l) {
+			t.Fatalf("lead %v: got %+v", l, fire)
+		}
+		for _, k := range cov {
+			notified[k] = true
+		}
+	}
+}
+
+// The look-ahead is only for recurring items, and never repeats a lead that
+// the advanced item already fired (same key).
+func TestPlanRecurringLookAheadIdempotent(t *testing.T) {
+	today := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+	it := rem("r", today, today.AddDate(0, 0, -2))
+	it.RRule, it.TZ, it.UpdatedAt = "FREQ=DAILY", "UTC", today // just advanced
+	notified := map[string]bool{key(it.ID, today, time.Hour): true, key(it.ID, today, 10*time.Minute): true}
+	fire, cov, _ := Plan([]model.Item{it}, leads, today, func(k string) bool { return notified[k] })
+	if len(fire) != 1 || fire[0].Lead != 0 || len(cov) != 1 {
+		t.Fatalf("got %+v covered %v", fire, cov)
+	}
+
+	one := rem("o", today, today.AddDate(0, 0, -2)) // one-off: nothing after its due time
+	if _, _, next := Plan([]model.Item{one}, leads, today.Add(time.Minute), func(string) bool { return true }); !next.IsZero() {
+		t.Fatalf("one-off next=%v", next)
+	}
+}
+
+func key(id string, due time.Time, lead time.Duration) string {
+	return id + "|" + strconv.FormatInt(due.Unix(), 10) + "|" + strconv.FormatInt(int64(lead/time.Second), 10)
+}
