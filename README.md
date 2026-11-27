@@ -61,6 +61,22 @@ Date and time may come in either order, and a leading `at`, `on`, `for` or `by` 
 
 If the resulting time is already in the past the preview warns "time is in the past". Bare-hour rule: 1-7 is pm, 8-12 is as written, 13-23 is 24-hour.
 
+As soon as the line contains a due time, the icon at the left of the box turns into a light-red bell and a "Reminder · Thu 26 Nov, 17:00" badge appears in the preview. Both go away when you delete the time words, so you can tell before pressing Enter whether the box understood a reminder.
+
+### Priority
+
+An item can be High, Medium or Low priority, or have none (the default). In the capture box, click the **High**, **Med** or **Low** chip under the input, or press `Alt+1`, `Alt+2` or `Alt+3`; `Alt+0` clears it. You can also type a token anywhere in the line:
+
+| Token | Priority |
+|---|---|
+| `!high`, `!h`, `!!!` | High |
+| `!medium`, `!med`, `!m` | Medium |
+| `!low`, `!l` | Low |
+
+A token has to stand alone between spaces. `!important`, `wow!!`, a bare `!` or `!!`, and anything inside quotes stay as ordinary text. The chips and the tokens are the same thing: clicking a chip writes the token into the line, and typing a token lights up its chip.
+
+Priority shows as a coloured dot before the item text (red High, amber Medium, blue Low). Inside each tag section, High items come first, then Medium, then Low, then the rest. Today/Upcoming keeps time order. The `todo.md` export adds `(!high)`, `(!med)` or `(!low)` after the text.
+
 ### Voice
 
 Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself after about 1.5 seconds of silence (or at 30 seconds). Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
@@ -88,19 +104,43 @@ A repeating reminder keeps reminding on schedule even if you never mark it done:
 
 ### Tray list
 
-Click the tray icon, or use the tray menu (**Open List**, **Settings**, **Quit**), to open the list. It groups items into today/upcoming, one section per tag, and done.
+Click the tray icon, use the tray menu (**Open List**, **Settings**, **Quit**), or on Windows click the app's taskbar button to open the list. It groups items into today/upcoming, one section per tag, and done.
+
+Click a row to open its details panel (see below). Double-click the text, or press `F2`, to edit the row as a line of text instead.
 
 | Key | Action |
 |---|---|
 | `/` | focus search |
-| `Up` / `Down`, `Home` / `End` | move the selection |
+| `Up` / `Down`, `Home` / `End` | move the selection (with the panel open, it follows) |
 | `Space` | toggle done |
-| `Enter` | edit the selected row as a line of text |
+| `Enter` | open the details panel with the title focused |
+| `F2` | edit the selected row as a line of text |
 | `s` | snooze menu |
 | `.` or the context-menu key | row menu (snooze, stop repeating, delete) |
 | `Delete` | delete (a toast offers Undo for 5 seconds) |
 | `Ctrl+Z` / `Cmd+Z` | undo the last delete |
-| `Esc` | clear search, then close |
+| `Esc` | close the panel, then clear search, then close the window |
+
+### Task details
+
+The details panel slides in from the right and takes half of the list window (at least 420 px). If the window is narrower than 1100 px it widens to 1100 px (or the screen width) while the panel is open, and shrinks back when it closes. The panel lives inside the list window, so it opens no extra window.
+
+It edits the title, priority, due time and repeat (none, daily, weekdays, or weekly on the due day; set a due time first), tags, and a Markdown description. There is no Save button. Text saves 600 ms after you stop typing and whenever you leave the field, switch items or close the panel, and `Ctrl+S` saves at once. Priority, due, repeat and tags save as soon as you change them. The footer shows "Saving…", "Saved", or "Couldn't save" with a Retry, plus **Mark done** / **Reopen**, **Snooze** (reminders only) and **Delete** (with the usual Undo toast). Changing the due time clears any snooze and gives the item fresh alerts. Clearing it turns the item back into a to-do.
+
+The description has a toolbar and an **Edit | Preview** switch. Each toolbar button shows its shortcut and the Markdown it inserts:
+
+| Key | Inserts |
+|---|---|
+| `Ctrl+B` | bold |
+| `Ctrl+I` | italic |
+| `Ctrl+K` | link |
+| `Ctrl+Shift+C` | code (inline, or a block around selected lines) |
+| `Ctrl+Shift+8` | bulleted list |
+| `Ctrl+Shift+9` | checklist (`- [ ]`) |
+
+Heading and Image are toolbar buttons only. In Preview, checklist boxes can be ticked (that edits the Markdown and saves), images open in a lightbox (Esc closes it), and links open in your browser. Only `http`, `https` and `mailto` links work. Raw HTML in the description is stripped, so nothing in it can run.
+
+**Images:** paste a screenshot (`Ctrl+V`), drop an image file onto the description, or use the Image button. PNG, JPEG, WebP, GIF (first frame) and BMP are accepted, up to 20 MB. Before saving, each image is shrunk so its longest side is at most 1600 px and stored as WebP (quality 0.8, or 0.6 if the result would be over 600 KB). A 4K screenshot usually ends up a few hundred KB. The description refers to it as `![name](att:<id>)`.
 
 ### Settings
 
@@ -111,6 +151,16 @@ Open Settings from the tray menu or the gear in the list window.
 - **Default time** for dates without a time (`09:00`), and the weekday and time used for "next week".
 - **Export path:** if set, the app writes a read-only `todo.md` there after changes (leave empty to turn off).
 - **Start at login:** on by default.
+- **Show pending count:** on by default. Turn it off to remove the count from the tray icon, the taskbar button and the Dock.
+
+### Pending count
+
+The number of open items (to-dos and reminders not yet done) shows as a red badge. Above 9 it reads `9+`, and with nothing open there is no badge. It updates whenever an item changes.
+
+- **Tray icon (all systems):** the badge is drawn on the icon, and the tooltip reads "Awesome Reminder — 3 pending", followed by the hotkey error if there is one.
+- **Windows taskbar:** the app has a single taskbar button, a tiny native window rather than one of the app's windows, and the count appears as its overlay icon. Clicking the button opens the list. The list and Settings windows add no buttons of their own. You can pin the button so the count is always visible.
+- **macOS:** the count is the Dock badge.
+- **Linux:** the badge is on the tray icon only for now (no launcher count).
 
 ### Where data lives
 
@@ -122,7 +172,9 @@ Everything is under the per-user config directory, in an `awesome-reminder` fold
 | macOS | `~/Library/Application Support/awesome-reminder/` |
 | Linux | `~/.config/awesome-reminder/` |
 
-It holds `awesome.db` (the SQLite database) and `awesome.log`. Settings are stored in the database. Delete the folder to reset the app.
+It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). Settings are stored in the database. Delete the folder to reset the app.
+
+At startup the app deletes images that no description has referred to for more than 7 days, and images of items that have been deleted for more than 30 days. Undoing a delete within those windows keeps the images.
 
 The voice engine and model (Phase 1.5, about 160 MB) live in the local cache instead, so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux. Delete that folder to remove voice; the next mic press offers the download again.
 
@@ -156,7 +208,7 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Nothing leaves your machine (the one-time voice download is the only network use, and only after you agree to it).
 
 Planned, in order:
 

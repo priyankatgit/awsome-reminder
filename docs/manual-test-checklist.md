@@ -74,3 +74,22 @@ Windows run (same machine as above; temp copy, `APPDATA`/`LOCALAPPDATA` pointed 
 | 35 s after the last dictation | 50 / 63 MB | 387 / 161 MB (7 processes) | none |
 
 Notes: whisper-server (8 threads on 16 cores, `base.en`) commits about 740 MB private while it runs (working set about 250 MB); it is gone 30 s after use. After the first dictation WebView2 keeps one extra utility process (the audio service), about +16 MB private, until the app restarts.
+
+## Details panel, priority, pending badge (Phase 1.6)
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| D1 | Panel opens, switches, closes | Click a row: the panel slides in at half the window (min 420 px), and a window narrower than 1100 px widens and shrinks back on close. `Enter` opens it with the title focused; `F2` / double-click edits inline instead; `Up`/`Down` switch the panel's item; `Esc` closes the panel, then clears search, then closes the window. | needs human (keys covered by the list and panel vitest suites) | | | |
+| D2 | Autosave, including a racing switch | Type in the title or description and wait: "Saving…" then "Saved". Type and press `Down` within 600 ms: the edit lands on the first item, not the second. `Ctrl+S` saves at once. | needs human (race covered by `flushes pending edit to the previous item on switch`) | | | |
+| D3 | Pasted screenshot | Paste an 8 MB 4K PNG into the description: it shows "Uploading…", then the image; the file in `attachments\` is WebP and ≤ 600 KB. A 25 MB image shows "Image too large (max 20 MB)". | needs human (sizing covered by `compressTarget picks quality step` and `rejects >20MB`) | | | |
+| D4 | Hostile Markdown is inert | Description `<img src=x onerror=alert(1)>`, `[x](javascript:alert(1))`, `<a href="file:///C:/">x</a>`: Preview shows no alert, and clicking does not navigate. An `https` link opens in the browser. | needs human (covered by `sanitizes hostile markdown`) | | | |
+| D5 | Checklist tick persists | `- [ ] step` in the description, tick it in Preview, close and reopen the panel: it reads `- [x] step`. | needs human | | | |
+| D6 | Capture priority and reminder indicator | `Alt+1/2/3/0` and the chips write and clear `!high` / `!med` / `!low`; `!important` and `"!h"` stay text. Typing `tomorrow 5pm` pops in the light-red bell and the "Reminder · …" badge; deleting the time fades them out. | needs human (tokens covered by the parser table) | | | |
+| D7 | Idle RAM unchanged with the panel closed | As row 6: measure after 10 min idle, then open a panel with an image, close it, and measure again after 10 min. The difference should be small (Markdown libraries load only on first open). | | | | |
+| B1 | Taskbar badge | With open items, the taskbar button shows a red count overlay (`9+` above 9, none at 0). | pass (3 open items seeded: the button showed a red "3" over the app icon; screenshot) | n/a (Dock badge: check the Dock tile instead) | n/a | n/a |
+| B2 | One taskbar button, click opens the list | Only one "Awesome Reminder" button; the list and Settings add none. Clicking it opens the list, and the native window stays minimized. | pass (only the native window has `WS_EX_APPWINDOW`; the list window has `WS_EX_TOOLWINDOW`. A posted `SC_RESTORE` opened the list, and the native window stayed minimized) | n/a | n/a | n/a |
+| B3 | Live count and tray badge | Add and complete items: the taskbar, the tray icon and the tooltip ("Awesome Reminder — N pending") follow within about a second. | needs human (covered by `TestBadgeWiringUpdatesOnChange`; the tray icon was not inspected) | | | |
+| B4 | Setting off | Turn off Settings › Show pending count: the badge leaves the tray, taskbar and Dock, and the tooltip is just "Awesome Reminder". Turn it on again: the badge comes back. | needs human (covered by `TestBadgeWiringUpdatesOnChange`) | | | |
+| B5 | Pinned button | Pin the taskbar button, quit, start from the pin: the pin and the running button merge into one, with the badge. | needs human | n/a | n/a | n/a |
+
+Windows run (2026-11-27, same machine; temp copy with `APPDATA`/`LOCALAPPDATA` pointed at a scratch folder): no `taskbar:` errors in `awesome.log`. The Go process was at 58 MB private / 40 MB working set a few seconds after start with the native window. That is no measurement of the window's own cost, which is a plain Win32 window with no WebView.

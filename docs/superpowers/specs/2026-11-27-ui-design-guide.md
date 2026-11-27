@@ -37,6 +37,10 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--remind-border` | `var(--border)` | `#FCA5A5` | ghost-button borders on the tint (light `--border` vanishes on it) |
 | `--remind-glow` | `0 0 12px 2px rgba(248,113,113,.55)` | `0 0 12px 2px rgba(220,38,38,.4)` | one 600 ms (`--dur-remind-glow`) glow of the edge bar when a card appears |
 | `--highlight` | `rgba(34,197,94,.16)` | `rgba(22,163,74,.16)` | row highlight after the list opens on an item; fades out |
+| `--prio-high` | `#F87171` | `#B91C1C` | High priority dot, chip and label (Phase 1.6) |
+| `--prio-med` | `#FBBF24` | `#92400E` | Medium priority |
+| `--prio-low` | `#60A5FA` | `#1D4ED8` | Low priority |
+| `--panel-width` | `max(50%, 420px)` | same | details panel width (`--panel-share`, `--panel-min`); slide-in `--dur-panel` 180 ms |
 | `--shadow-menu` | `0 8px 24px rgba(0,0,0,.28)` + 1px `--border` | `0 8px 24px rgba(15,23,42,.12)` + 1px `--border` | row `⋯` menu (softer than the window shadow) |
 
 Rule: text uses the `-text` / `-fg` variants, never the plain `--accent` / `--time` / `--danger`, so contrast holds on `--bg`, `--surface` and `--muted` in both themes. `frontend/src/tokens.css` is authoritative if this table drifts.
@@ -67,6 +71,8 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - **Right action slot (48×48 hit area)** is reserved in Phase 1 and holds the mic button in the voice phase. Phase 1 renders nothing there.
 - Save feedback: input flashes an `--accent` underline for 120 ms, then the window hides.
 - Errors are shown inline under the input in `--danger`, never as alerts.
+- **Priority chips (Phase 1.6):** a row of `High` `Med` `Low` chips under the input (`--prio-chip-height` 24 px, an 8 px `--prio-*` dot plus the word, so it never relies on colour alone). Chips are buttons with `aria-pressed` and `aria-keyshortcuts`, and come after the input and the time picker in Tab order. `Alt+1/2/3` set the priority and `Alt+0` clears it. A chip edits the typed token (`!high` / `!med` / `!low`) in the input, which stays the single source of truth; the active chip follows the parse. The hint row adds `Alt+1–3 priority` and `Alt+0 clear`.
+- **Live reminder indicator (Phase 1.6):** when the preview has a due time, the lead icon becomes a `--remind` bell with a 160 ms pop (`--dur-pop`, `scale(--pop-scale → 1)` + opacity; no scale under reduced motion), and a `chip-remind` badge "Reminder · Thu 26 Nov, 17:00" (`--remind-text` on `--remind-tint`) leads the preview row. Removing the time words fades both out (90 ms). `role="status"` announces "Reminder detected for …" and "Reminder removed". The mic keeps the right action slot.
 
 ### Listening state (voice phase, designed now)
 ```
@@ -98,9 +104,38 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - Single column, max content width 760 px, centered; rows 40 px; the full row is the click target; checkbox 20 px inside a 40 px hit area.
 - Row hover shows `--muted` background and reveals the `⋯` menu (snooze 10m / 1h / tomorrow, stop repeating, delete). The menu is also reachable by keyboard (`.` or context-menu key).
 - Times in mono `--time`; overdue rows prefix "overdue ·" in `--danger` (not color alone).
-- Keys: `/` focus search, `↑/↓` move, `Space` toggle done, `Enter` edit, `s` snooze menu, `Del` delete, `Esc` clear search / close.
+- Keys: `/` focus search, `↑/↓` move, `Space` toggle done, `Enter` open the details panel (title focused), `F2` inline edit, `s` snooze menu, `Del` delete, `Esc` close the panel / clear search / close. A click on the row opens the panel once the double-click time has passed; a double-click on the text edits inline.
+- Priority (Phase 1.6): an 8 px `--prio-*` dot before the text with an `aria-label` ("High priority"). Tag sections sort High → Medium → Low → none, keeping creation order within each; Today/Upcoming stays in time order.
 - Done uses a 180 ms strike-through + fade, then the row moves to Done. Delete shows a bottom toast "Deleted · Undo" for 5 s (`role="status"`).
 - Empty state: a centered `inbox` icon, "Nothing here. Press Ctrl+Shift+Space to capture." with the real hotkey shown as keycaps.
+
+## Details panel (Phase 1.6)
+```
+┌ list ──────────────────────────┬─ panel ──────────────────────────── ✕ ┐
+│ ☐ fix flaky test    #backend   │ [fix flaky test..................]      │  ← title, 16 px
+│▶☐ check deploy 17:00  ● High   │ Priority  (High)(Med)(Low)(None)        │
+│ ☐ read RFC                     │ Due       Thu 26 Nov, 17:00   Repeat ▾  │
+│                                │ Tags      #backend #ops  [+ tag]        │
+│                                │ [B][I][H][•][☑][</>][🔗][🖼]  Edit|Preview │
+│                                │ ┌──────────────────────────────────┐    │
+│                                │ │ Markdown textarea / preview       │    │
+│                                │ └──────────────────────────────────┘    │
+│                                │ created 25 Nov · Saved ✓                │
+│                                │ [✓ Mark done] [Snooze ▾]      [Delete]  │
+└────────────────────────────────┴─────────────────────────────────────────┘
+```
+(The bracketed glyphs are Lucide icons in the real UI.)
+- An in-page drawer in the list window, never a new window. Width `--panel-width` (50% of the window, min 420 px). A window narrower than 1100 px widens to 1100 px (capped to the screen) while it is open and restores on close. It slides in from the right over `--dur-panel` (180 ms, transform only; no slide under reduced motion). The panel module and `marked` / `dompurify` load on first open.
+- Field labels are `--panel-label` (10ch) wide, on `--surface` / `--bg` with the existing colour tokens. Errors show inline per field in `--danger-text`. Repeat is disabled, with the note "Set a due time first", until a due time exists.
+- No Save button. The footer status reads "Saving…", "✓ Saved" or "Couldn't save · Retry". Edits made elsewhere refresh the panel except for the field being edited.
+- Description toolbar: Bold, Italic, Heading, Bulleted list, Checklist, Code, Link, Image, then an Edit | Preview toggle. The toolbar is one tab stop with arrow keys between buttons. Each tooltip shows the shortcut and the Markdown it inserts. Preview typography uses `--md-h1` 18 px and `--md-h2` 16 px, a `--md-quote-bar` (3 px) quote bar, and code on `--muted`. Images are at most `--md-image-max` (320 px) tall and open a lightbox on `--lightbox-backdrop` (Esc closes it, and focus returns to the preview).
+- Footer actions: Mark done (primary; once done it becomes a ghost Reopen), Snooze menu (ghost, reminders only), and Delete (ghost in `--danger-text`, right-aligned; it closes the panel and shows the list's Undo toast).
+
+## Pending-count badge (Phase 1.6)
+- A red disc (`#DC2626`, the light-theme `--danger`; white text is 4.8:1) with the count in white Go Bold, centred by its ink bounds. It shows `1`–`9`, then `9+`, and nothing at 0. It is drawn in Go (`internal/badge`), not CSS, because it ends up in OS icons.
+- **Tray:** composited over the bottom-right quarter of each tray icon, with the glyph cleared under the disc. In the macOS template icon the number is cut out of the disc, because template images keep only alpha. The tooltip reads "Awesome Reminder — N pending" plus any hotkey error.
+- **Windows taskbar:** the overlay icon (`ITaskbarList3::SetOverlayIcon`, 16 px, or 32 px at 150% DPI and above) on the one button owned by a native window. Its accessible text is "N pending". **macOS:** the Dock badge label. **Linux:** tray only.
+- Settings › "Show pending count" (switch, default on) turns all of them off.
 
 ## Alert popup
 ```
@@ -124,6 +159,7 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 - Hotkey recorder: a pill showing keycaps; click → "Press keys…" → captures the combo; shows the registration error inline.
 - Lead-time chips with ✕ and an "+ add" input accepting `30m`, `2h`, `1d`.
 - Save button at the bottom-right (accent); unsaved changes enable it.
+- "Show pending count" switch (Phase 1.6) after "Start at login"; its help text names the tray icon plus the taskbar (Windows) or the Dock (macOS).
 
 ## Pre-delivery checklist (every UI task)
 - [ ] No emoji icons; all icon buttons have `aria-label`
