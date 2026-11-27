@@ -94,6 +94,10 @@ export class Recorder {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    if (this.stopped) {
+      this.release(); // cancelled while the mic was opening: close it again
+      return;
+    }
     try {
       try {
         // Chromium and WebKit resample the mic to the context rate for us.
@@ -108,7 +112,10 @@ export class Recorder {
       } finally {
         URL.revokeObjectURL(url);
       }
-      if (this.stopped) return; // cancelled while starting
+      if (this.stopped) {
+        this.release(); // cancelled while starting
+        return;
+      }
       const source = this.ctx.createMediaStreamSource(this.stream);
       const tap = new AudioWorkletNode(this.ctx, "ar-tap");
       const mute = this.ctx.createGain();
