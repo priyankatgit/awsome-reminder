@@ -109,9 +109,11 @@ func sameTime(a, b *time.Time) bool {
 }
 
 // Done completes an item (a recurring one advances instead) and removes its
-// alert cards.
+// alert cards. If a card is up for a later occurrence than the item's DueAt
+// (the scheduler alerts ahead for an item left un-done), that occurrence is
+// completed too.
 func (s *Service) Done(id string) error {
-	if _, err := s.d.Core.Done(id); err != nil {
+	if _, err := s.d.Core.DoneThrough(id, s.latestCardDue(id)); err != nil {
 		return err
 	}
 	s.dropItemAlerts(id)

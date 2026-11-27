@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule string) {
 	t.Helper()
 	now := time.Now().UTC()
-	due := now.Add(time.Hour).Truncate(time.Minute) // a whole minute, so an edit round trip keeps it
+	due := alertDue
 	if err := h.st.Put(model.Item{
 		ID: id, Kind: model.KindReminder, Text: text, Tags: tags, DueAt: &due, TZ: "UTC",
 		RRule: rrule, Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now, UpdatedBy: "test",
@@ -25,8 +26,14 @@ func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule
 	}
 }
 
+// alertDue is the DueAt of every putReminder item and every alert(): cards
+// must match their item's occurrence, since one for an earlier occurrence is
+// stale and one for a later occurrence replaces the item's earlier ones. A
+// whole minute, so an edit round trip keeps it.
+var alertDue = time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+
 func alert(id, key string) scheduler.Alert {
-	return scheduler.Alert{Key: key, ItemID: id, Text: "text " + id, DueAt: time.Now().Add(10 * time.Minute), Lead: 10 * time.Minute}
+	return scheduler.Alert{Key: key, ItemID: id, Text: "text " + id, DueAt: alertDue, Lead: 10 * time.Minute}
 }
 
 func keys(cards []AlertCard) []string {
@@ -263,5 +270,107 @@ func TestUpdateDropsCardsWhenDueChanges(t *testing.T) {
 	}
 	if len(h.svc.PendingAlerts()) != 0 || h.win.alertsHidden != 1 {
 		t.Fatalf("queue %v hidden %d", keys(h.svc.PendingAlerts()), h.win.alertsHidden)
+	}
+}
+
+// putDaily stores an open daily reminder whose DueAt is due (UTC).
+func putDaily(t *testing.T, h *harness, id string, due time.Time) {
+	t.Helper()
+	created := due.Add(-time.Hour)
+	if err := h.st.Put(model.Item{
+		ID: id, Kind: model.KindReminder, Text: "daily " + id, Tags: []string{}, DueAt: &due, TZ: "UTC",
+		RRule: "FREQ=DAILY", Status: model.StatusOpen, CreatedAt: created, UpdatedAt: created, UpdatedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func occurrenceAlert(id string, due time.Time, lead time.Duration) scheduler.Alert {
+	return scheduler.Alert{Key: id + "|" + strconv.FormatInt(due.Unix(), 10) + "|" + strconv.FormatInt(int64(lead/time.Second), 10),
+		ItemID: id, Text: "daily " + id, DueAt: due, Lead: lead}
+}
+
+// When the scheduler's before-plan step moves a recurring item to a later
+// occurrence, the item's cards for the old one go: its Done would now act on
+// the new occurrence.
+func TestAdvanceRecurringDropsItemCards(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC().Truncate(time.Minute)
+	old := now.Add(-25 * time.Hour)
+	putDaily(t, h, "A", old)
+	putReminder(t, h, "B", "call Sam", nil, "")
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", old, 0), alert("B", "B|1|0")})
+
+	wake, err := h.svc.advanceRecurring(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := old.Add(48 * time.Hour); !wake.Equal(want) {
+		t.Fatalf("wake %v, want %v", wake, want)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"B|1|0"}) {
+		t.Fatalf("queue %v, want only B's card", got)
+	}
+	if it, _ := h.st.Get("A"); !it.DueAt.Equal(old.Add(24 * time.Hour)) {
+		t.Fatalf("A not moved: due %v", it.DueAt)
+	}
+
+	// Nothing to move: the queue is left alone.
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", old.Add(24*time.Hour), 0)})
+	if _, err := h.svc.advanceRecurring(now); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.svc.PendingAlerts()); n != 2 {
+		t.Fatalf("queue %v", keys(h.svc.PendingAlerts()))
+	}
+}
+
+// A card for a later occurrence of an item replaces the item's cards for
+// earlier ones (yesterday's un-done card when today's lead alert fires);
+// cards of the same occurrence stay, as for any reminder.
+func TestLaterOccurrenceCardReplacesOlder(t *testing.T) {
+	h := newHarness(t)
+	today := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+	yesterday := today.Add(-24 * time.Hour)
+	putDaily(t, h, "A", yesterday)
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", yesterday, 0)})
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today, time.Hour)})
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today, 10*time.Minute)})
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", yesterday, 10*time.Minute)}) // late, older: ignored
+	want := []string{occurrenceAlert("A", today, time.Hour).Key, occurrenceAlert("A", today, 10*time.Minute).Key}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("queue %v, want %v", got, want)
+	}
+}
+
+// Done pressed on a card for an occurrence after the item's DueAt (a
+// look-ahead lead alert) completes that occurrence, so its at-time alert
+// does not fire afterwards.
+func TestDoneFromLaterOccurrenceCard(t *testing.T) {
+	h := newHarness(t)
+	today := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Minute)
+	putDaily(t, h, "A", today.Add(-24*time.Hour)) // yesterday's occurrence, un-done
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today, time.Hour)})
+	if err := h.svc.Done("A"); err != nil {
+		t.Fatal(err)
+	}
+	if it, _ := h.st.Get("A"); !it.DueAt.Equal(today.Add(24 * time.Hour)) {
+		t.Fatalf("due %v, want tomorrow %v", it.DueAt, today.Add(24*time.Hour))
+	}
+	if n := len(h.svc.PendingAlerts()); n != 0 {
+		t.Fatalf("%d cards left", n)
+	}
+}
+
+// An alert for an occurrence before the item's current DueAt is stale (a
+// delayed fire from before the item moved or was marked done) and is not
+// shown.
+func TestStaleOccurrenceAlertIgnored(t *testing.T) {
+	h := newHarness(t)
+	today := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+	putDaily(t, h, "A", today)
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today.Add(-24*time.Hour), 0)})
+	if n := len(h.svc.PendingAlerts()); n != 0 || h.win.alertsShown != 0 {
+		t.Fatalf("queue %v shown %d", keys(h.svc.PendingAlerts()), h.win.alertsShown)
 	}
 }
