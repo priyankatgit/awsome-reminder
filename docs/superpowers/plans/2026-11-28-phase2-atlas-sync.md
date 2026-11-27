@@ -10,10 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-27-awesome-reminder-design.md` (Storage & sync, Data model, Sync rules, Constraints, Delivery phase 2 incl. "Sync status everywhere"), `docs/superpowers/specs/2026-11-28-task-details-priority-design.md` ("Phase 2 (sync) impact"), `docs/superpowers/specs/2026-11-27-ui-design-guide.md`.
 
-**Precondition:** Phases 1, 1.5 and 1.6 are merged into `master` (store schema v2, attachments, pending badge). Branch from current `master`. The README now numbers the ntfy phase as **Phase 4** (hands-free voice became Phase 3). This plan says "the ntfy phase" for it.
+**Precondition:** Phases 1, 1.5 and 1.6 are merged into `master` (store schema v2, attachments, pending badge). Branch from current `master`. The README roadmap on `master` (87ea342) puts hands-free voice in Phase 3 and ntfy push in Phase 4. Neither is in scope here, and nothing in this plan is designed around them.
 
 **Decisions made with the user on 2026-11-28** (the spec left them open, or this plan changes the spec):
-- **Synced settings are the reminder defaults only:** lead times, default time, "next week" day and time, plus ntfy later. The hotkey, export path, autostart and "show pending count" stay per machine. This overrides the spec's list, which also syncs the hotkey and export path.
+- **Synced settings are the reminder defaults only:** lead times, default time, "next week" day and time. The hotkey, export path, autostart and "show pending count" stay per machine. This overrides the spec's list, which also syncs the hotkey and export path.
 - **No privilege check on connect.** That the Atlas user is scoped to `awesome_reminder` is documented in the setup guide only.
 - **No OS keychain** (e.g. Linux without a Secret Service): the URI goes to a file instead. The user asked for it encrypted "by SHA". SHA is a one-way hash, so the app could never read the URI back from it. The plan uses AES-256-GCM with a random per-install key instead. The key lives in its own file and the ciphertext in the database, so a copied database (a backup, or one attached to a bug report) does not leak the URI. Someone with full access to the user's account can still decrypt it. The Settings help text says so.
 - **First connect merges silently:** the union of both sides, per-record LWW. A fresh machine is therefore a plain restore.
@@ -25,7 +25,7 @@
 - No client-side encryption of synced data. TLS comes from Atlas.
 - The URI is stored in the OS keychain (service `dev.awesome-reminder.app`, account `atlas-uri`) and falls back to the AES-256-GCM file (`<DataDir>/sync.key` + meta `sync_uri_enc`). It never appears in logs, events or error strings. The UI shows only the host (`atlas.Host`).
 - **LWW:** the newer `updated_at` (compared at millisecond precision) wins; on a tie the lexicographically greater `updated_by` (device ULID) wins. Deletes are tombstones, and nothing is purged in Phase 2.
-- **Push** writes Atlas with `$set` of the known fields plus `$currentDate: {_srv: {$type: "date"}}`, conditionally on LWW. It never replaces a document, so fields that the ntfy phase adds to `items` (the `ntfy` sub-document) survive.
+- **Push** writes Atlas with `$set` of the known fields plus `$currentDate: {_srv: {$type: "date"}}`, conditionally on LWW. It never replaces a document, so fields written by anything else (e.g. a newer app version) survive.
 - **Pull** reads by the server stamp `_srv`, ordered by `(_srv, _id)`, re-reading a 2 min overlap before the saved watermark. Page size is 200 items, or 8 attachments (attachments carry their bytes).
 - **Cadence:**
   - poll every 30 s;
@@ -352,7 +352,7 @@
   - **Push** is `UpdateOne` with filter `{_id, $or:[{updated_at:{$lt:T}}, {updated_at:T, updated_by:{$lt:by}}]}` and update `{$set:{…}, $currentDate:{_srv:{$type:"date"}}}`, with `upsert`. `mongo.IsDuplicateKeyError` means the remote is equal or newer → nil.
     - An attachment tombstone also sends `$unset:{data:""}`.
     - Field names are exactly as in Global Constraints.
-  - **Pull** is `Find({$or:[{_srv:{$gt:T}}, {_srv:T,_id:{$gt:ID}}]})` sorted by `{_srv:1,_id:1}`, with a limit and no projection, so attachment pulls carry `data`. Unknown fields such as `ntfy` are ignored on decode.
+  - **Pull** is `Find({$or:[{_srv:{$gt:T}}, {_srv:T,_id:{$gt:ID}}]})` sorted by `{_srv:1,_id:1}`, with a limit and no projection, so attachment pulls carry `data`. Unknown fields are ignored on decode.
   - **`ServerTime`** is `hello.localTime`. **`AttachmentBytes`** is `$match {deleted:false}` + `$group $sum:"$bytes"`.
   - **`Classify`:**
 
@@ -373,7 +373,7 @@
   - `TestDocMapping` (item ↔ BSON round-trip including nil `due_at`, nil `lead_times` vs `[]`, and ms precision).
 - [ ] **Step 2: Write the integration test**, skipped unless `AWESOME_TEST_MONGO_URI` is set (database from `AWESOME_TEST_MONGO_DB`, default `awesome_reminder`; prefix `test_<ulid>_`; collections dropped in `t.Cleanup`):
   - `cloudsynctest.Run`;
-  - `TestPushKeepsUnknownFields` (`$set` an `ntfy` sub-document directly, push a newer item → `ntfy` still present);
+  - `TestPushKeepsUnknownFields` (`$set` an unknown field `extra` directly, push a newer item → `extra` still present);
   - `TestTwoDevicesAgainstMongo` (two cores, two engines, converge).
 - [ ] **Step 3:** Run `go test ./internal/cloudsync/atlas/ -v`. Expected: unit tests FAIL; integration SKIP.
 - [ ] **Step 4:** Implement.
