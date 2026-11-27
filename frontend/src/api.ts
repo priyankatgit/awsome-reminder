@@ -50,6 +50,9 @@ export interface Settings {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  /** Stamp of the last shared-settings change (unix ms, device id). Set by Go; passed back unchanged. */
+  sharedUpdatedAt?: number;
+  sharedUpdatedBy?: string;
 }
 
 export const api = {

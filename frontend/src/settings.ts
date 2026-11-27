@@ -123,6 +123,9 @@ interface Draft {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  // Go owns the shared-settings stamp; it is carried through untouched.
+  sharedUpdatedAt?: number;
+  sharedUpdatedBy?: string;
 }
 
 function toDraft(s: Settings): Draft {
@@ -135,6 +138,8 @@ function toDraft(s: Settings): Draft {
     exportPath: s.exportPath,
     autostart: s.autostart,
     showPendingCount: s.showPendingCount,
+    sharedUpdatedAt: s.sharedUpdatedAt,
+    sharedUpdatedBy: s.sharedUpdatedBy,
   };
 }
 
@@ -148,6 +153,8 @@ function toSettings(d: Draft): Settings {
     exportPath: d.exportPath.trim(),
     autostart: d.autostart,
     showPendingCount: d.showPendingCount,
+    sharedUpdatedAt: d.sharedUpdatedAt,
+    sharedUpdatedBy: d.sharedUpdatedBy,
   };
 }
 

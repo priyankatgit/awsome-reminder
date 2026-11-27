@@ -439,5 +439,17 @@ func (c *Core) SaveSettings(s settings.Settings) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	return c.write(func() error { return c.st.SaveSettings(s) })
+	return c.write(func() error {
+		// The stamp is the store's, not the caller's.
+		old, err := c.st.LoadSettings(runtime.GOOS)
+		if err != nil {
+			return err
+		}
+		s.SharedUpdatedAt, s.SharedUpdatedBy = old.SharedUpdatedAt, old.SharedUpdatedBy
+		if s.Shared().Equal(old.Shared()) {
+			return c.st.SaveSettings(s)
+		}
+		s.SharedUpdatedAt, s.SharedUpdatedBy = time.UnixMilli(c.now().UnixMilli()), c.st.DeviceID()
+		return c.st.SaveSettingsShared(s)
+	})
 }
