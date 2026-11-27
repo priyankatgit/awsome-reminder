@@ -87,6 +87,16 @@ Images (user picked): **compressed on attach and synced** in Phase 2.
   - Snooze is hidden for to-dos, as in the list menu.
 - **Footer actions**: Mark done / Reopen, Snooze (10m / 1h / tomorrow — reminders only), Delete (with the existing Undo toast; closes the panel).
 
+### Pending-count badge on the taskbar and tray (user request, 2026-11-28)
+- **What it counts (user):** all open items, to-dos and reminders, i.e. everything not done or deleted. It updates on every `items:changed`.
+- **Windows taskbar:**
+  - The app keeps one tiny native Win32 window, not a WebView (so near-zero memory), that owns a taskbar button. The user can pin it. Clicking the button, or activating that window, opens or focuses the list window; the native window itself stays off-screen and minimized *[my call]*.
+  - The badge is drawn with `ITaskbarList3::SetOverlayIcon`: a red circle (`--prio-high`/danger red) with a bold white number, rendered in Go to an HICON at 16 and 32 px. Above 9 it shows `9+`. A count of 0 shows no overlay. The accessible description reads "N pending".
+  - The taskbar button uses the app's AppUserModelID, so a pinned shortcut and the running button merge.
+- **Tray icon (all OSes):** the same red count badge is composited onto the tray icon. A count of 0 shows the plain icon. The tooltip reads "Awesome Reminder — N pending", with any hotkey error appended.
+- **macOS:** Dock badge (`NSApp.dockTile.badgeLabel`). **Linux:** Unity LauncherEntry count where supported, otherwise tray only.
+- **Setting:** "Show pending count" (default on) *[my call]*.
+
 ## Constraints
 - No new windows; panel code and Markdown libs are lazy-loaded; idle RAM must not grow when the panel is closed (measure as in the Phase 1 checklist).
 - Token discipline, contrast ≥ 4.5:1 in both themes, keyboard-complete, `prefers-reduced-motion`, Lucide icons only (no emoji) — per the UI design guide.
