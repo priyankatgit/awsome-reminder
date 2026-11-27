@@ -12,9 +12,9 @@
 
 **Precondition:** Phases 1, 1.5 and 1.6 are merged into `master` (store schema v2, attachments, pending badge). Branch from current `master`. The README roadmap on `master` (87ea342) puts hands-free voice in Phase 3 and ntfy push in Phase 4. Neither is in scope here, and nothing in this plan is designed around them.
 
-**Decisions made with the user on 2026-11-28** (the spec left them open, or this plan changes the spec):
+**Decisions made on 2026-11-28** (the spec left them open, or this plan changes the spec; the user answered, then left the final calls to the plan author):
 - **Synced settings are the reminder defaults only:** lead times, default time, "next week" day and time. The hotkey, export path, autostart and "show pending count" stay per machine. This overrides the spec's list, which also syncs the hotkey and export path.
-- **No privilege check on connect.** That the Atlas user is scoped to `awesome_reminder` is documented in the setup guide only.
+- **The Atlas user's scope is checked and warned about, never blocked.** The user first said not to check. With the final call left to the plan author, the plan adds a cheap check, because the cluster hosts other projects. On the first cycle the app reads the user's privileges (`connectionStatus` with `showPrivileges`). If the user can reach any database other than `awesome_reminder`, sync still runs and Settings and the sync details show a persistent warning. A failed check is logged, not shown. The setup guide still explains how to scope the user.
 - **No OS keychain** (e.g. Linux without a Secret Service): the URI goes to a file instead. The user asked for it encrypted "by SHA". SHA is a one-way hash, so the app could never read the URI back from it. The plan uses AES-256-GCM with a random per-install key instead. The key lives in its own file and the ciphertext in the database, so a copied database (a backup, or one attached to a bug report) does not leak the URI. Someone with full access to the user's account can still decrypt it. The Settings help text says so.
 - **First connect merges silently:** the union of both sides, per-record LWW. A fresh machine is therefore a plain restore.
 
@@ -44,6 +44,7 @@
   - **Tray tooltip suffixes:** `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0), `Sync error: <reason>`; nothing when off.
   - **List pill:** `All synced · just now` / `All synced · 2 min ago`, `Synced · N waiting`, `Syncing…`, `Offline · N changes waiting`, `Sync error`.
   - **Row marker** `aria-label`: `Not synced yet`.
+- Scope warning text (exact): `This Atlas user can reach other databases on your cluster. Limit it to readWrite on awesome_reminder (see the setup guide).`
 - Desktop pop-ups still appear on every running machine (`notify_log` stays local). Done, Snooze and Delete on one machine reach the others through item sync.
 - UI work follows the UI design guide checklist: tokens only in `tokens.css`, Lucide icons, contrast ≥ 4.5:1 in both themes, keyboard-complete, `prefers-reduced-motion`.
 - Never run `bin/awesome-reminder.exe` from its repo path. Use a copy under `%TEMP%` with `APPDATA` pointed at a temp dir.
@@ -260,6 +261,7 @@
       PullShared(ctx context.Context) (*SharedDoc, error) // nil when the cluster has none
       ServerTime(ctx context.Context) (time.Time, error)
       AttachmentBytes(ctx context.Context) (int64, error) // sum of bytes over live attachments
+      ScopeTooBroad(ctx context.Context) (bool, error)    // true when the credentials reach databases other than the sync database
       Classify(err error) (State, string)                // Offline vs Error plus a user-facing reason
       Close(ctx context.Context) error
   }
@@ -269,7 +271,7 @@
       LastSyncAt *time.Time `json:"lastSyncAt"`
       Pending    int        `json:"pending"`
       Error      string     `json:"error"`   // reason when State == error (or offline detail)
-      Warning    string     `json:"warning"` // clock-skew note, else ""
+      Warnings   []string   `json:"warnings"` // clock-skew and/or scope notes; [] never null
       Host       string     `json:"host"`
   }
   type Local interface { /* the Task 3 methods the engine calls; *core.Core satisfies it */ }
@@ -295,8 +297,8 @@
      - Any other error aborts the cycle.
   3. **Pull** attachments, then items, then shared settings. Each collection starts from `saved.T − 2 min` (meta `sync_wm_attachments` / `sync_wm_items`, JSON) and pages until a short page. Each page goes through `ApplyRemote*`. Afterwards, save `max(saved, last returned)`. `OnApplied` receives the items' `Applied` lists.
   4. On success: state `synced`, `LastSyncAt = now` (also meta `sync_last_at`), and `Pending = OutboxCount()`. On error: `Classify`, then schedule `nextDelay`. Emit status either way.
-  - On the first cycle after `Start`, `ServerTime` vs `Now`: if `|skew| > 2 min`, set Warning to `This computer's clock is N min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.`
-- `memsync` is an in-memory `Syncer` with the same LWW and `_srv` semantics: a server clock that strictly increases per write, plus `FailNext(err error, n int)`, `BeforePush(fn func())` and `PutRaw(doc map[string]any)` for malformed docs. Its `Classify` maps an injected `memsync.ErrNetwork` to offline and anything else to error.
+  - On the first cycle after `Start`, `ServerTime` vs `Now`: if `|skew| > 2 min`, add to Warnings `This computer's clock is N min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.` Also on the first cycle: `ScopeTooBroad` true → add the scope warning (Global Constraints); an error → log only.
+- `memsync` is an in-memory `Syncer` with the same LWW and `_srv` semantics: a server clock that strictly increases per write, plus `FailNext(err error, n int)`, `BeforePush(fn func())`, `PutRaw(doc map[string]any)` for malformed docs, and `SetScopeTooBroad(v bool, err error)`. Its `Classify` maps an injected `memsync.ErrNetwork` to offline and anything else to error.
 - `cloudsynctest.Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer)` holds the backend conformance tests, so memsync and Atlas are held to the same rules.
 
 - [ ] **Step 1: Write failing conformance tests** in `cloudsynctest`:
@@ -317,7 +319,8 @@
   - `TestPagingLargeBacklog` (450 items).
   - **`TestInvalidRemoteDocDoesNotStall`** (a malformed raw doc between valid ones → valid ones applied, watermark past it, next cycle quiet).
   - `TestQuietPollDoesNotShowSyncing`.
-  - **`TestClockSkewWarning`** (server +7 min → the exact warning text with `7 min`).
+  - **`TestClockSkewWarning`** (server +7 min → `Warnings` holds the exact text with `7 min`).
+  - `TestScopeWarning` (too broad → `Warnings` holds the exact scope text and state is still synced; a check error → no warning, still synced).
   - **`TestNextDelay`** table: offline failures 1..6 → 30 s, 60 s, 120 s, 240 s, 300 s, 300 s; error → 5 min; synced → 30 s.
 - [ ] **Step 3:** Run `go test ./internal/cloudsync/... -v`. Expected: FAIL.
 - [ ] **Step 4:** Implement. The engine runs one goroutine with one timer (no busy loop) and never holds core locks across network calls.
@@ -354,6 +357,7 @@
     - Field names are exactly as in Global Constraints.
   - **Pull** is `Find({$or:[{_srv:{$gt:T}}, {_srv:T,_id:{$gt:ID}}]})` sorted by `{_srv:1,_id:1}`, with a limit and no projection, so attachment pulls carry `data`. Unknown fields are ignored on decode.
   - **`ServerTime`** is `hello.localTime`. **`AttachmentBytes`** is `$match {deleted:false}` + `$group $sum:"$bytes"`.
+  - **`ScopeTooBroad`** runs `{connectionStatus: 1, showPrivileges: true}` and passes `authInfo.authenticatedUserPrivileges[].resource` to the pure `scopeTooBroad(resources []resource, db string) bool`. That is true when a resource has `db: ""` with a `collection` key (any database), or a `db` other than the sync database, `admin`, `local` or `config`. `{cluster: true}` resources are ignored.
   - **`Classify`:**
 
     | Error | State | User text |
@@ -370,6 +374,7 @@
   - `TestHostAndRedact` (`mongodb+srv://u:p%40ss@cluster0.ab.mongodb.net/x?retryWrites=true` → host `cluster0.ab.mongodb.net`; the redacted form has no `p%40ss`).
   - `TestOpenRejectsBadScheme` (`postgres://…`, `""` → `ErrBadURI`, returns in < 100 ms).
   - **`TestClassify`** table, built from `mongo.CommandError{Code: 18}`, `{Code: 13}`, `&net.DNSError{}`, `context.DeadlineExceeded`, and a wrapped `ErrBadURI`. Assert the state and exact text for each, and that no output contains the password.
+  - `TestScopeTooBroad` table: only `awesome_reminder` → false; plus `admin`/`local` → false; `{db:"", collection:""}` → true; `{db:"otherproj"}` → true; `{cluster:true}` only → false.
   - `TestDocMapping` (item ↔ BSON round-trip including nil `due_at`, nil `lead_times` vs `[]`, and ms precision).
 - [ ] **Step 2: Write the integration test**, skipped unless `AWESOME_TEST_MONGO_URI` is set (database from `AWESOME_TEST_MONGO_DB`, default `awesome_reminder`; prefix `test_<ulid>_`; collections dropped in `t.Cleanup`):
   - `cloudsynctest.Run`;
@@ -522,7 +527,7 @@
     - `Last synced 10:42 (2 min ago)`;
     - `N changes waiting`;
     - the error reason in `--danger-text`;
-    - the warning in `--time-text`;
+    - each warning in `--time-text`;
     - `Cluster <host>`;
     - buttons `Sync now` (primary) and `Sync settings` (ghost → `OpenSettings`).
     `role="status"` announces state changes.
@@ -568,7 +573,7 @@
     - `Cluster <host>`;
     - `Connection string stored in <secretStore>`, with the extra note `Encrypted with a key kept on this computer; anyone with access to your account can read it.` when the fallback is used;
     - the storage line (fetched via `SyncInfo` on open and after each successful sync);
-    - the clock warning, if any;
+    - each warning (clock skew, scope), if any;
     - buttons `Sync now` and `Disconnect`. Disconnect asks inline: `Disconnect this computer? Your items stay here and Atlas keeps its copy.` [Disconnect] [Cancel].
   - **Help text under the section:** `Free clusters can pause after a long time unused; resume it in Atlas if sync says it can't reach the cluster. Atlas must allow this computer's IP (0.0.0.0/0 for laptops that move between networks; the strong password protects it).`
 - [ ] **Step 1: Write failing vitest tests:**
@@ -592,7 +597,7 @@
 
 - [ ] **Step 1:** Write `docs/atlas-setup.md`:
   - create a free M0;
-  - create a database user with **Specific Privileges → readWrite on `awesome_reminder`** only, because the cluster may host other projects;
+  - create a database user with **Specific Privileges → readWrite on `awesome_reminder`** only, because the cluster may host other projects (a broader user still syncs, but the app shows the scope warning);
   - use a strong generated password;
   - Network Access, with `0.0.0.0/0` for roaming laptops and why that is acceptable here;
   - copy the SRV string, paste it in Settings, and Connect;
@@ -609,6 +614,7 @@
   - restore on a fresh profile (items, images, lead times; no missed-card flood);
   - tray dot states and tooltips;
   - wrong password → `Atlas rejected the username or password.`;
+  - a user with `readWriteAnyDatabase` → the scope warning in Settings and the pill popover, and sync still works;
   - paused cluster wording;
   - Done on machine A removes the alert card on machine B;
   - **idle RAM with sync on after 10 min < 150 MB** (record the numbers in the measurements section);
