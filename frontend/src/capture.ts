@@ -1,10 +1,11 @@
 // Capture box (#capture): one-line input with a live parse preview.
 // Layout and behaviour follow the "Capture box" section of the UI guide.
-import { api, errorText, events, on, type Preview } from "./api";
+import { api, errorText, events, on, type Preview, type ReplyPrefill } from "./api";
 import { el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
 import { canAnimate, easing, pop, ring, tokenNumber } from "./motion";
 import { priorityLabel, setPriorityToken, type Priority } from "./priority";
+import { mountReplyMode } from "./reply-mode";
 import { mountVoice } from "./voice";
 
 const PREVIEW_DEBOUNCE_MS = 80;
@@ -109,6 +110,17 @@ export function mountCapture(root: HTMLElement): void {
   const line = el("div", "cap-line");
   line.append(badge, lineBody);
   previewRow.append(remindSay, line, more);
+
+  // Reply mode (the reply hotkey): the reply parts of the preview, the person
+  // editor and the reply hint row live in reply-mode.ts.
+  const reply = mountReplyMode({
+    box,
+    input,
+    line,
+    field: root.querySelector<HTMLElement>(".cap-field")!,
+    hint: root.querySelector<HTMLElement>("#cap-hint")!,
+    canEditPerson: () => !busy && picker.hidden && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing",
+  });
 
   let seq = 0; // invalidates in-flight previews
   let timer: number | undefined;
@@ -215,17 +227,22 @@ export function mountCapture(root: HTMLElement): void {
     lineBody.replaceChildren();
     more.replaceChildren();
     showPriority(p?.priority ?? "");
-    restingLead = !p ? "search" : p.dueAt ? "bell" : "todo";
-    setRemind(Boolean(p?.dueAt), p?.human ?? "");
+    // In reply mode the lead stays the reply arrow and the nudge summary
+    // (reply.render) speaks for any due time.
+    restingLead = reply.active ? "reply" : !p ? "search" : p.dueAt ? "bell" : "todo";
+    setRemind(!reply.active && Boolean(p?.dueAt), p?.human ?? "");
+    reply.render(p);
     if (!p) {
-      lineBody.append(el("span", "cap-empty", "Type a to-do, or add a time like “tomorrow 5pm”"));
+      if (!reply.active) lineBody.append(el("span", "cap-empty", "Type a to-do, or add a time like “tomorrow 5pm”"));
       return;
     }
     const reminder = Boolean(p.dueAt);
-    if (!reminder) lineBody.append(el("span", "cap-kind", "To-do"));
+    if (!reminder && !reply.active) lineBody.append(el("span", "cap-kind", "To-do"));
     for (const t of p.tags ?? []) lineBody.append(tagChip(t));
 
-    if (reminder && p.alerts && p.alerts.length > 0) {
+    if (reply.active) {
+      // the nudge summary covers alerts
+    } else if (reminder && p.alerts && p.alerts.length > 0) {
       more.append(el("div", "cap-sub", `alerts ${p.alerts.map((a) => a.replace(/ before$/, "")).join(" · ")}`));
     } else if (reminder) {
       more.append(el("div", "cap-sub", "already past: no alerts"));
@@ -267,7 +284,10 @@ export function mountCapture(root: HTMLElement): void {
   function reset(keepDraft = false): void {
     seq++;
     window.clearTimeout(timer);
-    if (!keepDraft) input.value = "";
+    if (!keepDraft) {
+      input.value = "";
+      reply.exit();
+    }
     showError("");
     closePicker(false);
     if (input.value.trim() === "") {
@@ -349,7 +369,9 @@ export function mountCapture(root: HTMLElement): void {
 
   function open(): void {
     window.clearTimeout(hideTimer); // a save/Esc hide still pending must not hide the new box
-    reset(!endDraft); // keep a draft left by blur; drop one already saved or dismissed
+    // Keep a draft left by blur; drop one already saved or dismissed, and a
+    // reply draft (the capture hotkey always opens a normal box).
+    reset(!endDraft && !reply.active);
     endDraft = false;
     box.classList.remove("is-hidden", "is-entering");
     void box.offsetWidth; // restart the enter animation
@@ -364,7 +386,7 @@ export function mountCapture(root: HTMLElement): void {
     busy = true;
     showError("");
     try {
-      await api.capture(input.value);
+      await (reply.active ? api.captureReply(input.value, reply.meta()) : api.capture(input.value));
     } catch (err) {
       busy = false;
       const msg = errorText(err);
@@ -484,6 +506,7 @@ export function mountCapture(root: HTMLElement): void {
   });
 
   document.addEventListener("keydown", (e) => {
+    if (reply.handleKey(e)) return; // Alt+P: the person editor
     if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
       e.preventDefault();
       if (!busy && picker.hidden) voice.toggle();
@@ -522,7 +545,38 @@ export function mountCapture(root: HTMLElement): void {
     void api.resizeCapture(Math.ceil(content.getBoundingClientRect().height));
   }).observe(content);
 
+  /**
+   * The reply hotkey: a fresh box in reply mode holding the suggested line,
+   * or (keepText) the open box switched to reply mode around its own text.
+   * With nobody guessed, the caret starts in the person editor.
+   */
+  function openReply(p: ReplyPrefill): void {
+    if (!p.keepText) {
+      endDraft = true; // the suggested line replaces any draft
+      open();
+      reply.enter(p);
+      input.value = p.line;
+    } else {
+      reply.enter(p);
+    }
+    // Swap the lead to the reply arrow with the bell's pop.
+    remindSay.textContent = "";
+    restingLead = "reply";
+    endRemind();
+    play(lead, "is-pop");
+    showError("");
+    if (!p.keepText && p.owedTo.trim() === "") {
+      reply.editPerson();
+    } else if (picker.hidden) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    window.clearTimeout(timer);
+    void runPreview();
+  }
+
   on(events.captureOpen, open);
+  on<ReplyPrefill>(events.replyOpen, openReply);
   renderPreview(null);
   input.focus();
 }

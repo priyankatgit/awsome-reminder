@@ -108,6 +108,7 @@
 
   /* Capture box */
   --capture-input-row: 64px;
+  --person-input-width: 16ch; /* reply mode's inline person editor */
 
   /* List window */
   --list-max: 760px;

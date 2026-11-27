@@ -1999,6 +1999,89 @@ legend.field-label {
   }
 }
 
+/* ---------- Capture: reply mode (Replies owed) ---------- */
+
+/* [Reply owed] for [Sam] · from Teams · nudge in 2h, then 9:00 */
+.cap-reply {
+  display: contents;
+}
+
+.cap-reply[hidden],
+.chip-person[hidden],
+.cap-person[hidden],
+.cap-access[hidden] {
+  display: none;
+}
+
+.cap-lead[data-icon="reply"] {
+  color: var(--fg);
+}
+
+/* --fg on --muted: the chip reads as a label, not a time or a tag. */
+.chip-reply {
+  background: var(--muted);
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+.cap-reply-for {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+/* The person: a chip that is a button (click or Alt+P edits it). */
+.chip-person {
+  border: var(--hairline) solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background-color var(--dur-hover), border-color var(--dur-hover);
+}
+
+.chip-person:hover {
+  background: var(--muted);
+}
+
+.cap-person {
+  width: var(--person-input-width);
+  height: var(--chip-height);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-person::placeholder {
+  color: var(--fg-muted);
+}
+
+/* macOS without the Accessibility permission: one line under the input. */
+.cap-access {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+/* The hint row swaps for the reply version (voice still takes over both). */
+.cap-hint-reply {
+  display: none;
+}
+
+.capture[data-mode="reply"] .cap-hint-reply {
+  display: flex;
+}
+
+.capture[data-mode="reply"] .cap-hint:not(.cap-hint-voice):not(.cap-hint-reply) {
+  display: none;
+}
+
 /* ---------- List: priority dot (Phase 1.6) ---------- */
 
 /* An 8px dot before the text; it carries an aria-label, so not colour alone. */

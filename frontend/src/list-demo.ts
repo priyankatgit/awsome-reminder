@@ -3,14 +3,16 @@
 // http://127.0.0.1:9245/?demo#list, or ?demo=empty, or ?demo&focus=4;
 // ?demo#alert, ?demo=one#alert; ?demo#settings, where saving the hotkey
 // Ctrl+Alt+K fails as "already used"; ?demo#capture, with a toy parser that
-// knows "tomorrow", "5pm", #tags and !priority tokens). Click a row in
+// knows "tomorrow", "5pm", #tags and !priority tokens, and a bottom-left
+// select that opens it normally or in reply mode; ?demo&reply#capture opens
+// it in reply mode at once). Click a row in
 // ?demo#list to try the detail panel; its saves take a moment, like the real
 // ones. Item 2's description has a checklist, links and a demo image; item 4
 // carries hostile Markdown, to check that the preview stays inert. There is no
 // Go /att/ route here, so attachments live in memory as data:/blob: URLs.
 // Loaded only when import.meta.env.DEV and ?demo are both set, so production
 // bundles never include it.
-import { api, emitLocal, events, type AlertCard, type Item, type Preview, type Settings, type View } from "./api";
+import { api, emitLocal, events, type AlertCard, type Item, type Preview, type ReplyMeta, type ReplyPrefill, type Settings, type View } from "./api";
 import { effectiveDue } from "./item-row";
 
 /** A demo attachment (ULID-shaped id) and the in-memory images by id. */
@@ -330,9 +332,50 @@ function installCaptureDemo(): void {
       };
     },
     capture: async (input: string) => console.info(`demo: capture ${input}`),
+    // A line containing "fail" fails, to show the inline error.
+    captureReply: async (input: string, meta: ReplyMeta) => {
+      if (input.includes("fail")) throw new Error("demo: could not save the reply");
+      console.info(`demo: capture reply ${input}`, meta);
+    },
     hideCapture: async () => console.info("demo: hide capture"),
     resizeCapture: async () => undefined,
   });
+  installReplyDemo();
+}
+
+/**
+ * Reply mode samples for ?demo#capture: a bottom-left select fires
+ * capture:open or reply:open with a sample prefill. "Keep text" acts like the
+ * reply key pressed while the box is open: type something first.
+ */
+function installReplyDemo(): void {
+  if (location.hash !== "#capture") return;
+  const quote = "can you check the deploy before 5? The staging numbers look off.";
+  const none = { line: "", owedTo: "", source: "", quote: "", grabbed: false, needsAccess: false, keepText: false };
+  const samples: { label: string; prefill?: ReplyPrefill }[] = [
+    { label: "Demo: open the box…" },
+    { label: "Capture (normal)" },
+    { label: "Reply: Priya, from Teams", prefill: { ...none, line: `Reply to Priya: "${quote.slice(0, 40)}…"`, owedTo: "Priya", source: "Teams", quote, grabbed: true } },
+    { label: "Reply: nobody guessed", prefill: { ...none, line: `Reply: "${quote.slice(0, 40)}…"`, source: "Chrome", quote, grabbed: true } },
+    { label: "Reply: needs Accessibility (macOS)", prefill: { ...none, line: "Reply to Sam", owedTo: "Sam", source: "Slack", needsAccess: true } },
+    { label: "Reply: keep text (box already open)", prefill: { ...none, keepText: true } },
+  ];
+  const fire = (i: number) => {
+    const p = samples[i].prefill;
+    if (p) emitLocal(events.replyOpen, p);
+    else if (i > 0) emitLocal(events.captureOpen);
+  };
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "Demo: open the capture box");
+  select.style.cssText =
+    "position:fixed;left:var(--space-2);bottom:var(--space-2);z-index:20;padding:var(--space-1);background:var(--surface);color:var(--fg);border:var(--hairline) solid var(--border);border-radius:var(--radius-chip);font:inherit;font-size:var(--text-small)";
+  samples.forEach((d, i) => select.append(new Option(d.label, String(i), i === 0, i === 0)));
+  select.addEventListener("change", () => {
+    fire(Number(select.value));
+    select.value = "0";
+  });
+  document.body.append(select);
+  if (new URLSearchParams(location.search).has("reply")) window.setTimeout(() => fire(2), 0);
 }
 
 function installAlertDemo(): void {
