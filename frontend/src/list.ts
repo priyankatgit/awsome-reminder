@@ -17,6 +17,8 @@ const RETICK_MS = 60_000; // relative times and the Upcoming horizon move on
 const TOAST_MS = 5_000;
 const DONE_OPEN_KEY = "awesome-reminder.list.doneOpen";
 const DEFAULT_HOTKEY = "Ctrl+Shift+Space";
+/** A click on the row text waits this long for a double-click (inline edit) before opening the panel. */
+const DBLCLICK_MS = 250;
 
 type PanelModule = typeof import("./panel/panel");
 
@@ -635,6 +637,9 @@ export function mountList(root: HTMLElement): void {
     if (!(await settleEdit())) return;
     const m = modelOf(row);
     if (!m || !row.isConnected) return;
+    // One editor per item: the inline edit replaces the panel on the same item.
+    if (panel?.panelItemId() === m.item.id) await panel.closePanel();
+    if (!row.isConnected) return;
     select(row, false);
     const state: EditState = { key: m.key, id: m.item.id, original: "", saving: null };
     edit = state;
@@ -741,11 +746,17 @@ export function mountList(root: HTMLElement): void {
 
   // ---------- events ----------
 
+  // A click on the row text may be the first half of a double-click (inline
+  // edit): the panel opens only once the double-click time has passed.
+  let openTimer: number | undefined;
+  const cancelPendingOpen = () => window.clearTimeout(openTimer);
+
   // A click anywhere in the list outside the edited row settles the edit
   // first; the clicked action runs only if that succeeded.
   scroll.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement;
     const row = t.closest<HTMLElement>(".row");
+    cancelPendingOpen();
     if (row?.classList.contains("is-editing")) return;
     if (!(await settleEdit())) return;
     if (!row || !row.isConnected) return;
@@ -756,14 +767,19 @@ export function mountList(root: HTMLElement): void {
       void showMenu(row);
     } else {
       select(row, false); // the row is under the pointer: don't jump
-      void openDetails(row);
+      if (!t.closest(".row-main")) void openDetails(row);
+      else if (e.detail <= 1) openTimer = window.setTimeout(() => row.isConnected && void openDetails(row), DBLCLICK_MS);
+      // the second click of a double-click opens nothing: dblclick edits inline
     }
   });
 
   sectionsBox.addEventListener("dblclick", (e) => {
     const t = e.target as HTMLElement;
     const row = t.closest<HTMLElement>(".row");
-    if (row && t.closest(".row-main")) void startEdit(row);
+    if (row && t.closest(".row-main")) {
+      cancelPendingOpen();
+      void startEdit(row);
+    }
   });
 
   sectionsBox.addEventListener("contextmenu", (e) => {

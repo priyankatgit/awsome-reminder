@@ -153,7 +153,13 @@ export function priorityField(onPick: (p: Priority) => void) {
   };
 }
 
-/** A datetime-local plus a clear button; a cleared due makes the item a to-do. */
+/**
+ * A datetime-local plus a clear button; a cleared due makes the item a to-do.
+ * Chromium fires `change` for every segment typed (17:00 → 13:00 → 23:00),
+ * so a new time is committed only on Enter, on blur, or by commit() (the
+ * panel's flush on switch/close/Ctrl+S), and only when it differs from the
+ * stored one.
+ */
 export function dueField(onSet: (due: Date | null) => void) {
   const input = el("input", "input input-time pf-due");
   input.type = "datetime-local";
@@ -166,20 +172,37 @@ export function dueField(onSet: (due: Date | null) => void) {
   clear.innerHTML = icons.close;
   const note = el("span", "pf-note");
   row.body.append(input, clear, note);
-  let shown = "";
-  input.addEventListener("change", () => {
+  input.title = "Enter or leaving the field saves";
+  let shown = ""; // the stored due time, as a datetime-local value
+
+  /** Saves the typed time if it is complete and new; drops a half-typed one. */
+  function commit(): void {
     const d = fromLocalInput(input.value);
-    if (d) onSet(d); // an incomplete value waits; the clear button is the way to remove it
+    if (!d) {
+      input.value = shown; // the clear button is the way to remove the time
+      return;
+    }
+    if (input.value === shown) return;
+    shown = input.value;
+    onSet(d);
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      commit();
+    }
   });
-  input.addEventListener("blur", () => {
-    if (!fromLocalInput(input.value)) input.value = shown; // drop a half-typed value
-  });
+  input.addEventListener("blur", commit);
   clear.addEventListener("click", () => {
+    // Empty the input first: fill() leaves a focused input alone, and a
+    // failure refills it from the item.
+    input.value = shown = "";
     onSet(null);
     input.focus();
   });
   return {
     root: row.root,
+    commit,
     fill(it: Item, force: boolean): void {
       shown = toLocalInput(it.dueAt);
       if (force || !isEditing(input)) input.value = shown;

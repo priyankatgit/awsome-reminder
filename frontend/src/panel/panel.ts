@@ -35,8 +35,21 @@ let offChanged: (() => void) | null = null;
 let savedSinceOpen = false;
 let immediate = 0; // discrete saves in flight
 const inflight = new Set<Promise<unknown>>();
-/** Text saves that failed, by field, so Retry can resend them. */
-const failed = new Map<"title" | "description", { id: string; value: string }>();
+type TextKind = "title" | "description";
+/** Text saves that failed, keyed `${kind}:${itemId}`, so Retry can resend them. */
+const failed = new Map<string, { kind: TextKind; id: string; value: string }>();
+
+/** Failed text saves of the item on show: only these drive its status and Retry. */
+function shownFailures() {
+  return Array.from(failed.values()).filter((f) => f.id === shown?.id);
+}
+
+interface Field {
+  setError(msg: string): void;
+}
+/** Discrete saves in flight per field: a refresh leaves a busy field alone. */
+const busy = new Map<Field, number>();
+const isBusy = (f: Field) => (busy.get(f) ?? 0) > 0;
 
 function quiet(call: () => Promise<unknown>): void {
   try {
@@ -53,18 +66,18 @@ function saveMessage(err: unknown): string {
 
 /** Wraps a text save: shows its inline error and remembers it for Retry. */
 function textSaver(
-  kind: "title" | "description",
+  kind: TextKind,
   call: (id: string, v: string) => Promise<Item>,
   setError: (msg: string) => void,
 ): Autosaver<string> {
   const saver = createAutosaver<string>(async (id, value) => {
     try {
       const it = await call(id, value);
-      failed.delete(kind);
+      failed.delete(`${kind}:${id}`);
       if (id === shown?.id) setError("");
       applySaved(it);
     } catch (err) {
-      failed.set(kind, { id, value });
+      failed.set(`${kind}:${id}`, { kind, id, value });
       if (id === shown?.id) setError(saveMessage(err));
       throw err;
     }
@@ -157,53 +170,65 @@ root.append(head, body, foot);
 
 // ---------- saving ----------
 
-/** A discrete field's save: immediate, with its error shown inline on that field. */
-async function saveNow(field: { setError(msg: string): void }, call: (id: string) => Promise<Item>): Promise<boolean> {
+/**
+ * A discrete field's save: immediate, with its error shown inline on that
+ * field. A failure puts the control back to the stored value.
+ */
+async function saveNow(field: Field, call: (id: string) => Promise<Item>): Promise<boolean> {
   if (!shown) return false;
   const id = shown.id;
+  busy.set(field, (busy.get(field) ?? 0) + 1);
   immediate++;
   renderStatus();
   const p = call(id);
   inflight.add(p);
+  let it: Item | null = null;
+  let err: unknown = null;
   try {
-    const it = await p;
-    if (id === shown?.id) field.setError("");
-    applySaved(it);
-    return true;
-  } catch (err) {
-    if (id === shown?.id) {
-      field.setError(errorText(err));
-      fill(false); // put the control back to the stored value
-    }
-    return false;
+    it = await p;
+  } catch (e) {
+    err = e;
   } finally {
     inflight.delete(p);
+    busy.set(field, (busy.get(field) ?? 1) - 1);
     immediate--;
-    renderStatus();
   }
+  // The newest of several quick picks wins: only the last save refills its field.
+  const own = isBusy(field) ? undefined : field;
+  if (it) {
+    if (id === shown?.id) field.setError("");
+    applySaved(it, own);
+  } else if (id === shown?.id) {
+    field.setError(errorText(err));
+    fill(false, own);
+  }
+  renderStatus();
+  return it !== null;
 }
 
 /** Saves every pending edit now; resolves when all saves have settled. */
 async function flushAll(): Promise<void> {
+  due.commit(); // a typed but uncommitted due time
   await Promise.all([titleSaver.flush(), descriptionSaver.flush(), ...Array.from(inflight, (p) => p.catch(() => {}))]);
 }
 
-function applySaved(it: Item): void {
+/** A save returned it; own is the field that saved it (refilled even if focused). */
+function applySaved(it: Item, own?: Field): void {
   savedSinceOpen = true;
   if (it.id !== shown?.id) return;
   shown = it;
-  fill(false);
+  fill(false, own);
 }
 
 function renderStatus(): void {
   const saving = immediate > 0 || titleSaver.status() === "saving" || descriptionSaver.status() === "saving";
   if (saving) {
     status.replaceChildren("Saving…");
-  } else if (failed.size > 0) {
+  } else if (shownFailures().length > 0) {
     const retry = el("button", "panel-retry", "Retry");
     retry.type = "button";
     retry.addEventListener("click", () => {
-      for (const [kind, f] of failed) (kind === "title" ? titleSaver : descriptionSaver).change(f.id, f.value);
+      for (const f of shownFailures()) (f.kind === "title" ? titleSaver : descriptionSaver).change(f.id, f.value);
       void flushAll();
     });
     status.replaceChildren("Couldn't save · ", retry);
@@ -215,22 +240,27 @@ function renderStatus(): void {
   } else {
     status.replaceChildren();
   }
-  status.dataset.state = saving ? "saving" : failed.size ? "error" : "";
+  status.dataset.state = saving ? "saving" : shownFailures().length ? "error" : "";
 }
 
 // ---------- filling ----------
 
 const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 
-/** Shows `shown`. force (a new item) overwrites fields being edited too. */
-function fill(force: boolean): void {
+/**
+ * Shows `shown`. A field being edited (focused, or with its save in flight)
+ * keeps what the user has; force (a new item) and own (the field whose save
+ * just settled) overwrite it.
+ */
+function fill(force: boolean, own?: Field): void {
   const it = shown;
   if (!it) return;
+  const free = (f: Field, node?: HTMLElement) => force || f === own || (!isBusy(f) && !(node && isEditing(node)));
   if (force || titleSaver.status() !== "saving") title.fill(it, force);
-  priority.fill(it);
-  due.fill(it, force);
-  repeat.fill(it);
-  tags.fill(it);
+  if (free(priority)) priority.fill(it);
+  if (force || own === due || !isBusy(due)) due.fill(it, force || own === due); // due.fill skips a focused input itself
+  if (free(repeat, repeat.root)) repeat.fill(it);
+  if (free(tags)) tags.fill(it);
   if (force || (!isEditing(descriptionHost) && descriptionSaver.status() !== "saving")) descText.value = it.description ?? "";
 
   const now = new Date();
@@ -258,7 +288,9 @@ async function load(): Promise<boolean> {
   try {
     item = (await api.itemDetail(id)).item;
   } catch (err) {
-    if (my === loadSeq && openId === id) showActionError(err);
+    if (my !== loadSeq || openId !== id) return false;
+    if (/not found/i.test(errorText(err))) void closePanel(); // gone from the store
+    else showActionError(err);
     return false;
   }
   if (my !== loadSeq || openId !== id) return false;

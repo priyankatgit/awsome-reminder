@@ -2,6 +2,8 @@
 // one unsaved value: a newer value for the same item replaces it, and a value
 // for another item first sends the pending one to its own item (a panel switch
 // never lands an edit on the wrong item). Saves run one at a time, in order.
+// The status stays "error" while any item's latest save has failed, even if
+// another item saves fine after it.
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -23,6 +25,7 @@ export function createAutosaver<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
   let running = 0;
+  const failedItems = new Set<string>();
   let current: SaveStatus = "idle";
   const subs = new Set<(s: SaveStatus) => void>();
 
@@ -46,10 +49,12 @@ export function createAutosaver<T>(
       .then(
         () => {
           running--;
-          if (running === 0) setStatus("saved");
+          failedItems.delete(p.itemId);
+          if (running === 0) setStatus(failedItems.size ? "error" : "saved");
         },
         () => {
           running--;
+          failedItems.add(p.itemId);
           setStatus("error");
         },
       );

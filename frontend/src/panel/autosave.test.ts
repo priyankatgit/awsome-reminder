@@ -76,6 +76,28 @@ describe("createAutosaver", () => {
     expect(seen).toEqual(["saving", "error", "saving", "saved"]);
   });
 
+  it("keeps error while another item's later save succeeds", async () => {
+    const { save, calls } = controlledSave();
+    const s = createAutosaver(save);
+    s.change("A", "x");
+    s.change("B", "y"); // sends A at once
+    await vi.advanceTimersByTimeAsync(0);
+    calls[0].reject(new Error("disk full"));
+    await vi.advanceTimersByTimeAsync(600); // B's timer fires and B is sent
+    calls[1].resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.map((c) => c.itemId)).toEqual(["A", "B"]);
+    expect(s.status()).toBe("error"); // A's edit is still unsaved
+
+    s.change("A", "x2");
+    void s.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toHaveLength(3);
+    calls[2].resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.status()).toBe("saved");
+  });
+
   it("flush resolves after in-flight save", async () => {
     const { save, calls } = controlledSave();
     const s = createAutosaver(save);
