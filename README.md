@@ -126,6 +126,7 @@ go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 wails3 doctor      # checks your toolchain
 wails3 build       # output: bin/awesome-reminder (.exe on Windows)
 go test ./...
+npm --prefix frontend run typecheck   # type-checks the frontend (tsc, no output files)
 ```
 
 Do not run the freshly built binary from the repo folder if you do not want it to register itself for autostart; copy it elsewhere first, or turn off "Start at login" in Settings.
