@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,8 +113,9 @@ func TestSetEnabledNeedsInstall(t *testing.T) {
 
 func TestWakeInstallThenEnabled(t *testing.T) {
 	f := newWakeFixture(t, nil)
+	var seenMu sync.Mutex
 	var seen []WakeStatus
-	f.cfg.OnStatus = func(s WakeStatus) { seen = append(seen, s) }
+	f.cfg.OnStatus = func(s WakeStatus) { seenMu.Lock(); seen = append(seen, s); seenMu.Unlock() }
 	w := NewWake(f.cfg)
 	defer w.Close()
 	if err := w.Install(); err != nil {
@@ -151,9 +153,11 @@ func TestWakeInstallThenEnabled(t *testing.T) {
 		t.Error("helper should be running")
 	}
 	sawInstalling := false
+	seenMu.Lock()
 	for _, s := range seen {
 		sawInstalling = sawInstalling || s.State == "installing"
 	}
+	seenMu.Unlock()
 	if !sawInstalling {
 		t.Error("no installing status was emitted")
 	}
@@ -239,5 +243,45 @@ func TestWakeEngineAssetTable(t *testing.T) {
 	}
 	if wakeModelFile("m/encoder-epoch-12-avg-2-chunk-16-left-64.onnx") || !wakeModelFile("m/tokens.txt") {
 		t.Error("model keep-list")
+	}
+}
+
+func TestWakeCloseDuringInstallStartsNoHelper(t *testing.T) {
+	f := newWakeFixture(t, nil)
+	release := make(chan struct{})
+	inModel := make(chan struct{}, 1)
+	blocker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case inModel <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(blocker.Close)
+	f.model.URL = blocker.URL
+	w := NewWake(f.cfg)
+	if err := w.Install(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inModel:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model download never started")
+	}
+	w.Close()
+	close(release)
+	time.Sleep(100 * time.Millisecond)
+	if w.helperRunning() {
+		t.Error("helper started after Close")
+	}
+	if st := w.Status(); st.State == "starting" || st.State == "listening" || st.Enabled {
+		t.Errorf("status after Close = %+v", st)
+	}
+	_ = w.SetEnabled(true)
+	if w.helperRunning() {
+		t.Error("helper started by SetEnabled after Close")
 	}
 }

@@ -85,6 +85,8 @@ type Wake struct {
 	lastEmit   time.Time
 	helper     *wakeProc
 	sessionEnd time.Time
+	closed     bool
+	installEnd chan struct{} // closed when the install goroutine ends
 }
 
 // NewWake fills in defaults and reads wake.json (missing or unreadable means
@@ -313,6 +315,8 @@ func (w *Wake) Install() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.installing, w.cancel, w.lastErr = true, cancel, ""
+	end := make(chan struct{})
+	w.installEnd = end
 	phase := "model"
 	if !w.engineInstalled() {
 		phase = "engine"
@@ -322,10 +326,13 @@ func (w *Wake) Install() error {
 	w.emit(true)
 
 	go func() {
+		defer close(end)
 		err := w.install(ctx)
 		w.mu.Lock()
 		w.installing, w.cancel = false, nil
 		switch {
+		case err == nil && w.closed:
+			w.lastErr = ""
 		case err == nil:
 			w.lastErr = ""
 			w.cfg.Enabled = true
@@ -427,10 +434,15 @@ func (w *Wake) CancelInstall() {
 
 // Close cancels an install and stops the helper.
 func (w *Wake) Close() {
-	w.CancelInstall()
 	w.mu.Lock()
+	w.closed = true
+	cancel, end := w.cancel, w.installEnd
 	w.stopHelperLocked()
 	w.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-end // nothing touches files or starts a helper after Close returns
+	}
 }
 
 // wakeProc is one running helper process.
@@ -450,7 +462,7 @@ func (w *Wake) helperRunning() bool {
 // (arguments, output parsing, restart backoff). Here it just starts the
 // helper program and tracks it so Close and SetEnabled(false) can stop it.
 func (w *Wake) startHelperLocked() {
-	if w.helper != nil {
+	if w.helper != nil || w.closed {
 		return
 	}
 	cmd := exec.Command(w.c.Bin(w.engineDir()))
