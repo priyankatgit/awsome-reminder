@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-28-replies-owed-design.md`
 
+**Execution:** subagent-driven (the user's choice, 2026-11-28): a fresh implementer and a fresh reviewer per task, then a whole-branch review before merging.
+
 **Precondition:** Phase 2 (Atlas sync, branch `claude/phase2-atlas-sync`) is merged into the working branch. Task 1 takes schema v4 after Phase 2's v3. Task 2 edits Phase 2's `internal/cloudsync/atlas/docs.go` and `internal/cloudsync/memsync`. Task 3 extends Phase 2's `settings.Shared`. Take the merged files as the base.
 
 ## Global Constraints
