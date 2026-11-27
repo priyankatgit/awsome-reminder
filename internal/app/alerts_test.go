@@ -265,3 +265,45 @@ func TestUpdateDropsCardsWhenDueChanges(t *testing.T) {
 		t.Fatalf("queue %v hidden %d", keys(h.svc.PendingAlerts()), h.win.alertsHidden)
 	}
 }
+
+// M2 for the detail panel's setters: SetDue moving the due time (or making
+// the item a to-do) drops the item's cards like Update does; SetDue to the
+// same time, SetRepeat and the other setters keep them.
+func TestDetailSettersDropCardsWhenDueChanges(t *testing.T) {
+	h := newHarness(t)
+	putReminder(t, h, "A", "check deploy", nil, "")
+	putReminder(t, h, "B", "call Sam", nil, "")
+	h.svc.showAlerts([]scheduler.Alert{alert("A", "a-now"), alert("B", "b-now")})
+
+	b, _ := h.st.Get("B")
+	same := *b.DueAt
+	if _, err := h.svc.SetDue("B", &same); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetRepeat("B", "daily"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetText("B", "call Sam back"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetPriority("B", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"a-now", "b-now"}) {
+		t.Fatalf("queue %v after edits that keep the due time", got)
+	}
+
+	later := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Minute)
+	if _, err := h.svc.SetDue("A", &later); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"b-now"}) {
+		t.Fatalf("queue %v, want [b-now]", got)
+	}
+	if _, err := h.svc.SetDue("B", nil); err != nil { // reminder -> to-do
+		t.Fatal(err)
+	}
+	if len(h.svc.PendingAlerts()) != 0 || h.win.alertsHidden != 1 {
+		t.Fatalf("queue %v hidden %d", keys(h.svc.PendingAlerts()), h.win.alertsHidden)
+	}
+}

@@ -180,7 +180,8 @@ export function SetDescription(id: string, md: string): $CancellablePromise<mode
 }
 
 /**
- * SetDue sets or (nil) clears an item's due time.
+ * SetDue sets or (nil) clears an item's due time. Like Update, moving the
+ * due time removes the item's alert cards.
  */
 export function SetDue(id: string, due: string | null): $CancellablePromise<model$0.Item> {
     return $Call.ByID(4207614494, id, due);
@@ -203,7 +204,9 @@ export function SetPriority(id: string, p: string): $CancellablePromise<model$0.
 }
 
 /**
- * SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or "weekly".
+ * SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or
+ * "weekly". It keeps the due time today; it shares Update's card rule so a
+ * future change that moves the due time drops stale cards.
  */
 export function SetRepeat(id: string, repeat: string): $CancellablePromise<model$0.Item> {
     return $Call.ByID(1226512795, id, repeat);

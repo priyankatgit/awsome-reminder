@@ -228,3 +228,26 @@ func TestSetDueReanchorsSingleDayWeekly(t *testing.T) {
 		t.Fatalf("rrule %q err %v", got.RRule, err)
 	}
 }
+
+// Undelete (the Undo toast) only flips the status back: the priority and
+// description set in the detail panel survive a delete and undo.
+func TestUndeleteKeepsPriorityAndDescription(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "tomorrow 5pm deploy !high")
+	if _, err := e.c.SetDescription(it.ID, "## Steps\n- tag the release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.st.Get(it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusOpen || got.Priority != "high" || got.Description != "## Steps\n- tag the release" {
+		t.Fatalf("after undelete: status %q priority %q description %q", got.Status, got.Priority, got.Description)
+	}
+}

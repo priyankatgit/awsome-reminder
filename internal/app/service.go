@@ -93,11 +93,17 @@ func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText
 // (or changes its status) the item's alert cards are removed, since a "now"
 // or "missed" card would be stale.
 func (s *Service) Update(id, input string) (model.Item, error) {
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.Update(id, input) })
+}
+
+// dropIfMoved runs edit on item id and, like Update, removes the item's
+// alert cards when the edit moved its due time or changed its status.
+func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model.Item, error) {
 	before, err := s.d.Core.Item(id)
 	if err != nil {
-		return s.d.Core.Update(id, input) // reports the missing item
+		return edit() // reports the missing item
 	}
-	after, err := s.d.Core.Update(id, input)
+	after, err := edit()
 	if err != nil {
 		return after, err
 	}
@@ -242,14 +248,17 @@ func (s *Service) SetPriority(id, p string) (model.Item, error) {
 	return s.d.Core.SetPriority(id, p)
 }
 
-// SetDue sets or (nil) clears an item's due time.
+// SetDue sets or (nil) clears an item's due time. Like Update, moving the
+// due time removes the item's alert cards.
 func (s *Service) SetDue(id string, due *time.Time) (model.Item, error) {
-	return s.d.Core.SetDue(id, due)
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.SetDue(id, due) })
 }
 
-// SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or "weekly".
+// SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or
+// "weekly". It keeps the due time today; it shares Update's card rule so a
+// future change that moves the due time drops stale cards.
 func (s *Service) SetRepeat(id, repeat string) (model.Item, error) {
-	return s.d.Core.SetRepeat(id, repeat)
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.SetRepeat(id, repeat) })
 }
 
 // SetTags replaces an item's tags.

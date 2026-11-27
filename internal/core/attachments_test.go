@@ -189,13 +189,13 @@ func TestSweepDeletedItem(t *testing.T) {
 	if n, _ := e.c.SweepAttachments(); n != 0 {
 		t.Fatalf("29d swept %d", n)
 	}
-	// undo within the window keeps the image
-	if err := e.c.Reopen(it.ID); err != nil {
+	// undo (Undelete, the Undo toast) within the window keeps the image
+	if err := e.c.Undelete(it.ID); err != nil {
 		t.Fatal(err)
 	}
 	e.now = deletedAt.Add(60 * 24 * time.Hour)
 	if n, _ := e.c.SweepAttachments(); n != 0 || !fileExists(dir, a.ID) {
-		t.Fatalf("reopened item swept %d", n)
+		t.Fatalf("undeleted item swept %d", n)
 	}
 	if err := e.c.Delete(it.ID); err != nil {
 		t.Fatal(err)

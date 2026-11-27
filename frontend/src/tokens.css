@@ -238,15 +238,14 @@
      --prio-high on --bg 6.45 / 6.18, --surface 5.66 / 6.47, --muted 4.83 / 5.76
      --prio-med  on --bg 10.69 / 6.78, --surface 9.39 / 7.09, --muted 8.00 / 6.31
      --prio-low  on --bg 7.02 / 6.41, --surface 6.16 / 6.70, --muted 5.26 / 5.96
-     --remind    on --bg 9.41 / 6.18, --muted 7.04 / 5.76,
-                 on --remind-tint (over --bg) 7.57 / 5.30
-   The light theme's "light red" is the tint; its text stays a deep red. */
+   The capture box's live reminder bell and badge reuse the alert card's
+   reminder red (--remind, --remind-tint, --remind-text above):
+     badge text --remind-text on --remind-tint 8.70 / 5.91
+     bell --remind (graphic) on --bg 6.45 / 4.62, --surface 5.66 / 4.83 */
 :root {
   --prio-high: #F87171;
   --prio-med: #FBBF24;
   --prio-low: #60A5FA;
-  --remind: #FCA5A5; /* the live reminder bell and badge text */
-  --remind-tint: rgba(248, 113, 113, 0.16); /* badge background */
 
   --prio-chip-height: 24px;
   --prio-dot: 8px;
@@ -259,8 +258,6 @@
     --prio-high: #B91C1C;
     --prio-med: #92400E;
     --prio-low: #1D4ED8;
-    --remind: #B91C1C;
-    --remind-tint: #FEE2E2;
   }
 }
 

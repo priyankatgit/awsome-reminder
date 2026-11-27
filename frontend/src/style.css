@@ -1861,7 +1861,7 @@ legend.field-label {
 
 .chip-remind {
   background: var(--remind-tint);
-  color: var(--remind);
+  color: var(--remind-text);
   font-weight: var(--weight-medium);
 }
 

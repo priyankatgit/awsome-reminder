@@ -8,7 +8,8 @@ vi.hoisted(() => {
   window.matchMedia = ((q: string) => ({ matches: false, media: q })) as unknown as typeof window.matchMedia;
 });
 
-import { fromLocalInput, repeatOf, toLocalInput } from "./fields";
+import type { Item } from "../api";
+import { dueField, fromLocalInput, repeatOf, toLocalInput } from "./fields";
 
 describe("datetime-local helpers", () => {
   it("runs in a zone with an offset", () => {
@@ -38,5 +39,26 @@ describe("repeatOf", () => {
     expect(repeatOf("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR")).toBe("weekdays");
     expect(repeatOf("FREQ=WEEKLY;BYDAY=TH")).toBe("weekly");
     expect(repeatOf("FREQ=MONTHLY;BYMONTHDAY=1")).toBe("custom");
+  });
+});
+
+describe("dueField snooze note (C1)", () => {
+  const hour = 3_600_000;
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+  const note = (dueIn: number, snoozeIn: number | null): string => {
+    const f = dueField(() => {});
+    const it = { dueAt: at(dueIn), snoozeUntil: snoozeIn === null ? null : at(snoozeIn) } as Item;
+    f.fill(it, true);
+    return f.root.querySelector(".pf-note")!.textContent ?? "";
+  };
+
+  it("shows a snooze that is ahead and earlier than the due time", () => {
+    expect(note(5 * hour, hour)).toMatch(/^Snoozed until /);
+  });
+
+  it("hides a snooze that has passed or ends after the due time", () => {
+    expect(note(5 * hour, -hour)).toBe("");
+    expect(note(hour, 5 * hour)).toBe("");
+    expect(note(hour, null)).toBe("");
   });
 });

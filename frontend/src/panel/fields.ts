@@ -5,6 +5,7 @@
 import type { Item } from "../api";
 import { el, tagChip } from "../dom";
 import { icons } from "../icons";
+import { effectiveDue } from "../item-row";
 import { priorityLabel, type Priority } from "../priority";
 
 export type Repeat = "none" | "daily" | "weekdays" | "weekly";
@@ -207,10 +208,14 @@ export function dueField(onSet: (due: Date | null) => void) {
       shown = toLocalInput(it.dueAt);
       if (force || !isEditing(input)) input.value = shown;
       clear.hidden = !it.dueAt;
+      // Like the row (C1): only a snooze still ahead and earlier than the due
+      // time stands in for it.
+      const eff = effectiveDue(it, new Date());
+      const snoozed = !!it.dueAt && !!eff && eff.getTime() !== new Date(it.dueAt).getTime();
       note.textContent = !it.dueAt
         ? "To-do · set a time to make it a reminder"
-        : it.snoozeUntil
-          ? `Snoozed until ${snoozeFmt.format(new Date(it.snoozeUntil))}`
+        : snoozed
+          ? `Snoozed until ${snoozeFmt.format(eff)}`
           : "";
     },
     setError: (msg: string) => row.setError(msg, input),
