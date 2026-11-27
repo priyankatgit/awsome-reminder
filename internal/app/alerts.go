@@ -51,7 +51,10 @@ func (s *Service) card(a scheduler.Alert) AlertCard {
 }
 
 // showAlerts adds alerts the queue doesn't hold yet and shows the alert
-// window. It is called from the scheduler's fire callback (off its loop).
+// window. It is called from the scheduler's fire callback (off its loop). A
+// card for a later occurrence of a recurring item replaces the item's cards
+// for earlier ones, and one for an earlier occurrence than a queued card is
+// dropped, so an item never shows cards for two occurrences.
 func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	cards := make([]AlertCard, 0, len(alerts))
 	for _, a := range alerts {
@@ -62,9 +65,12 @@ func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	defer q.mu.Unlock()
 	added := 0
 	for _, c := range cards {
-		if slices.ContainsFunc(q.cards, func(o AlertCard) bool { return o.Key == c.Key }) {
+		if slices.ContainsFunc(q.cards, func(o AlertCard) bool {
+			return o.Key == c.Key || (o.ItemID == c.ItemID && o.DueAt.After(c.DueAt))
+		}) {
 			continue
 		}
+		q.cards = slices.DeleteFunc(q.cards, func(o AlertCard) bool { return o.ItemID == c.ItemID && o.DueAt.Before(c.DueAt) })
 		q.cards = append(q.cards, c)
 		added++
 	}
@@ -103,6 +109,21 @@ func (s *Service) emitAlertsLocked() {
 // deleted, from the alert window or anywhere else).
 func (s *Service) dropItemAlerts(id string) {
 	s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id }, true)
+}
+
+// advanceRecurring is the scheduler's before-plan step: it moves recurring
+// reminders not marked done to their latest occurrence (core.AdvanceRecurring,
+// ruling R15) and drops the moved items' cards, which were for an earlier
+// occurrence. It returns when the scheduler must run it again.
+func (s *Service) advanceRecurring(now time.Time) (time.Time, error) {
+	moved, wake, err := s.d.Core.AdvanceRecurring(now)
+	if len(moved) > 0 {
+		log.Printf("recurring: moved %d item(s) to their latest occurrence", len(moved))
+	}
+	for _, id := range moved {
+		s.dropItemAlerts(id)
+	}
+	return wake, err
 }
 
 // alertsClosed forgets the queue when the alert window was closed by the

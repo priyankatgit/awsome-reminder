@@ -264,26 +264,27 @@ func (c *Core) Done(id string) (model.Item, error) {
 // cleared. The scheduler calls it before each plan, so the new occurrence's
 // at-time alert fires through the normal catch-up path. Its leads are in the
 // past of the bumped UpdatedAt (ruling R6); the scheduler fired them before
-// the move by planning each recurring item's next occurrence. It returns how
-// many items moved and wake, the earliest next occurrence still to come (zero
-// if none), when it must run again. Listeners are notified only if an item
-// moved. An item whose rule can't be evaluated is logged and left alone.
-func (c *Core) AdvanceRecurring(now time.Time) (advanced int, wake time.Time, err error) {
+// the move by planning each recurring item's next occurrence. It returns the
+// IDs of the items that moved and wake, the earliest next occurrence still to
+// come (zero if none), when it must run again. Listeners are notified only if
+// an item moved. An item whose rule can't be evaluated is logged and left
+// alone.
+func (c *Core) AdvanceRecurring(now time.Time) (moved []string, wake time.Time, err error) {
 	c.opMu.Lock()
-	advanced, wake, err = c.advanceRecurringLocked(now)
+	moved, wake, err = c.advanceRecurringLocked(now)
 	c.opMu.Unlock()
-	if advanced > 0 {
+	if len(moved) > 0 {
 		c.changed()
 	}
-	return advanced, wake, err
+	return moved, wake, err
 }
 
-func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
+func (c *Core) advanceRecurringLocked(now time.Time) ([]string, time.Time, error) {
 	items, err := c.st.ListOpen()
 	if err != nil {
-		return 0, time.Time{}, err
+		return nil, time.Time{}, err
 	}
-	n := 0
+	var moved []string
 	var wake time.Time
 	for _, it := range items {
 		if it.Status != model.StatusOpen || it.RRule == "" || it.DueAt == nil {
@@ -297,15 +298,15 @@ func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
 		if !latest.IsZero() {
 			it.DueAt, it.SnoozeUntil = &latest, nil
 			if err := c.save(&it, now); err != nil {
-				return n, wake, fmt.Errorf("item %s: %w", it.ID, err)
+				return moved, wake, fmt.Errorf("item %s: %w", it.ID, err)
 			}
-			n++
+			moved = append(moved, it.ID)
 		}
 		if !next.IsZero() && (wake.IsZero() || next.Before(wake)) {
 			wake = next
 		}
 	}
-	return n, wake, nil
+	return moved, wake, nil
 }
 
 // Reopen marks a done item open again.

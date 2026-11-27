@@ -404,9 +404,9 @@ func TestAdvanceRecurringDaily(t *testing.T) {
 	e.c.OnChange(func() { changes++ })
 	e.now = time.Date(2026, 11, 27, 10, 0, 0, 0, ny) // due yesterday, 10:00 today
 
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 1 || changes != 1 {
-		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || !reflect.DeepEqual(moved, []string{it.ID}) || changes != 1 {
+		t.Fatalf("moved=%v changes=%d err=%v", moved, changes, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(utc(2026, 11, 27, 14, 0)) || got.SnoozeUntil != nil || got.Status != model.StatusOpen {
@@ -424,8 +424,8 @@ func TestAdvanceRecurringDaily(t *testing.T) {
 	}
 
 	// Again with nothing to do: no change, no notification.
-	if n, _, err := e.c.AdvanceRecurring(e.now); n != 0 || err != nil || changes != 1 {
-		t.Fatalf("second pass n=%d err=%v changes=%d", n, err, changes)
+	if moved, _, err := e.c.AdvanceRecurring(e.now); len(moved) != 0 || err != nil || changes != 1 {
+		t.Fatalf("second pass moved=%v err=%v changes=%d", moved, err, changes)
 	}
 }
 
@@ -435,9 +435,9 @@ func TestAdvanceRecurringNotYet(t *testing.T) {
 	changes := 0
 	e.c.OnChange(func() { changes++ })
 	e.now = time.Date(2026, 11, 27, 8, 59, 0, 0, ny) // next occurrence (27th 09:00) not reached
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 0 || changes != 0 {
-		t.Fatalf("n=%d changes=%d err=%v", n, changes, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || len(moved) != 0 || changes != 0 {
+		t.Fatalf("moved=%v changes=%d err=%v", moved, changes, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(*it.DueAt) || !got.UpdatedAt.Equal(it.UpdatedAt) {
@@ -453,9 +453,9 @@ func TestAdvanceRecurringWeeklyCollapses(t *testing.T) {
 	it := mustCapture(t, e, "every monday 10am standup") // Mon 30 Nov 10:00
 	one := mustCapture(t, e, "tomorrow 5pm one-off")
 	e.now = time.Date(2026, 12, 23, 12, 0, 0, 0, ny) // Wed, three Mondays later
-	n, wake, err := e.c.AdvanceRecurring(e.now)
-	if err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
+	moved, wake, err := e.c.AdvanceRecurring(e.now)
+	if err != nil || !reflect.DeepEqual(moved, []string{it.ID}) {
+		t.Fatalf("moved=%v err=%v", moved, err)
 	}
 	got, _ := e.st.Get(it.ID)
 	if !got.DueAt.Equal(utc(2026, 12, 21, 15, 0)) {
