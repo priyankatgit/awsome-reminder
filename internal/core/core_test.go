@@ -844,6 +844,32 @@ func TestDropReplyNeedsOpenReply(t *testing.T) {
 	}
 }
 
+// A dropped recurring reply stops recurring: Delete then Undelete brings it
+// back done (dropped), not open with the outcome "dropped".
+func TestDropRecurringReplyStopsRecurring(t *testing.T) {
+	e := newEnv(t)
+	it := mustReply(t, e, "send the status every day at 9am", "Priya")
+	if it.RRule == "" {
+		t.Fatalf("fixture not recurring: %+v", it)
+	}
+	got, err := e.c.DropReply(it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RRule != "" || got.Status != model.StatusDone || got.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("dropped: %+v", got)
+	}
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := e.st.Get(it.ID); back.Status != model.StatusDone || back.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("undeleted: status %q outcome %q, want done/dropped", back.Status, back.ReplyOutcome)
+	}
+}
+
 // The panel's For field on an item another device deleted must not edit it.
 func TestSetOwedToNeedsLiveReply(t *testing.T) {
 	e := newEnv(t)
