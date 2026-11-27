@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -78,15 +79,19 @@ type popup interface {
 	place(height int) // size it and move it to the bottom-right corner
 	show()            // show without taking keyboard focus
 	hide()
+	destroy() // close the window for good; its close hook must not report it
 }
 
-// alertPopup keeps at most one alert window. It is created on the first
-// alert, hidden (not destroyed) when the queue empties, and reused for the
-// next alert. Every time it goes from hidden to shown it waits until the page
-// has rendered the new queue and reported its height (ResizeAlerts), so it
-// never appears empty or with stale cards; a timer shows it anyway if the
-// page stays silent. Calls arrive on binding and scheduler goroutines; mu
-// orders them. Nothing on the main thread takes mu.
+// alertPopup keeps at most one alert window. It is created when an alert
+// arrives and destroyed when the queue empties, so its WebView2 renderer
+// process does not sit in memory between alerts (Task 12b: about 26 MB
+// private, 66 MB working set); the next alert creates a new one. Every time
+// it goes from hidden to shown it waits until the page has rendered the
+// queue and reported its height (ResizeAlerts), so it never appears empty or
+// with stale cards; a timer shows it anyway if the page stays silent. Calls
+// arrive on binding and scheduler goroutines; mu orders them. Nothing on the
+// main thread takes mu, except the close hook after the user closed the
+// window (Alt+F4).
 type alertPopup struct {
 	mu     sync.Mutex
 	create func() popup
@@ -159,15 +164,19 @@ func (a *alertPopup) fallback(p popup, wait int) {
 	a.showLocked()
 }
 
-// Dismiss hides the window.
+// Dismiss hides the window (handing focus back first) and destroys it.
 func (a *alertPopup) Dismiss() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.want = false
-	if a.cur != nil && a.visible {
-		a.cur.hide()
-		a.visible = false
+	if a.cur == nil {
+		return
 	}
+	if a.visible {
+		a.cur.hide()
+	}
+	a.cur.destroy()
+	a.cur, a.ready, a.visible = nil, false, false
 }
 
 // Closed forgets p after its window was destroyed.
@@ -185,6 +194,10 @@ type wailsPopup struct {
 	app  *application.App
 	win  *application.WebviewWindow
 	prev uintptr // the foreground window when it was last shown
+	// destroying is set before destroy closes the window, so the close hook
+	// (on the main thread, while destroy waits) knows it was not the user and
+	// takes no lock.
+	destroying atomic.Bool
 }
 
 func (p *wailsPopup) place(height int) {
@@ -203,6 +216,11 @@ func (p *wailsPopup) place(height int) {
 
 func (p *wailsPopup) show() { p.prev = showNoActivate(p.win) }
 func (p *wailsPopup) hide() { hideRestoringFocus(p.win, p.prev) }
+
+func (p *wailsPopup) destroy() {
+	p.destroying.Store(true)
+	p.win.Close()
+}
 
 // onDemand holds a window that is created when first needed and forgotten
 // when it closes, so the next Get creates a fresh one. Wails destroys a
@@ -379,7 +397,8 @@ func (w *wailsWindows) newSettings() *application.WebviewWindow {
 }
 
 // newAlert creates the hidden alert window: frameless, always on top, off
-// the taskbar, translucent like the capture box.
+// the taskbar, translucent like the capture box. It is destroyed when the
+// queue empties (alertPopup.Dismiss) or when the user closes it.
 func (w *wailsWindows) newAlert() popup {
 	win := w.app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             alertWindowName,
@@ -404,6 +423,10 @@ func (w *wailsWindows) newAlert() popup {
 	})
 	p := &wailsPopup{app: w.app, win: win}
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
+		if p.destroying.Load() {
+			log.Printf("alert: destroyed")
+			return
+		}
 		w.alert.Closed(p)
 		log.Printf("alert: closed")
 		if w.onAlertsClosed != nil {
@@ -489,7 +512,7 @@ func (w *wailsWindows) ResizeAlerts(height int) {
 	w.alert.Resize(height)
 }
 
-// DismissAlerts hides the alert window.
+// DismissAlerts hides and destroys the alert window.
 func (w *wailsWindows) DismissAlerts() {
 	w.alert.Dismiss()
 	log.Printf("alert: hidden")

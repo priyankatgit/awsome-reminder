@@ -112,15 +112,18 @@ func TestFocusSlotTakeClears(t *testing.T) {
 }
 
 type fakePopup struct {
-	n      int
-	placed []int
-	shows  int
-	hides  int
+	n         int
+	placed    []int
+	shows     int
+	hides     int
+	destroyed int
+	calls     []string // call order: place, show, hide, destroy
 }
 
-func (p *fakePopup) place(h int) { p.placed = append(p.placed, h) }
-func (p *fakePopup) show()       { p.shows++ }
-func (p *fakePopup) hide()       { p.hides++ }
+func (p *fakePopup) place(h int) { p.placed = append(p.placed, h); p.calls = append(p.calls, "place") }
+func (p *fakePopup) show()       { p.shows++; p.calls = append(p.calls, "show") }
+func (p *fakePopup) hide()       { p.hides++; p.calls = append(p.calls, "hide") }
+func (p *fakePopup) destroy()    { p.destroyed++; p.calls = append(p.calls, "destroy") }
 
 func newTestPopup() (*alertPopup, *[]*fakePopup, *[]func()) {
 	var made []*fakePopup
@@ -133,7 +136,8 @@ func newTestPopup() (*alertPopup, *[]*fakePopup, *[]func()) {
 }
 
 // A new window is shown only once its page has reported its height, placed
-// at that height; later shows reuse it.
+// at that height. When the queue empties it is hidden and destroyed; the
+// next alert creates a new one, which again waits for its page.
 func TestAlertPopupShowsAfterPageReady(t *testing.T) {
 	a, made, _ := newTestPopup()
 	a.Show()
@@ -158,49 +162,96 @@ func TestAlertPopupShowsAfterPageReady(t *testing.T) {
 		t.Fatalf("placed %v, want clamp to %d once", p.placed, alertMaxHeight)
 	}
 	a.Dismiss()
-	if p.hides != 1 {
-		t.Fatalf("hides %d", p.hides)
+	if p.hides != 1 || p.destroyed != 1 {
+		t.Fatalf("dismiss: hides %d destroyed %d", p.hides, p.destroyed)
 	}
-	a.Resize(200) // page re-renders while hidden: no show
-	if p.shows != 1 {
-		t.Fatal("shown after dismiss")
+	// Hidden first (so focus is handed back while the window still exists).
+	if got := p.calls[len(p.calls)-2:]; got[0] != "hide" || got[1] != "destroy" {
+		t.Fatalf("dismiss order %v, want hide then destroy", p.calls)
 	}
-	// Reuse: the hidden page still shows its old content, so the window
-	// waits for the page to report again after rendering the new queue.
+	a.Resize(200) // a late report from the destroyed page: ignored
+	if p.shows != 1 || len(p.placed) != 2 {
+		t.Fatalf("destroyed window touched: shows %d placed %v", p.shows, p.placed)
+	}
+	a.Dismiss() // nothing left to dismiss
+	if p.hides != 1 || p.destroyed != 1 {
+		t.Fatalf("second dismiss: hides %d destroyed %d", p.hides, p.destroyed)
+	}
+
+	// The next alert creates a fresh window at the initial height, shown
+	// only once its page reports.
 	a.Show()
-	if len(*made) != 1 || p.shows != 1 {
-		t.Fatalf("reuse shown before the page re-rendered: made %d shows %d", len(*made), p.shows)
+	if len(*made) != 2 {
+		t.Fatalf("next alert: made %d windows, want 2", len(*made))
 	}
-	a.Resize(200) // same height as last reported: still counts
-	if p.shows != 2 || p.placed[len(p.placed)-1] != 200 {
-		t.Fatalf("reuse: shows %d placed %v", p.shows, p.placed)
+	q := (*made)[1]
+	if q.shows != 0 || p.shows != 1 {
+		t.Fatalf("shown before the new page was ready: new %d old %d", q.shows, p.shows)
+	}
+	a.Resize(alertInitialHeight) // same as the default height: still counts
+	if q.shows != 1 || len(q.placed) != 1 || q.placed[0] != alertInitialHeight {
+		t.Fatalf("new window: shows %d placed %v", q.shows, q.placed)
+	}
+	if p.shows != 1 || p.destroyed != 1 {
+		t.Fatalf("old window reused: shows %d destroyed %d", p.shows, p.destroyed)
 	}
 }
 
-// A fallback timer from an earlier show does not show a later one early.
+// A fallback timer from an earlier (destroyed) window does not show the
+// next one early.
 func TestAlertPopupStaleFallbackIgnored(t *testing.T) {
 	a, made, timers := newTestPopup()
 	a.Show()
 	a.Resize(150)
 	a.Dismiss()
-	a.Show() // second wait: timers[1]
+	a.Show() // new window, second wait: timers[1]
 	(*timers)[0]()
-	if p := (*made)[0]; p.shows != 1 {
-		t.Fatalf("stale fallback showed: shows %d", p.shows)
+	if p := (*made)[1]; p.shows != 0 {
+		t.Fatalf("stale fallback showed the new window: shows %d", p.shows)
 	}
 	(*timers)[1]()
-	if p := (*made)[0]; p.shows != 2 {
-		t.Fatalf("current fallback: shows %d", p.shows)
+	if p := (*made)[1]; p.shows != 1 || p.placed[0] != alertInitialHeight {
+		t.Fatalf("current fallback: shows %d placed %v", p.shows, p.placed)
+	}
+	if p := (*made)[0]; p.shows != 1 {
+		t.Fatalf("old window shown again: %d", p.shows)
 	}
 }
 
-func TestAlertPopupDismissBeforeReadyNeverShows(t *testing.T) {
+// Alerts that keep arriving while the window is up reuse it; only an empty
+// queue destroys it.
+func TestAlertPopupVisibleReusedUntilEmpty(t *testing.T) {
 	a, made, _ := newTestPopup()
+	a.Show()
+	a.Resize(160)
+	a.Show() // a second alert while visible
+	a.Resize(300)
+	if len(*made) != 1 {
+		t.Fatalf("made %d", len(*made))
+	}
+	p := (*made)[0]
+	if p.shows != 1 || p.destroyed != 0 || p.placed[len(p.placed)-1] != 300 {
+		t.Fatalf("shows %d destroyed %d placed %v", p.shows, p.destroyed, p.placed)
+	}
+	a.Dismiss()
+	if p.destroyed != 1 {
+		t.Fatalf("destroyed %d", p.destroyed)
+	}
+}
+
+// A window dismissed before its page was ready is destroyed without ever
+// being shown or hidden, and its late fallback does nothing.
+func TestAlertPopupDismissBeforeReadyNeverShows(t *testing.T) {
+	a, made, timers := newTestPopup()
 	a.Show()
 	a.Dismiss()
 	a.Resize(150)
-	if p := (*made)[0]; p.shows != 0 || p.hides != 0 {
-		t.Fatalf("shows %d hides %d", p.shows, p.hides)
+	(*timers)[0]()
+	if p := (*made)[0]; p.shows != 0 || p.hides != 0 || p.destroyed != 1 {
+		t.Fatalf("shows %d hides %d destroyed %d", p.shows, p.hides, p.destroyed)
+	}
+	if len(*made) != 1 {
+		t.Fatalf("made %d", len(*made))
 	}
 }
 
