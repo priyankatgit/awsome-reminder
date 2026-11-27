@@ -757,13 +757,12 @@ export function mountSettings(root: HTMLElement): void {
     try {
       await api.saveSettings(toSettings(draft));
     } catch (err) {
-      failed = errorText(err)
-        .split("\n")
-        .filter((l) => l.trim())
-        .map(fieldOf);
-      // Hotkey and autostart errors come after the save
-      // (Service.SaveSettings); any other error means nothing was saved.
-      applied = failed.every((f) => f.field === "hotkey" || f.field === "autostart" || (f.field === "replyHotkey" && f.text !== CLASH));
+      const lines = errorText(err).split("\n").filter((l) => l.trim());
+      failed = lines.map(fieldOf);
+      // Registration errors come after the save (Service.SaveSettings:
+      // "hotkey:", "reply hotkey:", autostart); Validate's own errors
+      // ("replyHotkey:", the clash, ...) mean nothing was saved.
+      applied = lines.every((l, i) => /^(hotkey|reply hotkey):/.test(l.trim()) || failed[i].field === "autostart");
     }
     saving = false;
     if (applied) {

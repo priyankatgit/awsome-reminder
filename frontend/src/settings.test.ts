@@ -157,4 +157,29 @@ describe("Replies settings", () => {
     const r = await mount();
     expect(q(r, "#reply-hotkey-error").textContent).toBe("Ctrl+Alt+R is already used by another app");
   });
+
+  it("a Validate failure on the reply hotkey saves nothing: draft stays dirty, Save enabled", async () => {
+    h.saveErr = 'replyHotkey: invalid combo "Ctrl+"';
+    const r = await mount();
+    days(r)[6].click();
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(q(r, "#reply-hotkey-error").textContent).toBe('Invalid combo "Ctrl+"');
+    expect(q(r, "#settings-status").textContent).toBe("");
+    expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(false);
+  });
+
+  it("a reply hotkey registration failure after a save is 'Saved, with a problem'", async () => {
+    h.saveErr = "reply hotkey: already used";
+    h.status = { hotkeyErr: "", replyHotkeyErr: "Already used" }; // Go reports it in Status too
+    const r = await mount();
+    days(r)[6].click();
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(q(r, "#reply-hotkey-error").textContent).toBe("Already used");
+    expect(q(r, "#settings-status").textContent).toBe("Saved, with a problem");
+    expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(true);
+  });
 });
