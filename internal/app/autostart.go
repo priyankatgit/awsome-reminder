@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"awesome-reminder/internal/autostart"
@@ -11,19 +12,45 @@ import (
 
 // autostartDecision decides at startup whether the login entry must be
 // written so it matches the setting. want is settings.Autostart; has/hasErr
-// come from autostart.Enabled(). Executables under tmpDir (go run, dev
-// builds) are never registered or unregistered.
-func autostartDecision(want, has bool, hasErr error, exe, tmpDir string) (set bool, reason string) {
+// come from autostart.Enabled() and target from autostart.Target() (the
+// executable the entry starts; "" if unknown). An enabled entry that starts
+// another executable than exe (the app was moved or reinstalled elsewhere) is
+// rewritten. Executables under tmpDir (go run, dev builds) are never
+// registered or unregistered.
+func autostartDecision(want, has bool, hasErr error, target, exe, tmpDir string) (set bool, reason string) {
 	if underDir(exe, tmpDir) {
 		return false, "skipped: executable is in the temp dir"
 	}
 	if hasErr != nil {
 		return true, "entry unreadable (" + hasErr.Error() + "), rewriting"
 	}
-	if has == want {
-		return false, "already in sync"
+	if has != want {
+		return true, "out of sync, updating"
 	}
-	return true, "out of sync, updating"
+	if want && !samePath(target, exe) {
+		return true, "entry starts " + quoteOrUnknown(target) + ", updating"
+	}
+	return false, "already in sync"
+}
+
+func quoteOrUnknown(p string) string {
+	if p == "" {
+		return "an unknown program"
+	}
+	return `"` + p + `"`
+}
+
+// samePath reports whether a and b name the same file after resolving
+// symlinks and short names (case-insensitively on Windows).
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ra, rb := resolve(a), resolve(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ra, rb)
+	}
+	return ra == rb
 }
 
 // underDir reports whether path is inside dir (case-insensitive on Windows).
@@ -36,7 +63,8 @@ func underDir(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// syncAutostart makes the OS login entry match want. It logs the outcome.
+// syncAutostart makes the OS login entry match want and start this
+// executable. It logs the outcome.
 func syncAutostart(want bool) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -44,7 +72,11 @@ func syncAutostart(want bool) {
 		return
 	}
 	has, hasErr := autostart.Enabled()
-	set, reason := autostartDecision(want, has, hasErr, exe, os.TempDir())
+	target, err := autostart.Target()
+	if err != nil {
+		log.Printf("autostart: %v", err)
+	}
+	set, reason := autostartDecision(want, has, hasErr, target, exe, os.TempDir())
 	if !set {
 		log.Printf("autostart: %s (setting=%v, registered=%v)", reason, want, has)
 		return

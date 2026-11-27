@@ -50,6 +50,48 @@ func Set(enabled bool, exePath string) error {
 	return nil
 }
 
+// unquoteExec reverses quoteExec for the first argument of an Exec value.
+func unquoteExec(v string) string {
+	if !strings.HasPrefix(v, `"`) {
+		arg, _, _ := strings.Cut(v, " ")
+		return strings.ReplaceAll(arg, "%%", "%")
+	}
+	var b strings.Builder
+	for i := 1; i < len(v); i++ {
+		switch c := v[i]; {
+		case c == '"':
+			return b.String()
+		case c == '\\' && i+1 < len(v):
+			i++
+			b.WriteByte(v[i])
+		case c == '%' && i+1 < len(v) && v[i+1] == '%':
+			i++
+			b.WriteByte('%')
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// Target returns the executable path the desktop entry's Exec key starts;
+// "" if there is no entry.
+func Target() (string, error) {
+	b, err := os.ReadFile(entryPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("autostart: read: %w", err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Exec="); ok {
+			return unquoteExec(v), nil
+		}
+	}
+	return "", nil
+}
+
 func Enabled() (bool, error) {
 	_, err := os.Stat(entryPath())
 	if errors.Is(err, os.ErrNotExist) {
