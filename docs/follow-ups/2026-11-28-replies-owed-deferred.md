@@ -23,17 +23,12 @@ Minor findings from the per-task and whole-branch reviews of replies owed (merge
 - T9: keycode cache keyed on current layout only; ASCII fallback tries only with Command
 - T1: TestMigrateV3ToV4 doesn't assert outbox rows preserved
 - T2: conformance doesn't test clearing reply fields on a newer version
-- T3: WorkDays only canonicalised on JSON load; Equal order-sensitive → spurious shared re-stamp
 - T3: missing-field defaults use runtime.GOOS not LoadSettings goos
 - T3: Validate doesn't check capture Hotkey itself; unparseable → clash check skipped
 - T3: ApplyRemoteShared relies on unwritten invariant (end_of_day ⇒ sweep present) — comment it
-- T5: dropped recurring reply keeps RRule; Delete+Undelete brings it back open with outcome "dropped"
-- T5: no tests for DropReply on recurring/deleted, nor OnChange/outbox on SetOwedTo/DropReply
+- T5: no tests for OnChange/outbox on SetOwedTo/DropReply
 - T6: changing DefaultTime/WorkDays/Loc changes nudge keys → an immediate missed nudge for every open reply (consistent with leads today)
 - T6: collapsed earlier nudges never marked covered — a backward clock jump can re-fire one
-- T7: Tomorrow pressed after midnight skips a day (use today if work day and before DefaultTime)
-- T7: SnoozeReplies drops cards for IDs read back from View, not the set snoozed — have SnoozeRepliesUntil return IDs
-- T7: SnoozeRepliesUntil partial failure doesn't fire OnChange
 - T7: queued sweep card keeps listing a person after their reply closes (transient)
 - T10: capture + reply press at the same moment can desync the reply-open flag (self-heals)
 - T10: tooltip truncated at 127 chars by Wails; reply error last (Task 13 inline error covers it)
@@ -46,9 +41,3 @@ Minor findings from the per-task and whole-branch reviews of replies owed (merge
 - T12: .row-reply max-width 40% raw value (precedent .row-tags)
 - T12: no test for "tomorrow" snooze on an undated reply
 - T13: focus after failed save lands on first chip; .day-chip focus/reduced-motion rely on global rules
-- Final: macOS WebKit click on × may not return focus to the line
-- Final: wl-paste --type text/plain is exact; text/plain;charset=utf-8-only sources fall through to xclip (consider --type text)
-- Final: KeepText reply press wipes an existing quote (predates the fix)
-- Final: an OwedTo containing a single " unbalances Line quoting
-
-Also: Phase 2 sync writes nothing to awesome.log, which made a real-Atlas check slow to diagnose. Add connect/push/pull/error log lines.
