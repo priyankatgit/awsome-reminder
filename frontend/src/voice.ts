@@ -4,6 +4,7 @@
 import { api, errorText, events, on, type Cancellable, type VoiceStatus } from "./api";
 import { el } from "./dom";
 import { icons } from "./icons";
+import { Segmenter, type PcmSegment } from "./voice-segment";
 
 const TARGET_RATE = 16000;
 const LEVEL_WINDOW_MS = 33; // one RMS level (and one VAD step) per ~frame
@@ -88,9 +89,20 @@ export class Recorder {
   private floor = INITIAL_FLOOR_RMS;
   private lastSpeech = 0;
   private stopped = false;
+  private segmenter?: Segmenter;
+  private pending: Float32Array[] = [];
   heardSpeech = false;
 
-  async start(onLevel: (rms: number) => void, onAutoStop: (why: StopReason) => void): Promise<void> {
+  /**
+   * With `opts.onSegment` the recorder cuts the audio at pauses and emits each
+   * segment as it completes; it never auto-stops then (the session decides).
+   */
+  async start(
+    onLevel: (rms: number) => void,
+    onAutoStop: (why: StopReason) => void,
+    opts?: { onSegment?: (seg: PcmSegment) => void },
+  ): Promise<void> {
+    const onSegment = opts?.onSegment;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
@@ -125,10 +137,12 @@ export class Recorder {
 
       const windowSize = Math.round((this.rate * LEVEL_WINDOW_MS) / 1000);
       this.startedAt = performance.now();
+      if (onSegment) this.segmenter = new Segmenter(this.rate);
       tap.port.onmessage = (e: MessageEvent<Float32Array>) => {
         if (this.stopped) return;
         const block = e.data;
-        this.chunks.push(block);
+        if (this.segmenter) this.pending.push(block);
+        else this.chunks.push(block);
         for (let i = 0; i < block.length; i++) this.acc += block[i] * block[i];
         this.accN += block.length;
         if (this.accN < windowSize) return;
@@ -136,6 +150,16 @@ export class Recorder {
         this.acc = 0;
         this.accN = 0;
         onLevel(rms);
+        if (this.segmenter && onSegment) {
+          const speech = this.isSpeech(rms);
+          const blocks = this.pending;
+          this.pending = [];
+          for (const b of blocks) {
+            const seg = this.segmenter.push(b, speech);
+            if (seg) onSegment(this.toPcm(seg));
+          }
+          return;
+        }
         const why = this.detect(rms);
         if (why) onAutoStop(why);
       };
@@ -145,15 +169,22 @@ export class Recorder {
     }
   }
 
-  /** One VAD step; returns why recording should end, if it should. */
-  private detect(rms: number): StopReason | null {
-    const now = performance.now();
+  /** The speech test for one level window; tracks the noise floor. */
+  private isSpeech(rms: number): boolean {
     // Noise floor: follows quiet levels at once, louder ones only slowly.
     this.floor = rms < this.floor ? rms : this.floor * 0.995 + rms * 0.005;
     if (rms > Math.max(SPEECH_MIN_RMS, this.floor * SPEECH_OVER_FLOOR)) {
       this.heardSpeech = true;
-      this.lastSpeech = now;
+      this.lastSpeech = performance.now();
+      return true;
     }
+    return false;
+  }
+
+  /** One VAD step; returns why recording should end, if it should. */
+  private detect(rms: number): StopReason | null {
+    const now = performance.now();
+    this.isSpeech(rms);
     const elapsed = now - this.startedAt;
     if (this.heardSpeech && now - this.lastSpeech > SILENCE_STOP_MS) return "silence";
     if (elapsed > MAX_RECORD_MS) return "limit";
@@ -163,6 +194,22 @@ export class Recorder {
 
   elapsedMs(): number {
     return this.startedAt ? performance.now() - this.startedAt : 0;
+  }
+
+  /** performance.now() of the last speech window, 0 if none yet. */
+  lastSpeechAt(): number {
+    return this.lastSpeech;
+  }
+
+  private toPcm(seg: { pcm: Float32Array; speechMs: number }): PcmSegment {
+    return { pcm: toInt16(resampleTo16k(seg.pcm, this.rate)), speechMs: seg.speechMs };
+  }
+
+  /** Segment mode: flushes the open segment, releases the mic. */
+  stopSegments(): PcmSegment | null {
+    const seg = this.segmenter?.flush() ?? null;
+    this.release();
+    return seg ? this.toPcm(seg) : null;
   }
 
   /** Ends the recording and returns it as 16 kHz mono Int16 PCM. */
@@ -186,6 +233,7 @@ export class Recorder {
   private release(): void {
     this.stopped = true;
     this.chunks = [];
+    this.pending = [];
     for (const n of this.nodes) n.disconnect();
     this.nodes = [];
     this.stream?.getTracks().forEach((t) => t.stop());
