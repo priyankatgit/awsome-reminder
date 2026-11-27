@@ -213,6 +213,7 @@ Phase 1 (local core) is complete: hotkey capture, natural-language parsing, loca
 Planned, in order:
 
 1. **Phase 2:** optional sync across your machines through your own MongoDB Atlas cluster, with sync status indicators in the tray and list.
-2. **Phase 3:** optional phone push for reminders through ntfy.
+2. **Phase 3:** hands-free voice. Say "Hey Awesome" to start capturing without the hotkey, and dictate several tasks in one go: saying "create new task" saves the current one and starts the next.
+3. **Phase 4:** optional phone push for reminders through ntfy.
 
 The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).
