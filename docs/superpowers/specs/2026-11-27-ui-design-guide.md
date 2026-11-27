@@ -22,7 +22,7 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--border` | `#334155` | `#E2E8F0` | dividers (1px) |
 | `--accent` | `#22C55E` | `#16A34A` | focus ring, "saved" flash, decorative accent (not text, not button fill in light) |
 | `--accent-fill` | `var(--accent)` | `#15803D` | primary button fill (white text 5.0:1; `#16A34A` gives only 3.3:1) |
-| `--accent-text` | `#4ADE80` | `#15803D` | accent used as text (the alert's "now"): 10.3:1 dark, 5.0:1 light |
+| `--accent-text` | `#4ADE80` | `#15803D` | accent used as text (the hotkey recorder prompt): 10.3:1 dark, 5.0:1 light |
 | `--on-accent` | `#0F172A` | `#FFFFFF` | text on `--accent-fill` |
 | `--time` | `#F59E0B` | `#B45309` | reminder icon, decorative time color |
 | `--time-text` | `#F59E0B` | `#92400E` | due-time text on rows that may sit on `--muted` |
@@ -30,6 +30,12 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--danger` | `#EF4444` | `#DC2626` | overdue/delete/**listening** icons and borders |
 | `--danger-text` | `#F87171` | `#B91C1C` | danger as text on `--muted` hover rows (4.8:1 dark) |
 | `--ring` | `#22C55E` | `#16A34A` | 2px focus outline, 2px offset |
+| `--remind` | `#F87171` | `#DC2626` | reminder red: alert card edge bar and bell (graphic, not text); Phase 1.6 capture-box bell |
+| `--remind-tint` | `#2A1A24` | `#FEF2F2` | alert card fill (opaque, so contrast is fixed) |
+| `--remind-tint-strong` | `#3A1C26` | `#FEE2E2` | missed/overdue alert card fill |
+| `--remind-text` | `#FCA5A5` | `#B91C1C` | alert time line: 8.7 / 8.1:1 dark, 5.9 / 5.3:1 light (on tint / strong tint) |
+| `--remind-border` | `var(--border)` | `#FCA5A5` | ghost-button borders on the tint (light `--border` vanishes on it) |
+| `--remind-glow` | `0 0 12px 2px rgba(248,113,113,.55)` | `0 0 12px 2px rgba(220,38,38,.4)` | one 600 ms (`--dur-remind-glow`) glow of the edge bar when a card appears |
 | `--highlight` | `rgba(34,197,94,.16)` | `rgba(22,163,74,.16)` | row highlight after the list opens on an item; fades out |
 | `--shadow-menu` | `0 8px 24px rgba(0,0,0,.28)` + 1px `--border` | `0 8px 24px rgba(15,23,42,.12)` + 1px `--border` | row `⋯` menu (softer than the window shadow) |
 
@@ -106,8 +112,11 @@ Tag chips get a stable hue from `hash(tag) % 8` over a fixed 8-hue list (desatur
 └──────────────────────────────────────────┘
 ```
 - 380 px, glass surface, bottom-right with 16 px inset. Slides up 8 px + fades in 160 ms. Multiple alerts stack as cards inside the one window (max 3 visible, then "+N more").
-- "Missed · was due 14:00" uses `--danger`; "now" uses `--accent`.
-- Done is the primary button (`--accent-fill`); Snooze and Open are ghost buttons. Buttons are 32 px tall with a 40 px hit area. Never steal focus.
+- **Light-red reminder cards** (catch the eye; the list window and capture box stay neutral). Every card has an opaque `--remind-tint` fill, a 4 px `--remind` left edge bar (`--remind-bar`), a `--remind` Lucide `bell` at the start of the time line, and the time line ("in 10 min · 17:00", "now · 17:00", "snoozed · was due …") in `--remind-text`, mono 12px medium.
+- Missed and overdue cards ("missed · was due 14:00", "overdue 5m · 14:00") read more urgent: `--remind-tint-strong` fill and a 6 px bar (`--remind-bar-strong`). The words carry the state too, never color alone.
+- Entrance: besides the 160 ms slide/fade, the edge bar glows once (`--remind-glow`, opacity 0 → 1 → 0 over 600 ms on a `::after` layer). None under `prefers-reduced-motion`. Only opacity/transform animate; the bar and glow are absolutely positioned, so nothing shifts.
+- Contrast on the tint (dark / light, base / strong tint): `--fg` 15.8 / 14.6 and 16.3 / 14.6; `--fg-muted` (repeats, "Snooze for", ghost-button hover is `--muted`) 6.4 / 6.0 and 6.9 / 6.2; `--danger-text` (inline error) 6.0 / 5.5 and 5.9 / 5.3. Tag chips keep their own opaque background, so their ratios are unchanged.
+- Done is the primary button (`--accent-fill`, green: actions stay distinct from the alert red); Snooze and Open are ghost buttons (border `--remind-border` on the tint). Buttons are 32 px tall with a 40 px hit area. Never steal focus.
 - **Shipped deviation:** Snooze does not open a dropdown. The Snooze button toggles an inline row ("Snooze for" + preset buttons) inside the same card, so the small alert window never needs a popup layer of its own and the choices stay keyboard reachable (`aria-expanded` / `aria-controls`).
 
 ## Settings

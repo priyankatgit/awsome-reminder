@@ -25,12 +25,30 @@
      Dark: danger 4.8:1, time 6.2:1 on --muted. */
   --danger-text: #F87171;
   --time-text: #F59E0B;
-  /* Accent as text (the alert's "now"): 10.3:1 on --bg dark, 4.8:1 light. */
+  /* Accent as text: 10.3:1 on --bg dark, 4.8:1 light. */
   --accent-text: #4ADE80;
   /* Primary button fill: --on-accent text on it keeps >= 4.5:1 (dark 7.8:1). */
   --accent-fill: var(--accent);
   /* Row highlight after OpenList(id); fades out. */
   --highlight: rgba(34, 197, 94, 0.16);
+
+  /* Reminder red: the alert pop-up cards (and, from Phase 1.6, the capture
+     box bell). --remind is the edge bar and bell (graphic, not text);
+     --remind-tint the card fill; --remind-text the time label on it.
+     Dark, on --remind-tint / --remind-tint-strong: --fg 15.8 / 14.6:1,
+     --fg-muted 6.4 / 6.0:1, --remind-text 8.7 / 8.1:1, --danger-text
+     6.0 / 5.5:1, --remind 6.0 / 5.5:1. */
+  --remind: #F87171;
+  --remind-tint: #2A1A24;
+  --remind-text: #FCA5A5;
+  /* Missed/overdue cards: a deeper tint and a wider bar. */
+  --remind-bar: 4px;
+  --remind-tint-strong: #3A1C26;
+  --remind-bar-strong: 6px;
+  /* Ghost-button borders on the tint (light --border vanishes there). */
+  --remind-border: var(--border);
+  /* One soft glow of the bar when a card appears. */
+  --remind-glow: 0 0 12px 2px rgba(248, 113, 113, 0.55);
 
   /* Time chip: --time tinted (contrast 6.6:1 dark, 6.4:1 light). */
   --time-chip-fg: #F59E0B;
@@ -132,6 +150,7 @@
   --dur-done: 180ms;
   --dur-highlight: 2000ms;
   --dur-alert-enter: 160ms;
+  --dur-remind-glow: 600ms;
   --ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-exit: ease-in;
   --enter-scale: 0.98;
@@ -161,6 +180,17 @@
     --accent-text: #15803D; /* 5.0:1 on white */
     --accent-fill: #15803D; /* white text 5.0:1 (--accent #16A34A gives 3.3:1) */
     --highlight: rgba(22, 163, 74, 0.16);
+
+    /* On --remind-tint / --remind-tint-strong: --fg 16.3 / 14.6:1,
+       --fg-muted 6.9 / 6.2:1, --remind-text and --danger-text 5.9 / 5.3:1,
+       --remind 4.4 / 4.0:1. */
+    --remind: #DC2626;
+    --remind-tint: #FEF2F2;
+    --remind-text: #B91C1C;
+    --remind-tint-strong: #FEE2E2;
+    --remind-border: #FCA5A5;
+    --remind-glow: 0 0 12px 2px rgba(220, 38, 38, 0.4);
+
     --shadow-menu: 0 8px 24px rgba(15, 23, 42, 0.12), 0 0 0 1px var(--border);
 
     --time-chip-fg: #92400E;

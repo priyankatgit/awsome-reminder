@@ -250,8 +250,18 @@ export function mountAlert(root: HTMLElement): void {
       if (!v) {
         v = buildCard(card);
         views.set(card.key, v);
-        v.node.classList.add("is-entering");
-        v.node.addEventListener("animationend", () => v!.node.classList.remove("is-entering"), { once: true });
+        const node = v.node;
+        node.classList.add("is-entering");
+        // The edge-bar glow (on ::after) outlasts the slide-in; dropping the
+        // class when the slide-in ends would cut the glow short.
+        const settle = (e: AnimationEvent) => {
+          if (e.animationName !== "alert-glow") return;
+          node.classList.remove("is-entering");
+          node.removeEventListener("animationend", settle);
+          node.removeEventListener("animationcancel", settle);
+        };
+        node.addEventListener("animationend", settle);
+        node.addEventListener("animationcancel", settle);
       }
       v.card = card;
       const want: ChildNode | null = prev ? prev.nextSibling : stack.firstChild;
