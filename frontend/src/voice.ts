@@ -12,6 +12,7 @@ const NO_SPEECH_STOP_MS = 8000; // give up when nothing was said
 const MAX_RECORD_MS = 30000; // whisper's window; stop there
 const SPEECH_MIN_RMS = 0.015;
 const SPEECH_OVER_FLOOR = 3;
+const INITIAL_FLOOR_RMS = 0.003;
 const MIN_SAMPLES = TARGET_RATE / 4; // matches voice.MinSamples in Go
 const READY_NOTE_MS = 2500;
 
@@ -83,7 +84,8 @@ export class Recorder {
   private startedAt = 0;
   private acc = 0;
   private accN = 0;
-  private floor = -1;
+  // Seeded at a quiet room level, so speech that starts at once still counts.
+  private floor = INITIAL_FLOOR_RMS;
   private lastSpeech = 0;
   private stopped = false;
   heardSpeech = false;
@@ -140,7 +142,7 @@ export class Recorder {
   private detect(rms: number): StopReason | null {
     const now = performance.now();
     // Noise floor: follows quiet levels at once, louder ones only slowly.
-    this.floor = this.floor < 0 || rms < this.floor ? rms : this.floor * 0.995 + rms * 0.005;
+    this.floor = rms < this.floor ? rms : this.floor * 0.995 + rms * 0.005;
     if (rms > Math.max(SPEECH_MIN_RMS, this.floor * SPEECH_OVER_FLOOR)) {
       this.heardSpeech = true;
       this.lastSpeech = now;
