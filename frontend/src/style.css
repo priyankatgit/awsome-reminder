@@ -2124,3 +2124,8 @@ legend.field-label {
   width: var(--icon-size-inline);
   height: var(--icon-size-inline);
 }
+
+.btn[aria-disabled="true"] {
+  cursor: default;
+  opacity: var(--completing-opacity);
+}

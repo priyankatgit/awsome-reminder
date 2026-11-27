@@ -64,3 +64,17 @@ export function shouldGlow(prev: SyncStatus | null, next: SyncStatus): boolean {
 export function showMarkers(st: SyncStatus): boolean {
   return st.state !== "off";
 }
+
+/**
+ * Whether the list must refetch View (its pending ids) after a status change.
+ * The count alone is not enough: one change may sync while another is added.
+ */
+export function needsRefetch(prev: SyncStatus | null, next: SyncStatus): boolean {
+  if (prev === null) return true;
+  return (
+    prev.pending !== next.pending ||
+    prev.lastSyncAt !== next.lastSyncAt ||
+    prev.state === "off" ||
+    (prev.state === "syncing" && next.state !== "syncing")
+  );
+}

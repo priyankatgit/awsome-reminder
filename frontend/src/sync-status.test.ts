@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SyncStatus } from "./api";
-import { pillModel, relTime, shouldGlow, showMarkers } from "./sync-status";
+import { needsRefetch, pillModel, relTime, shouldGlow, showMarkers } from "./sync-status";
 
 const now = new Date(2026, 10, 28, 12, 0, 0);
 const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
@@ -65,4 +65,16 @@ describe("showMarkers", () => {
     expect(showMarkers(st({ state: "off" }))).toBe(false);
     for (const s of ["syncing", "synced", "offline", "error"] as const) expect(showMarkers(st({ state: s }))).toBe(true);
   });
+});
+
+describe("needsRefetch", () => {
+  const a = st({ pending: 2, lastSyncAt: "2026-11-28T10:00:00Z" });
+  it("refetches on the first status", () => expect(needsRefetch(null, a)).toBe(true));
+  it("refetches when the count changes", () => expect(needsRefetch(a, st({ ...a, pending: 1 }))).toBe(true));
+  it("refetches on a new sync even with the same count", () =>
+    expect(needsRefetch(a, st({ ...a, lastSyncAt: "2026-11-28T10:01:00Z" }))).toBe(true));
+  it("refetches when syncing ends", () =>
+    expect(needsRefetch(st({ ...a, state: "syncing" }), st({ ...a, state: "synced" }))).toBe(true));
+  it("refetches when sync comes on", () => expect(needsRefetch(st({ state: "off" }), a)).toBe(true));
+  it("skips an identical status", () => expect(needsRefetch(a, st({ ...a }))).toBe(false));
 });

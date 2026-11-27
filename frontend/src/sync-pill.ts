@@ -124,7 +124,8 @@ export function mountSyncPill(
     popWarnings.replaceChildren(...st.warnings.map((w) => el("p", "sync-pop-row sync-pop-warning", w)));
     popHost.hidden = st.host === "";
     popHost.textContent = `Cluster ${st.host}`;
-    nowBtn.disabled = st.state === "syncing";
+    // aria-disabled, not disabled: the button keeps focus (and so Esc) while syncing.
+    nowBtn.setAttribute("aria-disabled", String(st.state === "syncing"));
   }
 
   function glow(): void {
@@ -144,7 +145,7 @@ export function mountSyncPill(
   function open(): void {
     pop.hidden = false;
     pill.setAttribute("aria-expanded", "true");
-    (nowBtn.disabled ? pop : nowBtn).focus({ preventScroll: true });
+    nowBtn.focus({ preventScroll: true });
   }
 
   function close(refocus: boolean): void {
@@ -155,7 +156,10 @@ export function mountSyncPill(
   }
 
   pill.addEventListener("click", () => (isOpen() ? close(true) : open()));
-  nowBtn.addEventListener("click", () => void api.sync.now().catch(() => {}));
+  nowBtn.addEventListener("click", () => {
+    if (nowBtn.getAttribute("aria-disabled") === "true") return;
+    void api.sync.now().catch(() => {});
+  });
   settingsBtn.addEventListener("click", () => {
     close(true);
     void api.openSettings().catch(() => {});

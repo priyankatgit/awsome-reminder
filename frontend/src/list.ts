@@ -12,7 +12,7 @@ import { icons } from "./icons";
 import { applyMarker, createRow, editRow, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
 import { mountSyncPill } from "./sync-pill";
-import { showMarkers } from "./sync-status";
+import { needsRefetch, showMarkers } from "./sync-status";
 
 const REFRESH_DEBOUNCE_MS = 50;
 const RETICK_MS = 60_000; // relative times and the Upcoming horizon move on
@@ -923,8 +923,8 @@ export function mountList(root: HTMLElement): void {
         markersOn = on;
         if (view && holds === 0) render();
       }
-      // Which items are pending changed (or sync just came on): refetch the view.
-      if (on && (!prev || prev.pending !== next.pending || prev.state === "off")) scheduleRefresh();
+      // Which items are pending may have changed: refetch the view.
+      if (on && needsRefetch(prev, next)) scheduleRefresh();
     },
   });
   window.addEventListener("blur", () => closeMenu(false));
