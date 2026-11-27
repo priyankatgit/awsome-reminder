@@ -15,6 +15,7 @@ import (
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/parser"
+	"awesome-reminder/internal/recur"
 	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
@@ -90,12 +91,7 @@ func (c *Core) parse(input string) (parser.Result, settings.Settings, error) {
 
 // itemLoc is the zone of an item, falling back to the core's zone.
 func (c *Core) itemLoc(it model.Item) *time.Location {
-	if it.TZ != "" {
-		if l, err := time.LoadLocation(it.TZ); err == nil {
-			return l
-		}
-	}
-	return c.loc
+	return recur.Loc(it.TZ, c.loc)
 }
 
 func withInbox(tags []string) []string {
@@ -249,7 +245,7 @@ func (c *Core) Done(id string) (model.Item, error) {
 		done := now
 		it.DoneAt, it.SnoozeUntil = &done, nil
 		if it.RRule != "" && it.DueAt != nil {
-			next, err := nextOccurrence(it.RRule, *it.DueAt, now, c.itemLoc(*it))
+			next, err := recur.Next(it.RRule, *it.DueAt, now, c.itemLoc(*it))
 			if err != nil {
 				return err
 			}
@@ -292,7 +288,7 @@ func (c *Core) advanceRecurringLocked(now time.Time) (int, time.Time, error) {
 		if it.Status != model.StatusOpen || it.RRule == "" || it.DueAt == nil {
 			continue
 		}
-		latest, next, err := catchUp(it.RRule, *it.DueAt, now, c.itemLoc(it))
+		latest, next, err := recur.CatchUp(it.RRule, *it.DueAt, now, c.itemLoc(it))
 		if err != nil {
 			log.Printf("recurring %s: %v", it.ID, err)
 			continue
