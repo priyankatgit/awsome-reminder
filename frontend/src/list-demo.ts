@@ -3,7 +3,9 @@
 // http://127.0.0.1:9245/?demo#list, or ?demo=empty, or ?demo&focus=4;
 // ?demo#alert, ?demo=one#alert; ?demo#settings, where saving the hotkey
 // Ctrl+Alt+K fails as "already used"; ?demo#capture, with a toy parser that
-// knows "tomorrow", "5pm", #tags and !priority tokens). Loaded only when
+// knows "tomorrow", "5pm", #tags and !priority tokens). Click a row in
+// ?demo#list to try the detail panel; its saves take a moment, like the real
+// ones. Loaded only when
 // import.meta.env.DEV and ?demo are both set, so production bundles never
 // include it.
 import { api, emitLocal, events, type AlertCard, type Item, type Preview, type Settings, type View } from "./api";
@@ -25,6 +27,8 @@ function item(id: string, text: string, tags: string[], dueInMin: number | null,
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
     updatedBy: "demo",
+    priority: "",
+    description: "",
     ...extra,
   } as Item;
 }
@@ -32,9 +36,9 @@ function item(id: string, text: string, tags: string[], dueInMin: number | null,
 export function installDemo(): void {
   let items: Item[] = [
     item("1", "standup notes", ["team"], -95, { rrule: "FREQ=WEEKLY;BYDAY=MO" }),
-    item("2", "check deploy", ["backend"], 180),
-    item("3", "read RFC 9110", ["inbox"], null),
-    item("4", "fix flaky test", ["backend"], null),
+    item("2", "check deploy", ["backend"], 180, { priority: "high", description: "Steps:\n- [ ] watch the canary\n- [ ] check error rate" }),
+    item("3", "read RFC 9110", ["inbox"], null, { priority: "low" }),
+    item("4", "fix flaky test", ["backend"], null, { priority: "medium", description: "Fails about 1 in 20 runs on CI." }),
     item("5", "review auth PR with a rather long title that should be truncated at the edge", ["backend", "review"], null),
     item("6", "call the dentist", ["inbox"], 60 * 26),
     item("7", "renew passport", ["home"], 60 * 24 * 4),
@@ -42,6 +46,8 @@ export function installDemo(): void {
   ];
   if (new URLSearchParams(location.search).get("demo") === "empty") items = [];
   const tagOf = (it: Item) => (it.tags && it.tags.length ? it.tags : ["inbox"]);
+  const rank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  const byPriority = (a: Item, b: Item) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3);
   const eff = (it: Item) => new Date(it.snoozeUntil ?? it.dueAt ?? 0).getTime();
 
   const view = (): View => {
@@ -51,10 +57,12 @@ export function installDemo(): void {
     const groups = new Map<string, Item[]>();
     for (const i of open) for (const t of tagOf(i)) groups.set(t, [...(groups.get(t) ?? []), i]);
     const names = [...groups.keys()].sort((a, b) => (a === "inbox" ? -1 : b === "inbox" ? 1 : a.localeCompare(b)));
-    return { upcoming, tags: names.map((tag) => ({ tag, items: groups.get(tag)! })), done: items.filter((i) => i.status === "done") };
+    // Like Go's View: tag groups sort by priority (stable), Upcoming keeps time order.
+    const tags = names.map((tag) => ({ tag, items: [...groups.get(tag)!].sort(byPriority) }));
+    return { upcoming, tags, done: items.filter((i) => i.status === "done") };
   };
   const patch = (id: string, p: Partial<Item>) => {
-    items = items.map((i) => (i.id === id ? { ...i, ...p } : i));
+    items = items.map((i) => (i.id === id ? { ...i, ...p, updatedAt: new Date().toISOString() } : i));
     window.setTimeout(() => emitLocal(events.itemsChanged), 0);
   };
   const editText = (it: Item) => [it.text, ...(it.tags ?? []).filter((t) => t !== "inbox" || (it.tags ?? []).length > 1).map((t) => `#${t}`)].join(" ");
@@ -78,9 +86,65 @@ export function installDemo(): void {
     closeWindow: async () => console.info("demo: close window"),
     openSettings: async () => console.info("demo: open settings"),
   });
+  installPanelDemo(() => items, patch);
   installAlertDemo();
   installSettingsDemo();
   installCaptureDemo();
+}
+
+/** Stand-ins for the detail panel's setters, with Go's validation messages. */
+function installPanelDemo(all: () => Item[], patch: (id: string, p: Partial<Item>) => void): void {
+  const codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+  const weekly = (due: string) => `FREQ=WEEKLY;BYDAY=${codes[new Date(due).getDay()]}`;
+  const get = (id: string) => {
+    const it = all().find((i) => i.id === id);
+    if (!it) throw new Error("item not found");
+    return it;
+  };
+  const slow = () => new Promise((r) => window.setTimeout(r, 150)); // a save takes a moment
+  const set = async (id: string, p: Partial<Item>) => {
+    get(id);
+    patch(id, p);
+    return get(id);
+  };
+  Object.assign(api, {
+    itemDetail: async (id: string) => ({ item: get(id), attachments: [] }),
+    setText: async (id: string, text: string) => {
+      await slow();
+      if (!text.trim()) throw new Error("empty input");
+      return set(id, { text: text.trim() });
+    },
+    setDescription: async (id: string, md: string) => {
+      await slow();
+      return set(id, { description: md });
+    },
+    setPriority: async (id: string, p: string) => {
+      if (!["", "low", "medium", "high"].includes(p)) throw new Error("unknown priority");
+      return set(id, { priority: p });
+    },
+    setDue: async (id: string, due: Date | null) => {
+      const it = get(id);
+      if (!due) return set(id, { dueAt: null, kind: "todo" as Item["kind"], rrule: "", snoozeUntil: null });
+      const dueAt = due.toISOString();
+      const rrule = /^FREQ=WEEKLY;BYDAY=[A-Z]{2}$/.test(it.rrule) ? weekly(dueAt) : it.rrule;
+      return set(id, { dueAt, kind: "reminder" as Item["kind"], rrule, snoozeUntil: null });
+    },
+    setRepeat: async (id: string, r: string) => {
+      const it = get(id);
+      if (r === "none") return set(id, { rrule: "" });
+      if (!it.dueAt) throw new Error("Set a due time first");
+      const rules: Record<string, string> = { daily: "FREQ=DAILY", weekdays: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", weekly: weekly(it.dueAt) };
+      if (!rules[r]) throw new Error("unknown repeat");
+      return set(id, { rrule: rules[r] });
+    },
+    setTags: async (id: string, tags: string[]) => {
+      const out = [...new Set(tags.map((t) => t.trim().replace(/^#/, "").toLowerCase()).filter(Boolean))];
+      if (out.some((t) => !/^[a-z][a-z0-9_-]*$/.test(t))) throw new Error("tags start with a letter and use a-z, 0-9, - or _");
+      return set(id, { tags: out.length ? out : ["inbox"] });
+    },
+    widenList: async (w: number) => console.info(`demo: widen list to ${w}`),
+    restoreListWidth: async () => console.info("demo: restore list width"),
+  });
 }
 
 /** A toy stand-in for the Go parser: enough to drive the capture preview. */

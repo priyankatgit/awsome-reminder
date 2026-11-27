@@ -4,11 +4,11 @@ import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
 import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
-import type { Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
+import type { Detail, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, Status } from "../bindings/awesome-reminder/internal/app/models.js";
 
-export type { Preview, Item, Status, TagGroup, View, VoiceStatus };
+export type { Detail, Preview, Item, Status, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -86,6 +86,17 @@ export const api = {
   },
   /** Closes the window this page runs in. */
   closeWindow: (): Promise<void> => Window.Close(),
+  /** Detail panel (Phase 1.6). */
+  itemDetail: (id: string): Promise<Detail> => Service.ItemDetail(id),
+  setText: (id: string, text: string): Promise<Item> => Service.SetText(id, text),
+  setPriority: (id: string, p: string): Promise<Item> => Service.SetPriority(id, p),
+  /** null turns the item into a to-do. */
+  setDue: (id: string, due: Date | null): Promise<Item> => Service.SetDue(id, due ? due.toISOString() : null),
+  setRepeat: (id: string, repeat: string): Promise<Item> => Service.SetRepeat(id, repeat),
+  setTags: (id: string, tags: string[]): Promise<Item> => Service.SetTags(id, tags),
+  setDescription: (id: string, md: string): Promise<Item> => Service.SetDescription(id, md),
+  widenList: (minWidth: number): Promise<void> => Service.WidenList(minWidth),
+  restoreListWidth: (): Promise<void> => Service.RestoreListWidth(),
 };
 
 /** Event names emitted by Go (internal/app/events.go). */

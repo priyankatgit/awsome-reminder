@@ -1875,3 +1875,17 @@ legend.field-label {
     opacity: 1;
   }
 }
+
+/* ---------- List: priority dot (Phase 1.6) ---------- */
+
+/* An 8px dot before the text; it carries an aria-label, so not colour alone. */
+.row-prio {
+  flex: none;
+  width: var(--prio-dot);
+  height: var(--prio-dot);
+  border-radius: var(--radius-pill);
+}
+
+.row-prio[data-prio="high"] { background: var(--prio-high); }
+.row-prio[data-prio="medium"] { background: var(--prio-med); }
+.row-prio[data-prio="low"] { background: var(--prio-low); }

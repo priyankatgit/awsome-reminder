@@ -233,3 +233,18 @@
     --remind-tint: #FEE2E2;
   }
 }
+
+/* ---- Phase 1.6: detail panel ----
+   Kept in its own block so it merges cleanly with other token changes.
+   Sizes and motion only: the panel reuses the existing colour tokens on
+   --surface / --bg / --muted (all >= 4.5:1, ratios in the Task 7 report). */
+:root {
+  --panel-share: 50%; /* of the list window */
+  --panel-min: 420px;
+  --panel-width: max(var(--panel-share), var(--panel-min));
+  --panel-label: 10ch;
+  --panel-title-size: 16px;
+  --panel-title-line: 24px;
+  --panel-desc-min: 160px;
+  --dur-panel: 180ms; /* slide-in */
+}
