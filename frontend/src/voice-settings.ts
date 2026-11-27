@@ -49,6 +49,7 @@ export interface StatusLine {
 
 /** The line under the switches for a wake status; null when there is nothing to say. */
 export function statusLine(w: WakeStatus | null): StatusLine | null {
+  if (w && w.state === "absent" && w.error) return { text: w.error, error: true };
   if (!w || !w.enabled) return null;
   if (w.state === "listening") return { text: 'Listening for "Hey Awesome"', error: false };
   if (w.state === "starting") return { text: "Starting…", error: false };
@@ -95,12 +96,46 @@ export function watchDictation(
   };
 }
 
+/**
+ * Watches voice:wake-status for the wake download that Install starts (Go's
+ * Install returns as soon as its goroutine starts). Resolves when it left
+ * "installing" with the files in place; rejects on "absent" after "installing"
+ * (cancelled or failed; the status error is the message).
+ */
+export function watchWake(
+  subscribe: (cb: (s: WakeStatus) => void) => () => void,
+  current: () => Promise<WakeStatus>,
+): Watch {
+  let res!: () => void;
+  let rej!: (e: Error) => void;
+  const done = new Promise<void>((a, b) => {
+    res = a;
+    rej = b;
+  });
+  done.catch(() => undefined);
+  let sawInstall = false;
+  const see = (s: WakeStatus) => {
+    if (s.state === "installing") sawInstall = true;
+    else if (s.state === "unsupported") rej(new Error(s.hint || "The wake word is not available on this computer"));
+    else if (s.state === "absent") {
+      if (sawInstall) rej(new Error(s.error || "The download was cancelled"));
+    } else if (sawInstall || s.enabled) res(); // off, starting, listening, error: installed
+  };
+  const off = subscribe(see);
+  return {
+    done,
+    recheck: async () => see(await current()),
+    stop: off,
+  };
+}
+
 export interface InstallDeps {
   /** Dictation files are absent too: download them first. */
   dictationAbsent: boolean;
   installDictation(): Promise<void>;
   watchDictation(): Watch;
   installWake(): Promise<void>;
+  watchWake(): Watch;
   onPhase(phase: "dictation" | "wake"): void;
   cancelled(): boolean;
 }
@@ -120,7 +155,14 @@ export async function runInstall(d: InstallDeps): Promise<void> {
   }
   if (d.cancelled()) return;
   d.onPhase("wake");
-  await d.installWake();
+  const w = d.watchWake();
+  try {
+    await d.installWake();
+    await w.recheck();
+    await w.done;
+  } finally {
+    w.stop();
+  }
 }
 
 // ---------- Section ----------
@@ -257,6 +299,7 @@ export function mountVoiceSection(host: HTMLElement): void {
     statusText.textContent = line?.text ?? "";
     statusText.classList.toggle("is-error", !!line?.error);
     retry.hidden = !line?.error;
+    retry.disabled = busy || phase !== null;
     renderConsent();
   }
 
@@ -327,6 +370,11 @@ export function mountVoiceSection(host: HTMLElement): void {
             () => api.voice.status(),
           ),
         installWake: () => api.voice.installWake(),
+        watchWake: () =>
+          watchWake(
+            (cb) => on<WakeStatus>(events.wakeStatus, cb),
+            () => api.voice.wakeStatus(),
+          ),
         onPhase: (p) => {
           phase = p;
           render();
@@ -338,10 +386,11 @@ export function mountVoiceSection(host: HTMLElement): void {
     }
     phase = null;
     await refresh();
-    // The Go side switches it on when it finishes; make sure if it did not.
-    if (!cancelled && !error && wake && !wake.enabled && wake.state !== "absent") {
+    // Go switches it on when the download finishes; if the files are in but it stayed off, switch it on.
+    if (!cancelled && !error && wake?.state === "off" && !wake.enabled) {
       await turnOn();
     }
+    if (statusLine(wake)?.error) setError(""); // the status line already shows it
     wakeOn.focus();
   }
 
@@ -371,8 +420,9 @@ export function mountVoiceSection(host: HTMLElement): void {
     })();
   });
   retry.addEventListener("click", () => {
+    if (busy) return;
     void (async () => {
-      await turnOff();
+      if (wake?.state !== "absent") await turnOff(); // a failed download goes straight to consent
       await turnOn();
     })();
   });

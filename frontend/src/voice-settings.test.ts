@@ -8,6 +8,9 @@ const h = vi.hoisted(() => {
     voice: undefined as unknown as VoiceStatus,
     setWake: [] as boolean[],
     notInstalled: true,
+    listeners: new Map<string, Set<(d: unknown) => void>>(),
+    installWake: (async () => {}) as () => Promise<void>,
+    cancelWake: (async () => {}) as () => Promise<void>,
   };
 });
 vi.mock("./api", () => ({
@@ -21,17 +24,21 @@ vi.mock("./api", () => ({
       },
       setWakeChime: async () => {},
       install: async () => {},
-      installWake: async () => {},
+      installWake: () => h.installWake(),
       cancelInstall: async () => {},
-      cancelWakeInstall: async () => {},
+      cancelWakeInstall: () => h.cancelWake(),
     },
   },
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   events: { voiceStatus: "voice:status", wakeStatus: "voice:wake-status" },
-  on: () => () => {},
+  on: (name: string, fn: (d: unknown) => void) => {
+    if (!h.listeners.has(name)) h.listeners.set(name, new Set());
+    h.listeners.get(name)!.add(fn);
+    return () => h.listeners.get(name)!.delete(fn);
+  },
 }));
 
-import { consentBytes, consentText, mountVoiceSection, isNotInstalled, megabytes, runInstall, statusLine, watchDictation } from "./voice-settings";
+import { consentBytes, consentText, mountVoiceSection, watchWake, isNotInstalled, megabytes, runInstall, statusLine, watchDictation } from "./voice-settings";
 
 const wake = (o: Partial<WakeStatus> = {}): WakeStatus => ({
   state: "off", enabled: false, chime: true, phase: "", done: 0, total: 0, download: 8_300_000, error: "", hint: "", ...o,
@@ -72,6 +79,7 @@ describe("runInstall", () => {
       installDictation: async () => void order.push("dictation"),
       watchDictation: () => ({ done: Promise.resolve(), recheck: async () => {}, stop: () => void order.push("stop") }),
       installWake: async () => void order.push("wake"),
+      watchWake: () => ({ done: Promise.resolve(), recheck: async () => {}, stop: () => {} }),
       onPhase: (p: string) => void order.push(`phase:${p}`),
       cancelled: () => false,
       ...over,
@@ -163,5 +171,102 @@ describe("Voice section", () => {
     await tick();
     expect(host.querySelector<HTMLInputElement>("#wake-on")!.disabled).toBe(true);
     expect(host.querySelector<HTMLElement>("#wake-hint")!.textContent).toBe("Install the VC++ runtime.");
+  });
+});
+
+describe("Wake download (installWake returns at once, progress arrives as events)", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const emit = async (w: WakeStatus) => {
+    h.wake = w;
+    h.listeners.get("voice:wake-status")?.forEach((f) => f(w));
+    await tick();
+  };
+  async function startDownload() {
+    h.listeners.clear();
+    h.wake = wake({ state: "absent", download: 8_300_000 });
+    h.voice = voice();
+    h.notInstalled = true;
+    h.setWake = [];
+    h.installWake = async () => {}; // returns immediately, like Go's Install
+    document.body.innerHTML = "<section id='s'></section>";
+    const host = document.getElementById("s")!;
+    mountVoiceSection(host);
+    await tick();
+    const sw = host.querySelector<HTMLInputElement>("#wake-on")!;
+    sw.checked = true;
+    sw.dispatchEvent(new Event("change"));
+    await tick();
+    await tick();
+    const btn = (t: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(t))!;
+    btn("Download").click();
+    await tick();
+    await tick();
+    return { host, sw, btn, box: host.querySelector<HTMLElement>("#wake-consent")! };
+  }
+
+  it("keeps the progress and Cancel up until the wake word is listening, without asking for consent again", async () => {
+    const { host, sw, box } = await startDownload();
+    await emit(wake({ state: "installing", phase: "model", done: 2_000_000, total: 8_000_000, download: 8_000_000 }));
+    expect(box.hidden).toBe(false);
+    expect(host.querySelector("#wake-progress")!.getAttribute("aria-valuenow")).toBe("25");
+    expect(box.textContent).toContain("Cancel");
+    expect(box.textContent).not.toContain("one-time download");
+    expect(h.setWake).toEqual([true]); // only the first, rejected, attempt
+    h.notInstalled = false;
+    await emit(wake({ state: "listening", enabled: true }));
+    expect(box.hidden).toBe(true);
+    expect(sw.checked).toBe(true);
+    expect(host.querySelector("#wake-status-text")!.textContent).toBe('Listening for "Hey Awesome"');
+    expect(h.setWake).toEqual([true]);
+  });
+
+  it("shows the failure with Try again when the download ends absent with an error", async () => {
+    const { host, sw, box } = await startDownload();
+    await emit(wake({ state: "installing", done: 1, total: 8_000_000 }));
+    await emit(wake({ state: "absent", error: "download failed: timeout", download: 8_300_000 }));
+    expect(box.hidden).toBe(true);
+    expect(sw.checked).toBe(false);
+    expect(host.querySelector("#wake-status-text")!.textContent).toBe("download failed: timeout");
+    const retry = host.querySelector<HTMLButtonElement>("#wake-retry")!;
+    expect(retry.hidden).toBe(false);
+    retry.click();
+    await tick();
+    await tick();
+    expect(box.hidden).toBe(false); // consent again
+  });
+
+  it("Cancel calls cancelWakeInstall and ends quietly", async () => {
+    const { host, btn, box } = await startDownload();
+    await emit(wake({ state: "installing", done: 1, total: 8_000_000 }));
+    let cancelled = 0;
+    h.cancelWake = async () => void cancelled++;
+    btn("Cancel").click();
+    await tick();
+    await emit(wake({ state: "absent", error: "", download: 8_300_000 }));
+    expect(cancelled).toBe(1);
+    expect(box.hidden).toBe(true);
+    expect(host.querySelector<HTMLElement>("#wake-error")!.hidden).toBe(true);
+    expect(host.querySelector<HTMLElement>("#wake-status")!.hidden).toBe(true);
+  });
+});
+
+describe("watchWake", () => {
+  function setup(current: WakeStatus) {
+    let push: (s: WakeStatus) => void = () => {};
+    const w = watchWake((cb) => ((push = cb), () => {}), async () => current);
+    return { w, push: (s: WakeStatus) => push(s) };
+  }
+  it("ignores an absent seen before installing, resolves after installing then listening", async () => {
+    const { w, push } = setup(wake({ state: "absent" }));
+    push(wake({ state: "absent" }));
+    push(wake({ state: "installing" }));
+    push(wake({ state: "listening", enabled: true }));
+    await expect(w.done).resolves.toBeUndefined();
+  });
+  it("rejects with the error on absent after installing", async () => {
+    const { w, push } = setup(wake({ state: "absent" }));
+    push(wake({ state: "installing" }));
+    push(wake({ state: "absent", error: "boom" }));
+    await expect(w.done).rejects.toThrow("boom");
   });
 });
