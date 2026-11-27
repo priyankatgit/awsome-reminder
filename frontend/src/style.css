@@ -2648,3 +2648,100 @@ legend.field-label {
   opacity: var(--completing-opacity);
   transition: opacity var(--dur-done) var(--ease-exit) var(--done-stagger);
 }
+
+/* ---------- Capture box: review list (Phase 3) ---------- */
+
+.cap-review[hidden],
+.cap-note[hidden],
+.cap-hint-status[hidden] {
+  display: none;
+}
+
+.rv-list {
+  max-height: calc(var(--review-max-rows) * var(--review-row-height));
+  overflow-y: auto;
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.rv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--review-row-height);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  transition: background-color var(--dur-hover);
+}
+
+.rv-row:hover,
+.rv-row:focus-visible {
+  background: var(--muted);
+}
+
+.rv-num {
+  min-width: var(--space-4);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  text-align: right;
+}
+
+.rv-kind {
+  display: inline-flex;
+  color: var(--fg-muted);
+}
+
+.rv-row .rv-kind .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.rv-text {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rv-prio[data-prio="high"] { background: var(--prio-high); }
+.rv-prio[data-prio="medium"] { background: var(--prio-med); }
+.rv-prio[data-prio="low"] { background: var(--prio-low); }
+
+.rv-remove .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.rv-error {
+  flex-basis: 100%;
+  padding: 0 0 var(--space-2) calc(var(--space-4) + var(--space-2));
+  color: var(--danger-text);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+  color: var(--fg);
+}
+
+.cap-note-undo {
+  flex: none;
+}
+
+.cap-hint-status {
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}

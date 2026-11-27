@@ -105,6 +105,9 @@
   --chip-height: 20px;
   --keycap-min: 20px;
   --control-height: 32px;
+  /* Capture box review list: rows shown before it scrolls. */
+  --review-max-rows: 6;
+  --review-row-height: 32px;
 
   /* Capture box */
   --capture-input-row: 64px;

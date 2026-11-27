@@ -6,9 +6,14 @@ import { icons, type IconName } from "./icons";
 import { canAnimate, easing, pop, ring, tokenNumber } from "./motion";
 import { priorityLabel, setPriorityToken, type Priority } from "./priority";
 import { mountReplyMode } from "./reply-mode";
+import { ReviewList, saveSequential } from "./review-list";
 import { mountVoice } from "./voice";
 
 const PREVIEW_DEBOUNCE_MS = 80;
+const NOTE_MS = 5000; // the Saved/Discarded note with Undo
+const CONFIRM_MS = 3000; // the discard confirm after the first Esc
+
+const tasks = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
 /** Capture chips in Alt+digit order; Alt+0 clears. */
 const CHIPS: { p: Exclude<Priority, "">; text: string; key: string }[] = [
@@ -26,6 +31,7 @@ function toLocalInput(d: Date): string {
 const TEMPLATE = `
 <main class="capture" id="capture" aria-label="Quick capture">
   <div class="capture-content" id="capture-content">
+    <div class="cap-review" id="cap-review" hidden></div>
     <div class="cap-field">
       <span class="cap-lead" id="cap-lead" data-icon="search"></span>
       <input class="cap-input" id="cap-input" type="text" autocomplete="off" spellcheck="false"
@@ -43,6 +49,10 @@ const TEMPLATE = `
       <span class="cap-flash" id="cap-flash" aria-hidden="true"></span>
     </div>
     <p class="cap-error" id="cap-error" role="alert" hidden></p>
+    <div class="cap-note" id="cap-note" tabindex="-1" role="status" hidden>
+      <span class="cap-note-text" id="cap-note-text"></span>
+      <button class="btn btn-ghost cap-note-undo" id="cap-note-undo" type="button" aria-keyshortcuts="Control+Z"></button>
+    </div>
     <p class="sr-only" id="cap-voice-live" role="status" aria-live="polite"></p>
     <section class="cap-voice" id="cap-voice" aria-labelledby="cap-voice-title" hidden>
       <h2 class="cap-voice-title" id="cap-voice-title"></h2>
@@ -72,7 +82,8 @@ const TEMPLATE = `
     <div class="cap-preview" id="cap-preview" role="status" aria-live="polite"></div>
     <div class="cap-listen-sub">Speak naturally — “remind me tomorrow at 5 pm to call Sam”</div>
     <footer class="cap-hint" id="cap-hint">
-      <span><kbd>↵</kbd> save</span>
+      <span class="cap-hint-status" id="cap-hint-status" role="status" aria-live="polite" hidden></span>
+      <span><kbd>↵</kbd> <span id="cap-hint-save">save</span></span>
       <span><kbd>Tab</kbd> time</span>
       <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> dictate</span>
       <span><kbd>Esc</kbd> close</span>
@@ -98,6 +109,13 @@ export function mountCapture(root: HTMLElement): void {
   const dueSet = root.querySelector<HTMLButtonElement>("#cap-due-set")!;
   const previewRow = root.querySelector<HTMLElement>("#cap-preview")!;
   const prioChips = [...root.querySelectorAll<HTMLButtonElement>(".prio-chip")];
+  const reviewBox = root.querySelector<HTMLElement>("#cap-review")!;
+  const note = root.querySelector<HTMLElement>("#cap-note")!;
+  const noteText = root.querySelector<HTMLElement>("#cap-note-text")!;
+  const noteUndo = root.querySelector<HTMLButtonElement>("#cap-note-undo")!;
+  const hintStatus = root.querySelector<HTMLElement>("#cap-hint-status")!;
+  const hintSave = root.querySelector<HTMLElement>("#cap-hint-save")!;
+  noteUndo.innerHTML = `${icons.undo}<span>Undo</span>`;
 
   // The preview row keeps the reminder badge and its announcement across
   // renders so they can animate in and out; only the rest is rebuilt.
@@ -138,6 +156,17 @@ export function mountCapture(root: HTMLElement): void {
   let remindTimer: number | undefined; // pending end of the fade-out
 
   let fly: Animation | null = null; // the saved line flying to the tray
+
+  // Review list (Phase 3): tasks dictated one after another wait here until
+  // Enter or a spoken "save all". Not used in reply mode.
+  const list = new ReviewList(reviewBox, onListChange, {
+    onEdit: editRow,
+    onBack: () => input.focus(),
+  });
+  let confirmTimer: number | undefined; // the discard confirm is showing
+  let noteTimer: number | undefined; // the Saved/Discarded note is showing
+  let noteAction: (() => void | Promise<void>) | null = null;
+  let leftover = false; // the box opened with rows left from a voice session
 
   function setLead(name: IconName): void {
     leadIcon = name;
@@ -286,8 +315,12 @@ export function mountCapture(root: HTMLElement): void {
     window.clearTimeout(timer);
     if (!keepDraft) {
       input.value = "";
+      list.clear();
       reply.exit();
     }
+    clearConfirm();
+    hideNote();
+    leftover = false;
     showError("");
     closePicker(false);
     if (input.value.trim() === "") {
@@ -301,6 +334,7 @@ export function mountCapture(root: HTMLElement): void {
     flash.classList.remove("is-on");
     endFly();
     busy = false;
+    updateReview();
   }
 
   /**
@@ -378,21 +412,235 @@ export function mountCapture(root: HTMLElement): void {
     box.classList.add("is-entering");
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    leftover = !reply.active && list.items().length > 0;
+    updateReview();
     if (input.value.trim() !== "") void runPreview();
   }
 
-  async function save(): Promise<void> {
-    if (busy || input.value.trim() === "") return;
-    busy = true;
+  // ---- review list ----
+
+  /** How many tasks Enter would save: the rows plus a non-empty input. */
+  function pending(): number {
+    return list.items().length + (input.value.trim() !== "" ? 1 : 0);
+  }
+
+  /** Shows or hides the list, and keeps the hint row in step with it. */
+  function updateReview(): void {
+    const rows = reply.active ? 0 : list.items().length;
+    reviewBox.hidden = rows === 0;
+    if (rows === 0) leftover = false;
+    const n = reply.active ? 0 : pending();
+    hintSave.textContent = n > 1 ? `save ${n}` : "save";
+    if (confirmTimer !== undefined && rows > 0) {
+      hintStatus.textContent = `Discard ${tasks(n)}? Esc again to discard · ↵ to save`;
+      hintStatus.hidden = false;
+    } else if (leftover && rows > 0) {
+      hintStatus.textContent = `${rows} unsaved ${rows === 1 ? "task" : "tasks"} from voice`;
+      hintStatus.hidden = false;
+    } else {
+      hintStatus.hidden = true;
+      hintStatus.textContent = "";
+    }
+  }
+
+  function onListChange(): void {
+    if (list.items().length === 0) clearConfirm();
+    updateReview();
+    reviewBox.scrollTop = reviewBox.scrollHeight;
+  }
+
+  function clearConfirm(): void {
+    window.clearTimeout(confirmTimer);
+    confirmTimer = undefined;
+  }
+
+  /** First Esc with rows: ask; a second within CONFIRM_MS discards. */
+  function askDiscard(): void {
+    confirmTimer = window.setTimeout(() => {
+      confirmTimer = undefined;
+      updateReview();
+    }, CONFIRM_MS);
+    updateReview();
+  }
+
+  /** Row edit: its text goes into the input; the typed text takes its place. */
+  function editRow(i: number): void {
+    const typed = input.value;
+    const text = list.takeAt(i);
+    if (typed.trim() !== "") {
+      const items = list.items();
+      items.splice(i, 0, typed);
+      list.restore(items);
+    }
+    input.value = text;
     showError("");
-    try {
-      await (reply.active ? api.captureReply(input.value, reply.meta()) : api.capture(input.value));
-    } catch (err) {
-      busy = false;
-      const msg = errorText(err);
-      showError(msg.includes("empty input") ? "Add some text to save" : msg);
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+    updateReview();
+    void runPreview();
+  }
+
+  /** A short status line with an Undo button for NOTE_MS (Ctrl+Z when focused). */
+  function showNote(text: string, undo: () => void | Promise<void>): void {
+    window.clearTimeout(noteTimer);
+    noteAction = undo;
+    noteText.textContent = text;
+    note.hidden = false;
+    noteTimer = window.setTimeout(() => {
+      hideNote();
+      // A spoken save/discard left the box open for the note; close it now
+      // unless something new is going on.
+      if (!busy && pending() === 0 && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
+    }, NOTE_MS);
+  }
+
+  function hideNote(): void {
+    window.clearTimeout(noteTimer);
+    noteTimer = undefined;
+    noteAction = null;
+    note.hidden = true;
+    noteText.textContent = "";
+  }
+
+  async function runUndo(): Promise<void> {
+    const act = noteAction;
+    if (!act) return;
+    hideNote();
+    window.clearTimeout(hideTimer);
+    await act();
+    input.focus();
+  }
+
+  noteUndo.addEventListener("click", () => void runUndo());
+  note.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      void runUndo();
+    }
+  });
+
+  /** Voice: a finished task joins the review list. */
+  function addTask(text: string): void {
+    if (reply.active || text.trim() === "") return;
+    showError("");
+    list.add(text);
+  }
+
+  /** Voice: "scratch that" clears the input, or drops the last row when it is empty. */
+  function scratch(): void {
+    if (input.value.trim() !== "") {
+      input.value = "";
+      showError("");
+      void runPreview();
+      updateReview();
+    } else {
+      list.popLast();
+    }
+  }
+
+  /** Voice "cancel" (spoken) or a confirmed Esc: drops the rows and the input. */
+  function cancelAll(spoken: boolean): void {
+    if (busy || reply.active) return;
+    const rows = list.items();
+    const typed = input.value;
+    const n = pending();
+    if (n === 0) return;
+    clearConfirm();
+    list.clear();
+    input.value = "";
+    showError("");
+    void runPreview();
+    updateReview();
+    if (!spoken) {
+      hide();
       return;
     }
+    showNote(`Discarded ${tasks(n)}`, () => {
+      list.restore([...rows, ...list.items()]);
+      if (input.value.trim() === "") input.value = typed;
+      updateReview();
+      void runPreview();
+    });
+  }
+
+  /** Voice "save all" (spoken: Undo note, box stays) or Enter (flash and hide). */
+  async function saveAll(spoken: boolean): Promise<void> {
+    await save(spoken);
+  }
+
+  async function save(spoken = false): Promise<void> {
+    if (busy) return;
+    if (reply.active) {
+      if (input.value.trim() === "") return;
+      busy = true;
+      showError("");
+      try {
+        await api.captureReply(input.value, reply.meta());
+      } catch (err) {
+        busy = false;
+        const msg = errorText(err);
+        showError(msg.includes("empty input") ? "Add some text to save" : msg);
+        return;
+      }
+      finishSave();
+      return;
+    }
+    const rows = list.items();
+    const typed = input.value.trim() !== "";
+    if (rows.length === 0 && !typed) return;
+    busy = true;
+    showError("");
+    clearConfirm();
+    const texts = typed ? [...rows, input.value] : rows;
+    const r = await saveSequential(texts, (t) => api.capture(t));
+    if (r.failedAt !== null) {
+      busy = false;
+      // Saved rows leave the list; the failing row (or the input) shows why.
+      const done = Math.min(r.saved.length, rows.length);
+      list.restore(rows.slice(done));
+      if (r.failedAt < rows.length) {
+        list.setError(r.failedAt - done, r.error);
+      } else {
+        showError(r.error.includes("empty input") ? "Add some text to save" : r.error);
+      }
+      if (r.saved.length > 0) {
+        const ids = r.saved.map((it) => it.id);
+        const savedTexts = texts.slice(0, r.saved.length);
+        showNote(`Saved ${tasks(r.saved.length)}`, () => undoSaved(ids, savedTexts));
+      }
+      updateReview();
+      return;
+    }
+    list.clear();
+    if (spoken) {
+      // Keep the box open for the Undo note; it hides when the note ends.
+      busy = false;
+      const ids = r.saved.map((it) => it.id);
+      input.value = "";
+      flash.classList.add("is-on");
+      window.setTimeout(() => flash.classList.remove("is-on"), motionMs("--dur-flash"));
+      void runPreview();
+      updateReview();
+      showNote(`Saved ${tasks(ids.length)}`, () => undoSaved(ids, texts));
+      return;
+    }
+    finishSave();
+  }
+
+  /** Undo of a save: delete what was saved, put the texts back in the list. */
+  async function undoSaved(ids: string[], texts: string[]): Promise<void> {
+    try {
+      for (const id of ids) await api.deleteItem(id);
+    } catch (err) {
+      showError(errorText(err));
+    }
+    list.restore([...texts, ...list.items()]);
+    endDraft = false;
+    updateReview();
+  }
+
+  /** Enter's save: flash, fly the typed line away, hide. */
+  function finishSave(): void {
     endDraft = true;
     flash.classList.add("is-on");
     window.clearTimeout(hideTimer);
@@ -441,6 +689,7 @@ export function mountCapture(root: HTMLElement): void {
 
   input.addEventListener("input", () => {
     showError("");
+    updateReview();
     schedulePreview();
   });
 
@@ -452,6 +701,9 @@ export function mountCapture(root: HTMLElement): void {
     } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       void openPicker();
+    } else if (e.key === "ArrowUp" && !reply.active && list.items().length > 0) {
+      e.preventDefault();
+      list.focusLast();
     }
   });
 
@@ -483,6 +735,9 @@ export function mountCapture(root: HTMLElement): void {
     }
   });
   dueSet.addEventListener("click", () => void confirmPicker());
+
+  // The voice wiring (Task 9) hands these to mountVoice's host.
+  void [addTask, saveAll, cancelAll, scratch, showNote];
 
   const voice = mountVoice(root, {
     box,
@@ -524,7 +779,12 @@ export function mountCapture(root: HTMLElement): void {
     e.preventDefault();
     if (voice.escape()) return;
     if (!picker.hidden) closePicker(true);
-    else if (!busy) hide();
+    else if (busy) return;
+    else if (!reply.active && list.items().length > 0) {
+      // Rows would be lost: confirm first.
+      if (confirmTimer !== undefined) cancelAll(false);
+      else askDiscard();
+    } else hide();
   });
 
   // Go hides the window when it loses focus. Keep the draft text so a
