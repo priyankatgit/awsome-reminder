@@ -520,7 +520,7 @@ func TestReplyPrefillFromGrab(t *testing.T) {
 	keys := []grab.Key{grab.KeyControl, grab.KeyAlt, 0x52}
 	o.Press(keys)
 	want := ReplyPrefill{
-		Line:    "Reply to Priya Sharma: deploy?",
+		Line:    `Reply to Priya Sharma: "deploy?"`,
 		OwedTo:  "Priya Sharma",
 		Source:  "Teams",
 		Quote:   "deploy?",
@@ -531,6 +531,15 @@ func TestReplyPrefillFromGrab(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, [][]grab.Key{keys}) {
 		t.Fatalf("grab called with %v, want the hotkey's keys once", calls)
+	}
+}
+
+// A select-all in a huge document reaches the capture box capped.
+func TestReplyPrefillCapsQuote(t *testing.T) {
+	big := strings.Repeat("z", reply.MaxQuoteBytes*2)
+	p := replyPrefill(grab.Result{Text: big, Process: "WINWORD.EXE", Grabbed: true}, false)
+	if want := strings.Repeat("z", reply.MaxQuoteBytes) + "…"; p.Quote != want {
+		t.Fatalf("quote is %d bytes, want %d", len(p.Quote), len(want))
 	}
 }
 
@@ -549,7 +558,7 @@ func TestReplyPrefillNeedsAccess(t *testing.T) {
 	o.Start(context.Background())
 	o.Press(nil)
 	got := w.got()
-	if len(got) != 1 || !got[0].NeedsAccess || got[0].Grabbed || got[0].Source != "Slack" || got[0].Line != "Reply: clipboard text" {
+	if len(got) != 1 || !got[0].NeedsAccess || got[0].Grabbed || got[0].Source != "Slack" || got[0].Line != `Reply: "clipboard text"` {
 		t.Fatalf("shown %+v", got)
 	}
 }
@@ -608,7 +617,7 @@ func TestReplyPressWithCaptureOpenKeepsText(t *testing.T) {
 	w.mode = captureHidden
 	w.mu.Unlock()
 	o.Press(nil)
-	if got := w.got(); len(calls) != 1 || len(got) != 2 || got[1].KeepText || got[1].Line != "Reply to Priya Sharma: deploy?" {
+	if got := w.got(); len(calls) != 1 || len(got) != 2 || got[1].KeepText || got[1].Line != `Reply to Priya Sharma: "deploy?"` {
 		t.Fatalf("hidden box: grabs %d shown %+v", len(calls), got)
 	}
 }

@@ -776,6 +776,100 @@ func TestCaptureReply(t *testing.T) {
 	}
 }
 
+// The suggested line quotes the other person's message, so its time, #tag,
+// !priority and repeat are not settings of the reply.
+func TestCaptureReplyQuotedLineIsLiteral(t *testing.T) {
+	e := newEnv(t)
+	m := reply.Meta{OwedTo: "Priya", Source: "Teams", Quote: `can you join the call tomorrow at 3? see #482 !high every monday, "asap"`}
+	it, err := e.c.CaptureReply(reply.Line(m), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.DueAt != nil || it.RRule != "" || it.Priority != "" || it.Kind != model.KindTodo {
+		t.Fatalf("quoted message parsed as settings: due %v rrule %q priority %q kind %q", it.DueAt, it.RRule, it.Priority, it.Kind)
+	}
+	if !reflect.DeepEqual(it.Tags, []string{"inbox"}) {
+		t.Fatalf("tags %v, want [inbox]", it.Tags)
+	}
+	if want := "Reply to Priya: can you join the call tomorrow at 3? see #482 !high every monday, ”asap”"; it.Text != want {
+		t.Fatalf("text %q, want %q", it.Text, want)
+	}
+	// What the user types around the quote still counts.
+	it, err = e.c.CaptureReply(reply.Line(m)+" by 5pm #ops", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.DueAt == nil || !reflect.DeepEqual(it.Tags, []string{"ops"}) {
+		t.Fatalf("typed settings lost: due %v tags %v", it.DueAt, it.Tags)
+	}
+}
+
+// A huge selection is capped before it becomes the description.
+func TestCaptureReplyCapsQuote(t *testing.T) {
+	e := newEnv(t)
+	big := strings.Repeat("y", reply.MaxQuoteBytes+500)
+	it, err := e.c.CaptureReply("Reply to Sam", reply.Meta{OwedTo: "Sam", Quote: big})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := reply.QuoteMarkdown(strings.Repeat("y", reply.MaxQuoteBytes) + "…"); it.Description != want {
+		t.Fatalf("description is %d bytes, want %d", len(it.Description), len(want))
+	}
+}
+
+// "No reply needed" on an item another device deleted (or closed) must not
+// bring it back as done.
+func TestDropReplyNeedsOpenReply(t *testing.T) {
+	e := newEnv(t)
+	gone := mustReply(t, e, "answer Priya", "Priya")
+	if err := e.c.Delete(gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.DropReply(gone.ID); !errors.Is(err, ErrReplyClosed) {
+		t.Fatalf("drop deleted reply: want ErrReplyClosed, got %v", err)
+	}
+	if got, _ := e.st.Get(gone.ID); got.Status != model.StatusDeleted || got.ReplyOutcome != "" {
+		t.Fatalf("deleted reply changed: %+v", got)
+	}
+	replied := mustReply(t, e, "answer Sam", "Sam")
+	if _, err := e.c.Done(replied.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.DropReply(replied.ID); !errors.Is(err, ErrReplyClosed) {
+		t.Fatalf("drop replied reply: want ErrReplyClosed, got %v", err)
+	}
+	if got, _ := e.st.Get(replied.ID); got.ReplyOutcome != model.ReplyReplied {
+		t.Fatalf("replied reply outcome %q", got.ReplyOutcome)
+	}
+}
+
+// The panel's For field on an item another device deleted must not edit it.
+func TestSetOwedToNeedsLiveReply(t *testing.T) {
+	e := newEnv(t)
+	gone := mustReply(t, e, "answer Priya", "Priya")
+	if err := e.c.Delete(gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.SetOwedTo(gone.ID, "Sam"); !errors.Is(err, ErrDeleted) {
+		t.Fatalf("SetOwedTo on a deleted reply: want ErrDeleted, got %v", err)
+	}
+	if got, _ := e.st.Get(gone.ID); got.OwedTo != "Priya" || got.Status != model.StatusDeleted {
+		t.Fatalf("deleted reply changed: %+v", got)
+	}
+	todo := mustCapture(t, e, "plain")
+	if _, err := e.c.SetOwedTo(todo.ID, "Sam"); !errors.Is(err, ErrNotReply) {
+		t.Fatalf("SetOwedTo on a to-do: want ErrNotReply, got %v", err)
+	}
+	// A closed reply can still be renamed (the panel shows For on it).
+	done := mustReply(t, e, "answer Ops", "Ops")
+	if _, err := e.c.Done(done.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.c.SetOwedTo(done.ID, "Ops channel"); err != nil || got.OwedTo != "Ops channel" {
+		t.Fatalf("SetOwedTo on a closed reply: %+v %v", got, err)
+	}
+}
+
 func TestReplyWithoutPersonStaysReply(t *testing.T) {
 	e := newEnv(t)
 	it := mustReply(t, e, "answer the thing", "")

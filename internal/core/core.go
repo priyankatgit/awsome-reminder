@@ -148,14 +148,14 @@ func (c *Core) Capture(input string) (model.Item, error) {
 
 // CaptureReply is Capture for a reply the user owes: the input is parsed the
 // same way, then the reply fields are set from m. A non-empty quote becomes
-// the description as a markdown block quote.
+// the description as a markdown block quote, capped by reply.CapQuote.
 func (c *Core) CaptureReply(input string, m reply.Meta) (model.Item, error) {
 	return c.capture(input, func(it *model.Item) {
 		it.Reply = true
 		it.OwedTo = strings.TrimSpace(m.OwedTo)
 		it.Source = strings.TrimSpace(m.Source)
 		if strings.TrimSpace(m.Quote) != "" {
-			it.Description = reply.QuoteMarkdown(m.Quote)
+			it.Description = reply.QuoteMarkdown(reply.CapQuote(m.Quote))
 		}
 	})
 }

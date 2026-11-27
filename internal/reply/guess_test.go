@@ -3,6 +3,7 @@ package reply
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestGuess(t *testing.T) {
@@ -47,6 +48,7 @@ func TestSourceName(t *testing.T) {
 		"firefox.exe": "Firefox", "thunderbird.exe": "Thunderbird",
 		"Microsoft Outlook": "Outlook", "Microsoft Teams": "Teams", "Slack": "Slack",
 		"Mail": "Mail", "Safari": "Safari", "notepad.exe": "notepad", "code": "code",
+		"olk.exe": "Outlook", "OLK.EXE": "Outlook",
 	}
 	for in, want := range cases {
 		if got := SourceName(in); got != want {
@@ -62,13 +64,14 @@ func TestLine(t *testing.T) {
 		m    Meta
 		want string
 	}{
-		{"person and quote", Meta{OwedTo: "Priya", Quote: "can you check"}, "Reply to Priya: can you check"},
-		{"no person", Meta{Quote: "can you check"}, "Reply: can you check"},
+		{"person and quote", Meta{OwedTo: "Priya", Quote: "can you check"}, `Reply to Priya: "can you check"`},
+		{"no person", Meta{Quote: "can you check"}, `Reply: "can you check"`},
 		{"no quote", Meta{OwedTo: "Priya"}, "Reply to Priya"},
-		{"long quote cut", Meta{OwedTo: "P", Quote: long}, "Reply to P: " + strings.Repeat("a", 200) + "…"},
-		{"exactly 200 not cut", Meta{Quote: strings.Repeat("b", 200)}, "Reply: " + strings.Repeat("b", 200)},
-		{"runes not bytes", Meta{Quote: strings.Repeat("é", 201)}, "Reply: " + strings.Repeat("é", 200) + "…"},
-		{"newlines become spaces", Meta{OwedTo: "P", Quote: "a\n\n  b\r\nc"}, "Reply to P: a b c"},
+		{"long quote cut", Meta{OwedTo: "P", Quote: long}, `Reply to P: "` + strings.Repeat("a", 200) + `…"`},
+		{"exactly 200 not cut", Meta{Quote: strings.Repeat("b", 200)}, `Reply: "` + strings.Repeat("b", 200) + `"`},
+		{"runes not bytes", Meta{Quote: strings.Repeat("é", 201)}, `Reply: "` + strings.Repeat("é", 200) + `…"`},
+		{"newlines become spaces", Meta{OwedTo: "P", Quote: "a\n\n  b\r\nc"}, `Reply to P: "a b c"`},
+		{"inner quotes become closing curly quotes", Meta{OwedTo: "P", Quote: `say "yes" or "no"`}, `Reply to P: "say ”yes” or ”no”"`},
 		{"nothing", Meta{}, "Reply"},
 	}
 	for _, c := range cases {
@@ -86,5 +89,32 @@ func TestQuoteMarkdown(t *testing.T) {
 	}
 	if got, want := QuoteMarkdown("a\r\n\r\nb"), "> a\n> \n> b"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestGuessCapsQuote(t *testing.T) {
+	big := strings.Repeat("x", MaxQuoteBytes+10)
+	got := Guess(big, "", "").Quote
+	if want := strings.Repeat("x", MaxQuoteBytes) + "…"; got != want {
+		t.Errorf("Guess quote: len %d, want %d (cut + …)", len(got), len(want))
+	}
+}
+
+func TestCapQuote(t *testing.T) {
+	if got := CapQuote("short"); got != "short" {
+		t.Errorf("CapQuote(short) = %q", got)
+	}
+	exact := strings.Repeat("a", MaxQuoteBytes)
+	if got := CapQuote(exact); got != exact {
+		t.Errorf("CapQuote at the limit changed the text (len %d)", len(got))
+	}
+	// A 2-byte rune straddling the limit is dropped whole, never split.
+	straddle := strings.Repeat("a", MaxQuoteBytes-1) + "é" + "tail"
+	got := CapQuote(straddle)
+	if want := strings.Repeat("a", MaxQuoteBytes-1) + "…"; got != want {
+		t.Errorf("CapQuote(straddle): len %d, want %d", len(got), len(want))
+	}
+	if !utf8.ValidString(got) {
+		t.Error("CapQuote split a rune")
 	}
 }

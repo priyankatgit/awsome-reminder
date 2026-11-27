@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Meta is what we could infer about a message someone is waiting on.
@@ -17,6 +18,12 @@ type Meta struct {
 }
 
 const quoteRunes = 200
+
+// MaxQuoteBytes caps a quote kept as a reply's description: 64 KiB of UTF-8
+// (65,536 bytes), cut on a rune boundary, then "…". A select-all in a huge
+// document would otherwise go into the store, the editor and the sync
+// document (Atlas refuses documents over 16 MB).
+const MaxQuoteBytes = 64 << 10
 
 var (
 	fromLineRe = regexp.MustCompile(`^From:\s*([^<]+?)\s*(?:<[^>]*>)?$`)
@@ -40,6 +47,7 @@ var sourceNames = map[string]string{
 	"msedge.exe":        "Edge",
 	"firefox.exe":       "Firefox",
 	"thunderbird.exe":   "Thunderbird",
+	"olk.exe":           "Outlook", // the new Outlook (the Windows 11 default)
 	"microsoft outlook": "Outlook",
 	"microsoft teams":   "Teams",
 	"slack":             "Slack",
@@ -48,9 +56,10 @@ var sourceNames = map[string]string{
 }
 
 // Guess infers who the message is from and which app it came from.
-// A person found in the text wins over one found in the window title.
+// A person found in the text wins over one found in the window title. The
+// quote is the trimmed text, capped by CapQuote.
 func Guess(text, process, title string) Meta {
-	quote := strings.TrimSpace(text)
+	quote := CapQuote(strings.TrimSpace(text))
 	owed := personFromText(quote)
 	if owed == "" {
 		owed = personFromTitle(title)
@@ -107,11 +116,31 @@ func SourceName(process string) string {
 	return strings.TrimSuffix(process, filepath.Ext(process))
 }
 
-// Line builds the one-line task title for a reply owed.
+// CapQuote cuts text longer than MaxQuoteBytes bytes to the last whole rune
+// within the limit and appends "…"; shorter text is returned as is.
+func CapQuote(text string) string {
+	if len(text) <= MaxQuoteBytes {
+		return text
+	}
+	cut := MaxQuoteBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "…"
+}
+
+// Line builds the one-line task title for a reply owed. The quote goes in
+// double quotes, which the parser keeps as literal text, so a time, #tag,
+// !priority or repeat in the other person's message never becomes a setting
+// of the task (and the parser drops the quote marks from the saved text).
+// A " inside the quote becomes ” so it cannot end the quoted segment early.
 func Line(m Meta) string {
 	quote := spaceRe.ReplaceAllString(strings.TrimSpace(m.Quote), " ")
 	if r := []rune(quote); len(r) > quoteRunes {
 		quote = string(r[:quoteRunes]) + "…"
+	}
+	if quote != "" {
+		quote = `"` + strings.ReplaceAll(quote, `"`, "”") + `"`
 	}
 	switch {
 	case m.OwedTo != "" && quote != "":
