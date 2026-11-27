@@ -625,3 +625,30 @@ func TestRecurringUndoneKeepsLeadAlerts(t *testing.T) {
 		t.Fatalf("repeat: %+v", fire)
 	}
 }
+
+// Done on the alert for today's occurrence of a daily item left un-done since
+// yesterday (its lead alert fires before AdvanceRecurring moves it) completes
+// today's occurrence too; plain Done completes only the overdue one.
+func TestDoneThroughOccurrence(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "every day at 9am vitamins") // due Thu 26 Nov 09:00
+	e.now = time.Date(2026, 11, 27, 8, 30, 0, 0, ny)     // today's 09:00 not reached
+	today := utc(2026, 11, 27, 14, 0)
+
+	got, err := e.c.DoneThrough(it.ID, today)
+	if err != nil || !got.DueAt.Equal(utc(2026, 11, 28, 14, 0)) || got.DoneAt == nil || got.Status != model.StatusOpen {
+		t.Fatalf("done through today: %+v %v", got, err)
+	}
+
+	other := mustCapture(t, e, "every day at 9am stretch") // due Fri 27 Nov 09:00 (captured at 08:30)
+	if _, err := e.c.DoneThrough(other.ID, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := e.st.Get(other.ID); !o.DueAt.Equal(utc(2026, 11, 28, 14, 0)) {
+		t.Fatalf("zero through: due %v", o.DueAt)
+	}
+	one := mustCapture(t, e, "tomorrow 5pm deploy")
+	if d, err := e.c.DoneThrough(one.ID, today); err != nil || d.Status != model.StatusDone {
+		t.Fatalf("one-off: %+v %v", d, err)
+	}
+}

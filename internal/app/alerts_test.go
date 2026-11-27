@@ -26,8 +26,12 @@ func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule
 	}
 }
 
+// alertDue is the DueAt of every alert(): one occurrence per item, since a
+// card for a later occurrence replaces an item's earlier ones.
+var alertDue = time.Now().Add(10 * time.Minute).Truncate(time.Minute)
+
 func alert(id, key string) scheduler.Alert {
-	return scheduler.Alert{Key: key, ItemID: id, Text: "text " + id, DueAt: time.Now().Add(10 * time.Minute), Lead: 10 * time.Minute}
+	return scheduler.Alert{Key: key, ItemID: id, Text: "text " + id, DueAt: alertDue, Lead: 10 * time.Minute}
 }
 
 func keys(cards []AlertCard) []string {
@@ -334,5 +338,24 @@ func TestLaterOccurrenceCardReplacesOlder(t *testing.T) {
 	want := []string{occurrenceAlert("A", today, time.Hour).Key, occurrenceAlert("A", today, 10*time.Minute).Key}
 	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("queue %v, want %v", got, want)
+	}
+}
+
+// Done pressed on a card for an occurrence after the item's DueAt (a
+// look-ahead lead alert) completes that occurrence, so its at-time alert
+// does not fire afterwards.
+func TestDoneFromLaterOccurrenceCard(t *testing.T) {
+	h := newHarness(t)
+	today := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Minute)
+	putDaily(t, h, "A", today.Add(-24*time.Hour)) // yesterday's occurrence, un-done
+	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today, time.Hour)})
+	if err := h.svc.Done("A"); err != nil {
+		t.Fatal(err)
+	}
+	if it, _ := h.st.Get("A"); !it.DueAt.Equal(today.Add(24 * time.Hour)) {
+		t.Fatalf("due %v, want tomorrow %v", it.DueAt, today.Add(24*time.Hour))
+	}
+	if n := len(h.svc.PendingAlerts()); n != 0 {
+		t.Fatalf("%d cards left", n)
 	}
 }

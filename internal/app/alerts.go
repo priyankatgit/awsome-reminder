@@ -126,6 +126,20 @@ func (s *Service) advanceRecurring(now time.Time) (time.Time, error) {
 	return wake, err
 }
 
+// latestCardDue is the latest occurrence an item has a card for (zero if
+// none).
+func (s *Service) latestCardDue(id string) time.Time {
+	s.alerts.mu.Lock()
+	defer s.alerts.mu.Unlock()
+	var due time.Time
+	for _, c := range s.alerts.cards {
+		if c.ItemID == id && c.DueAt.After(due) {
+			due = c.DueAt
+		}
+	}
+	return due
+}
+
 // alertsClosed forgets the queue when the alert window was closed by the
 // user (e.g. Alt+F4); the window is already going away.
 func (s *Service) alertsClosed() {

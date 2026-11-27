@@ -241,11 +241,24 @@ func (c *Core) Update(id, input string) (model.Item, error) {
 // Done completes an item. A recurring item instead advances DueAt to its next
 // occurrence after now and stays open.
 func (c *Core) Done(id string) (model.Item, error) {
+	return c.DoneThrough(id, time.Time{})
+}
+
+// DoneThrough is Done for an alert about the occurrence due at through: a
+// recurring item advances to its first occurrence after through as well,
+// even when through is after DueAt. The scheduler alerts ahead for the next
+// occurrence of an item left un-done, so Done on that alert completes it
+// rather than the overdue one. A zero through is plain Done.
+func (c *Core) DoneThrough(id string, through time.Time) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, now time.Time) error {
 		done := now
 		it.DoneAt, it.SnoozeUntil = &done, nil
 		if it.RRule != "" && it.DueAt != nil {
-			next, err := recur.Next(it.RRule, *it.DueAt, now, c.itemLoc(*it))
+			after := now
+			if through.After(after) {
+				after = through
+			}
+			next, err := recur.Next(it.RRule, *it.DueAt, after, c.itemLoc(*it))
 			if err != nil {
 				return err
 			}
