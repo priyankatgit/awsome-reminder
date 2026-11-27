@@ -75,6 +75,8 @@ func sharedSet(d cloudsync.SharedDoc) bson.D {
 	return bson.D{
 		{Key: "lead_times", Value: leadsMs(d.Shared.LeadTimes)}, {Key: "default_time", Value: d.Shared.DefaultTime},
 		{Key: "next_week_day", Value: d.Shared.NextWeekDay}, {Key: "next_week_time", Value: d.Shared.NextWeekTime},
+		{Key: "work_days", Value: d.Shared.WorkDays}, {Key: "end_of_day", Value: d.Shared.EndOfDay},
+		{Key: "end_of_day_sweep", Value: d.Shared.EndOfDaySweep},
 		{Key: "updated_at", Value: dt(d.UpdatedAt)}, {Key: "updated_by", Value: d.UpdatedBy},
 	}
 }
@@ -128,8 +130,10 @@ func rID(r bson.Raw) string {
 	return v.String()
 }
 
-func rTags(r bson.Raw) []string {
-	arr, ok := r.Lookup("tags").ArrayOK()
+func rTags(r bson.Raw) []string { return rStrArr(r, "tags") }
+
+func rStrArr(r bson.Raw, k string) []string {
+	arr, ok := r.Lookup(k).ArrayOK()
 	if !ok {
 		return nil
 	}
@@ -196,6 +200,7 @@ func decodeShared(r bson.Raw) *cloudsync.SharedDoc {
 		Shared: settings.Shared{
 			LeadTimes: rLeads(r), DefaultTime: rStr(r, "default_time"),
 			NextWeekDay: rStr(r, "next_week_day"), NextWeekTime: rStr(r, "next_week_time"),
+			WorkDays: rStrArr(r, "work_days"), EndOfDay: rStr(r, "end_of_day"), EndOfDaySweep: rBool(r, "end_of_day_sweep"),
 		},
 		UpdatedAt: rTimeZero(r, "updated_at"), UpdatedBy: rStr(r, "updated_by"),
 	}

@@ -9,6 +9,7 @@ import (
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -706,5 +707,30 @@ func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
 	}
 	if n := drain(); n != 1 {
 		t.Fatalf("outbox rows %d", n)
+	}
+}
+
+func TestSaveSettingsReplyScheduleIsShared(t *testing.T) {
+	e := newEnv(t)
+	s, _ := e.c.Settings()
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := e.c.Settings()
+	for name, mut := range map[string]func(*settings.Settings){
+		"eod":  func(s *settings.Settings) { s.EndOfDay = "18:15" },
+		"days": func(s *settings.Settings) { s.WorkDays = []string{"monday", "tuesday"} },
+	} {
+		s := before
+		mut(&s)
+		s.SharedUpdatedAt = time.Time{}
+		if err := e.c.SaveSettings(s); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := e.c.Settings()
+		if got.SharedUpdatedAt.Equal(before.SharedUpdatedAt) || got.SharedUpdatedBy != e.st.DeviceID() {
+			t.Fatalf("%s: not stamped %v", name, got.SharedUpdatedAt)
+		}
+		before = got
 	}
 }

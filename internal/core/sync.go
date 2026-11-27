@@ -205,6 +205,14 @@ func (c *Core) ApplyRemoteShared(p settings.Shared, at time.Time, by string) (bo
 		if !model.Newer(at, by, local.SharedUpdatedAt, local.SharedUpdatedBy) {
 			return false, nil
 		}
+		// A document written by an older device has no reply schedule: keep
+		// the local one rather than reject the whole document.
+		if p.EndOfDay == "" {
+			p.EndOfDay, p.EndOfDaySweep = local.EndOfDay, local.EndOfDaySweep
+		}
+		if len(p.WorkDays) == 0 {
+			p.WorkDays = local.WorkDays
+		}
 		next := local.WithShared(p)
 		if err := next.Validate(); err != nil {
 			log.Printf("sync: ignoring remote settings: %v", err)

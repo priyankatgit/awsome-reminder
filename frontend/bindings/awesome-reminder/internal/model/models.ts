@@ -74,6 +74,26 @@ export interface Item {
      * Markdown
      */
     "description": string;
+
+    /**
+     * a reply is owed
+     */
+    "reply": boolean;
+
+    /**
+     * who the reply is owed to
+     */
+    "owedTo": string;
+
+    /**
+     * where the message came from
+     */
+    "source": string;
+
+    /**
+     * "" while open, else ReplyReplied/ReplyDropped
+     */
+    "replyOutcome": string;
 }
 
 /**

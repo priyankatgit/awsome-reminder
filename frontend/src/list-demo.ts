@@ -311,6 +311,10 @@ function installSettingsDemo(): void {
     exportPath: "",
     autostart: true,
     showPendingCount: true,
+    replyHotkey: "Ctrl+Alt+R",
+    workDays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    endOfDay: "17:30",
+    endOfDaySweep: true,
   };
   let hotkeyErr = "";
   Object.assign(api, {

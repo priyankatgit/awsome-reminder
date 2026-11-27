@@ -123,6 +123,10 @@ interface Draft {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  replyHotkey: string;
+  workDays: string[];
+  endOfDay: string;
+  endOfDaySweep: boolean;
   // Go owns the shared-settings stamp; it is carried through untouched.
   sharedUpdatedAt?: number;
   sharedUpdatedBy?: string;
@@ -138,6 +142,10 @@ function toDraft(s: Settings): Draft {
     exportPath: s.exportPath,
     autostart: s.autostart,
     showPendingCount: s.showPendingCount,
+    replyHotkey: s.replyHotkey,
+    workDays: [...(s.workDays ?? [])],
+    endOfDay: s.endOfDay,
+    endOfDaySweep: s.endOfDaySweep,
     sharedUpdatedAt: s.sharedUpdatedAt,
     sharedUpdatedBy: s.sharedUpdatedBy,
   };
@@ -153,6 +161,10 @@ function toSettings(d: Draft): Settings {
     exportPath: d.exportPath.trim(),
     autostart: d.autostart,
     showPendingCount: d.showPendingCount,
+    replyHotkey: d.replyHotkey,
+    workDays: [...d.workDays],
+    endOfDay: d.endOfDay,
+    endOfDaySweep: d.endOfDaySweep,
     sharedUpdatedAt: d.sharedUpdatedAt,
     sharedUpdatedBy: d.sharedUpdatedBy,
   };

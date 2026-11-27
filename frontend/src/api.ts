@@ -61,6 +61,11 @@ export interface Settings {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  replyHotkey: string;
+  /** Lowercase weekday names, Monday..Sunday order. */
+  workDays: string[];
+  endOfDay: string; // "HH:MM"
+  endOfDaySweep: boolean;
   /** Stamp of the last shared-settings change (unix ms, device id). Set by Go; passed back unchanged. */
   sharedUpdatedAt?: number;
   sharedUpdatedBy?: string;

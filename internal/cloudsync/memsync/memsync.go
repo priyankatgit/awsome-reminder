@@ -254,6 +254,7 @@ func (s *Syncer) PushShared(ctx context.Context, d cloudsync.SharedDoc) error {
 	for k, v := range (doc{
 		"lead_times": leadsMs(d.Shared.LeadTimes), "default_time": d.Shared.DefaultTime,
 		"next_week_day": d.Shared.NextWeekDay, "next_week_time": d.Shared.NextWeekTime,
+		"work_days": slices.Clone(d.Shared.WorkDays), "end_of_day": d.Shared.EndOfDay, "end_of_day_sweep": d.Shared.EndOfDaySweep,
 		"updated_at": ms(d.UpdatedAt), "updated_by": d.UpdatedBy,
 	}) {
 		s.shared[k] = v
@@ -406,6 +407,7 @@ func (s *Syncer) PullShared(ctx context.Context) (*cloudsync.SharedDoc, error) {
 		Shared: settings.Shared{
 			LeadTimes: leads(d, "lead_times"), DefaultTime: str(d, "default_time"),
 			NextWeekDay: str(d, "next_week_day"), NextWeekTime: str(d, "next_week_time"),
+			WorkDays: strs(d, "work_days"), EndOfDay: str(d, "end_of_day"), EndOfDaySweep: boolean(d, "end_of_day_sweep"),
 		},
 		UpdatedAt: tm(d, "updated_at"), UpdatedBy: str(d, "updated_by"),
 	}, nil
