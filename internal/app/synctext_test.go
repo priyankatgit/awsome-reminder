@@ -1,8 +1,10 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"awesome-reminder/internal/badge"
 	"awesome-reminder/internal/cloudsync"
@@ -42,7 +44,8 @@ func TestSyncTooltip(t *testing.T) {
 		{cloudsync.Status{State: cloudsync.StateOffline, Pending: 4}, "Offline · 4 changes waiting"},
 		{cloudsync.Status{State: cloudsync.StateOffline, Pending: 1}, "Offline · 1 change waiting"},
 		{cloudsync.Status{State: cloudsync.StateOffline}, "Offline"},
-		{cloudsync.Status{State: cloudsync.StateError, Error: "authentication failed"}, "Sync error: authentication failed"},
+		{cloudsync.Status{State: cloudsync.StateError, Error: "authentication failed"}, "Sync error"},
+		{cloudsync.Status{State: cloudsync.StateError}, "Sync error"},
 	} {
 		if got := syncTooltip(tc.st, now); got != tc.want {
 			t.Errorf("syncTooltip(%+v) = %q, want %q", tc.st, got, tc.want)
@@ -66,5 +69,37 @@ func TestDotFor(t *testing.T) {
 		if got := dotFor(cloudsync.Status{State: tc.st}, tc.frame); got != tc.want {
 			t.Errorf("dotFor(%s,%v) = %d, want %d", tc.st, tc.frame, got, tc.want)
 		}
+	}
+}
+
+func TestPendingTooltipCap(t *testing.T) {
+	// Short: the usual order, untouched.
+	if got := pendingTooltip(3, "Sync error", "taken"); got != "Awesome Reminder — 3 pending — Sync error — hotkey error: taken" {
+		t.Errorf("short tooltip %q", got)
+	}
+
+	// Too long: the hotkey error comes before the sync text, and the cut
+	// ends in an ellipsis at exactly the Windows limit.
+	long := strings.Repeat("x", 60) // fits alone, not with the sync text
+	got := pendingTooltip(12, "Offline · 3 changes waiting", long)
+	if n := utf16Len(got); n > 127 {
+		t.Errorf("tooltip is %d UTF-16 units, over 127: %q", n, got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("no ellipsis: %q", got)
+	}
+	want := "Awesome Reminder — 12 pending — hotkey error: " + long
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("hotkey error not kept ahead of the sync text:\n%q", got)
+	}
+
+	// Astral characters count as two units and are never split.
+	emoji := strings.Repeat("\U0001F600", 70)
+	got = pendingTooltip(-1, "", emoji)
+	if n := utf16Len(got); n > 127 {
+		t.Errorf("emoji tooltip is %d units", n)
+	}
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "\U0001F600…") {
+		t.Errorf("emoji tooltip split a character: %q", got)
 	}
 }

@@ -33,7 +33,7 @@
   - Offline backoff 30 → 60 → 120 → 240 → 300 s (cap);
   - Error retry every 5 min;
   - "Sync now" runs immediately and resets the backoff.
-- **Mongo client:** `maxPoolSize 2`, `minPoolSize 0`, `maxConnIdleTime 90s`, `heartbeatInterval 60s`, `serverSelectionTimeout 10s`, `connectTimeout 10s`, `appName "awesome-reminder"`.
+- **Mongo client:** `maxPoolSize 2`, `minPoolSize 0`, `maxConnIdleTime 90s`, `heartbeatInterval 60s`, `serverSelectionTimeout 10s`, `connectTimeout 10s`, `timeout 30s` (client-side per-operation timeout, as shipped), `appName "awesome-reminder"`.
 - Idle RAM stays < 150 MB with sync on (Phase 1 measured 137 MB). Measure as in `docs/manual-test-checklist.md` row 6.
 - **Synced documents:**
   - **items:** `_id, kind, text, tags, due_at, tz, rrule, lead_times (ms array or null), status, done_at, snooze_until, created_at, updated_at, updated_by, priority, description, _srv`.
@@ -41,7 +41,7 @@
   - **settings:** `_id: "settings", lead_times, default_time, next_week_day, next_week_time, updated_at, updated_by, _srv`.
   - **Local only:** `unreferenced_since`, `notify_log`, `device_id`, the outbox, watermarks, the URI.
 - **Status vocabulary** (exact strings). The machine states are `off | syncing | synced | offline | error`.
-  - **Tray tooltip suffixes:** `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0), `Sync error: <reason>`; nothing when off.
+  - **Tray tooltip suffixes:** `Synced · 2 min ago`, `Syncing…`, `Offline · N changes waiting` (`1 change waiting`; just `Offline` at 0), `Sync error` (as shipped: the reason shows in the pill and Settings; the whole tooltip is capped at 127 UTF-16 units with an ellipsis); nothing when off.
   - **List pill:** `All synced · just now` / `All synced · 2 min ago`, `Synced · N waiting`, `Syncing…`, `Offline · N changes waiting`, `Sync error`.
   - **Row marker** `aria-label`: `Not synced yet`.
 - Scope warning text (exact): `This Atlas user can reach other databases on your cluster. Limit it to readWrite on awesome_reminder (see the setup guide).`

@@ -20,6 +20,20 @@ func (s *Store) PutAttachment(a model.Attachment) error {
 	})
 }
 
+// SetAttachmentUnreferenced sets only when the attachment stopped being
+// referenced (nil: it is referenced). The field is local bookkeeping that
+// never syncs, so the row is not restamped or queued.
+func (s *Store) SetAttachmentUnreferenced(id string, since *time.Time) error {
+	res, err := s.db.Exec(`UPDATE attachments SET unreferenced_since=? WHERE id=?`, toMs(since), id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func putAttachment(db execer, a model.Attachment) error {
 	del := 0
 	if a.Deleted {

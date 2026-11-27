@@ -531,12 +531,21 @@ func TestAttachmentStampsStrictlyIncrease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.c.SetDescription(it.ID, "![x](att:"+a.ID+")"); err != nil {
+	// Never referenced: swept after 7 days. Its stamp is already the sweep's
+	// millisecond (a remote edit landed then), so the tombstone must step
+	// past it.
+	e.now = e.now.Add(8 * 24 * time.Hour)
+	a, _ = e.st.GetAttachment(a.ID)
+	a.UpdatedAt = e.now.UTC()
+	if err := e.st.PutAttachment(a); err != nil {
 		t.Fatal(err)
 	}
+	if n, err := e.c.SweepAttachments(); err != nil || n != 1 {
+		t.Fatalf("sweep: %d %v", n, err)
+	}
 	got, _ := e.st.GetAttachment(a.ID)
-	if !got.UpdatedAt.After(a.UpdatedAt) {
-		t.Errorf("attachment restamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
+	if !got.Deleted || !got.UpdatedAt.After(a.UpdatedAt) {
+		t.Errorf("tombstone stamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
 	}
 }
 
