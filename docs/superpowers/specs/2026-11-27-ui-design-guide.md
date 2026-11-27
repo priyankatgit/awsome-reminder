@@ -124,7 +124,7 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - `role="status"` announces "Listening", "Transcribing", "Ready to save".
 
 ### Reply mode (Replies owed)
-- The reply hotkey (or `--reply`) opens the same box with `data-mode="reply"`: the line is pre-filled (`Reply to Priya: ...`) and the preview row starts with a `Reply owed` chip, then `for` and a person chip, then `from Teams` and the nudge plan in mono (`nudge in 2h, then 9:00`; with a due time, `alerts before 17:00, then daily 9:00`). The leading icon follows the parse as in normal capture.
+- The reply hotkey (or `--reply`) opens the same box with `data-mode="reply"`: the line is pre-filled (`Reply to Priya: ...`) and the preview row starts with a `Reply owed` chip, then `for` and a person chip, then `from Teams` and the nudge plan in mono (`nudge in 2h, then 9:00`; with a due time, `alerts before 17:00, then daily 9:00`). The leading icon is the reply arrow (it swaps in with the bell's pop); the nudge summary stands in for the reminder bell.
 - The person chip is a button (`Alt+P`): it swaps for an inline input `--person-input-width` wide with the placeholder "Someone"; Enter or blur commits, Esc puts the chip back. Preview refreshes never take focus from the input. Nobody is shown as "Someone".
 - The hint row changes to `↵ save`, `Alt+P person`, `Tab time`, `Esc cancel`. Priority chips, tokens and `Tab` time work as in normal capture.
 - On macOS without the Accessibility permission, a one-line note under the input says to allow Awesome Reminder in System Settings › Privacy & Security › Accessibility and that the clipboard is used meanwhile.

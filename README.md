@@ -206,7 +206,7 @@ Only one copy of the app runs. Starting it again with a flag asks the running co
 
 ### Linux notes
 
-On X11 the global hotkey works as on other systems. **Wayland does not allow apps to register global hotkeys**, and the XDG GlobalShortcuts portal is not supported yet. Bind `awesome-reminder --capture` to a shortcut in your desktop's keyboard settings instead; the running app opens the capture box when it is invoked.
+On X11 the global hotkey works as on other systems. **Wayland does not allow apps to register global hotkeys**, and the XDG GlobalShortcuts portal is not supported yet. Bind `awesome-reminder --capture` to a shortcut in your desktop's keyboard settings instead; the running app opens the capture box when it is invoked. Do the same with `awesome-reminder --reply` for the reply key.
 
 ## Build from source
 
