@@ -77,6 +77,9 @@ func Run(opts Options) error {
 		win  *wailsWindows
 		tray *application.SystemTray
 		svc  *Service
+		// Second-instance requests can arrive before win is assigned below;
+		// they are held until ApplicationStarted.
+		launches launchQueue
 	)
 	app := application.New(application.Options{
 		Name:        appName,
@@ -104,17 +107,17 @@ func Run(opts Options) error {
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
 				if slices.Contains(d.Args, captureFlag) {
 					log.Printf("second instance: %s", captureFlag)
-					go win.ShowCapture()
+					launches.Do(func() { win.ShowCapture() })
 					return
 				}
 				if slices.Contains(d.Args, settingsFlag) {
 					log.Printf("second instance: %s", settingsFlag)
-					go win.OpenSettings()
+					launches.Do(func() { win.OpenSettings() })
 					return
 				}
 				// --list, or a plain second launch (e.g. the Start menu entry).
 				log.Printf("second instance: open list")
-				go win.OpenList("")
+				launches.Do(func() { win.OpenList("") })
 			},
 		},
 	})
@@ -211,6 +214,7 @@ func Run(opts Options) error {
 		// Bring the export up to date with the database at startup (it may
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()
+		launches.Ready()
 		switch args := os.Args[1:]; {
 		case slices.Contains(args, captureFlag):
 			go win.ShowCapture()
