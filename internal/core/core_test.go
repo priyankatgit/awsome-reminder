@@ -420,7 +420,7 @@ func TestAdvanceRecurringDaily(t *testing.T) {
 	if !wake.Equal(utc(2026, 11, 28, 14, 0)) {
 		t.Fatalf("wake %v, want tomorrow 09:00", wake)
 	}
-	fire, _, _ := scheduler.Plan([]model.Item{got}, []time.Duration{time.Hour, 10 * time.Minute}, e.now, func(string) bool { return false })
+	fire, _, _ := scheduler.Plan([]model.Item{got}, scheduler.Rules{Leads: []time.Duration{time.Hour, 10 * time.Minute}}, e.now, func(string) bool { return false })
 	if len(fire) != 1 || fire[0].Lead != 0 || !fire[0].DueAt.Equal(*got.DueAt) || !fire[0].Missed {
 		t.Fatalf("planned %+v", fire)
 	}
@@ -595,7 +595,7 @@ func TestRecurringUndoneKeepsLeadAlerts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fire, cov, next := scheduler.Plan(open, leads, at, func(k string) bool { return notified[k] })
+		fire, cov, next := scheduler.Plan(open, scheduler.Rules{Leads: leads}, at, func(k string) bool { return notified[k] })
 		for _, k := range cov {
 			notified[k] = true
 		}

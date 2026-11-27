@@ -85,13 +85,13 @@ func (c *Core) ApplyRemoteItems(items []model.Item) ([]Applied, error) {
 
 func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 	var applied []Applied
-	var leads []time.Duration
+	var rules scheduler.Rules
 	if len(items) > 0 {
 		st, err := c.settings()
 		if err != nil {
 			return nil, err
 		}
-		leads = st.LeadTimes
+		rules = SchedulerRules(st, c.loc)
 	}
 	now := c.now()
 	never := func(string) bool { return false }
@@ -115,9 +115,10 @@ func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 		}
 		// Mark the already-old alerts of an inserted item first: if we stop
 		// between the two writes, a retry still sees no local copy and
-		// marks again, and the marks are harmless without the row.
-		if before == nil && it.Status == model.StatusOpen && it.DueAt != nil {
-			_, covered, _ := scheduler.Plan([]model.Item{it}, leads, now.Add(-staleAlertAge), never)
+		// marks again, and the marks are harmless without the row. An owed
+		// reply's old nudges are covered the same way, due time or not.
+		if before == nil && it.Status == model.StatusOpen {
+			_, covered, _ := scheduler.Plan([]model.Item{it}, rules, now.Add(-staleAlertAge), never)
 			for _, key := range covered {
 				if err := c.st.MarkNotified(key, now); err != nil {
 					return applied, err
@@ -130,6 +131,13 @@ func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 		applied = append(applied, Applied{Before: before, After: it})
 	}
 	return applied, nil
+}
+
+// SchedulerRules turns settings into the scheduler's rules, with nudge
+// times in loc.
+func SchedulerRules(s settings.Settings, loc *time.Location) scheduler.Rules {
+	return scheduler.Rules{Leads: s.LeadTimes, WorkDays: s.IsWorkDay, DefaultTime: s.DefaultTime,
+		EndOfDay: s.EndOfDay, Sweep: s.EndOfDaySweep, Loc: loc}
 }
 
 // ApplyRemoteAttachment stores a remote attachment (and its image bytes, for a

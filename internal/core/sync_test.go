@@ -124,8 +124,32 @@ func planFor(t *testing.T, e *env) ([]scheduler.Alert, time.Time) {
 		t.Fatal(err)
 	}
 	s, _ := e.c.Settings()
-	fire, _, next := scheduler.Plan(items, s.LeadTimes, e.now, func(k string) bool { n, _ := e.st.WasNotified(k); return n })
+	fire, _, next := scheduler.Plan(items, SchedulerRules(s, e.c.loc), e.now, func(k string) bool { n, _ := e.st.WasNotified(k); return n })
 	return fire, next
+}
+
+// A reply restored from another machine must not fire its old nudges (e.now
+// is Wednesday 10:00 in New York): only the ones from now on.
+func TestApplyRemoteReplySuppressesPastNudges(t *testing.T) {
+	e := newEnv(t)
+	now := e.now
+	r := remoteItem(idA, "R", now.Add(-48*time.Hour))
+	r.Reply, r.OwedTo = true, "Priya"
+	r.CreatedAt = now.Add(-72 * time.Hour) // Sunday: nudged Mon, Tue and Wed at 09:00
+	if _, err := e.c.ApplyRemoteItems([]model.Item{r}); err != nil {
+		t.Fatal(err)
+	}
+	wed9 := time.Date(2026, 11, 25, 9, 0, 0, 0, ny)
+	if ok, _ := e.st.WasNotified(idA + "|nudge|" + strconv.FormatInt(wed9.Unix(), 10)); !ok {
+		t.Fatal("Wednesday's nudge not marked")
+	}
+	fire, next := planFor(t, e)
+	if len(fire) != 0 {
+		t.Fatalf("restored reply must not fire an old nudge: %+v", fire)
+	}
+	if thu9 := time.Date(2026, 11, 26, 9, 0, 0, 0, ny); !next.Equal(thu9) {
+		t.Fatalf("next=%v, want Thursday's nudge %v", next, thu9)
+	}
 }
 
 func TestApplyRemoteNewItemSuppressesPastAlerts(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 	"awesome-reminder/internal/paths"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/secret"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -133,12 +134,13 @@ func Run(opts Options) error {
 	hotkey.SetMainThreadRunner(application.InvokeSync)
 
 	emit := func(name string, data ...any) { app.Event.Emit(name, data...) }
-	sched := scheduler.New(st, func() []time.Duration {
+	sched := scheduler.New(st, func() scheduler.Rules {
 		s, err := c.Settings()
 		if err != nil {
-			return nil
+			s = settings.Defaults(runtime.GOOS)
+			s.LeadTimes = nil // as before: no default leads while settings can't be read
 		}
-		return s.LeadTimes
+		return core.SchedulerRules(s, time.Local)
 	}, func(alerts []scheduler.Alert) {
 		// Runs inline in the scheduler loop: never block it. The scheduler
 		// only fires after Start (ApplicationStarted), when svc is set.
