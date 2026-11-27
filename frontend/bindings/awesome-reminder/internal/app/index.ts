@@ -10,6 +10,7 @@ export {
 
 export type {
     AlertCard,
+    ReplyPrefill,
     Status,
     SyncInfo
 } from "./models.js";

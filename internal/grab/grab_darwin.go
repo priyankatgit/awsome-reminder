@@ -351,6 +351,7 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 	// From here the pasteboard must go back, whatever ctx says.
 	if !waitForChange(changeCount, seq, seqTimeout, time.Now, time.Sleep) {
 		handedOff = true
+		pending.Add(1)
 		go restoreLater(saved, seq)
 		return fallback, false
 	}
@@ -364,8 +365,10 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 
 // restoreLater waits up to 1 s for a copy that missed the 150 ms wait and
 // then puts the pasteboard back; if none lands, the pasteboard was never
-// touched. It owns restoreMu and unlocks it.
+// touched. It owns restoreMu and unlocks it, and marks one pending restore
+// done (see Wait).
 func restoreLater(saved unsafe.Pointer, seq uint32) {
+	defer pending.Done()
 	defer restoreMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {

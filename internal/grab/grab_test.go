@@ -303,3 +303,31 @@ func TestNoInjectMac(t *testing.T) {
 		}
 	}
 }
+
+// Wait returns at once with no background restore pending, and otherwise
+// waits until the pending restore is done (app shutdown calls it so the
+// clipboard goes back before the process exits).
+func TestWaitForPendingRestore(t *testing.T) {
+	done := make(chan struct{})
+	go func() { Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Wait blocked with nothing pending")
+	}
+
+	pending.Add(1)
+	done = make(chan struct{})
+	go func() { Wait(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Wait returned while a restore was pending")
+	case <-time.After(30 * time.Millisecond):
+	}
+	pending.Done()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Wait did not return after the restore finished")
+	}
+}

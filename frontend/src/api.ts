@@ -6,11 +6,11 @@ import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, ReplyPrefill, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, Status, SyncInfo, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, Status, SyncInfo, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -168,6 +168,8 @@ export const events = {
   alertsShow: "alerts:show",
   listFocus: "list:focus",
   captureOpen: "capture:open",
+  /** ReplyPrefill: open the capture box in reply mode (the reply hotkey or --reply). */
+  replyOpen: "reply:open",
   voiceStatus: "voice:status",
   syncStatus: "sync:status",
 } as const;

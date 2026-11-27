@@ -40,11 +40,13 @@ type badgeDeps struct {
 	Count     func() (int, error) // open items
 	Show      func() bool         // the "Show pending count" setting
 	HotkeyErr func() string       // appended to the tooltip
-	Icons     trayIcons           // plain icons
-	Tray      badgeTray
-	Debounce  time.Duration
-	Sync      func() cloudsync.Status // nil = sync off
-	Now       func() time.Time        // nil = time.Now
+	// ReplyHotkeyErr is appended to the tooltip after HotkeyErr; nil = none.
+	ReplyHotkeyErr func() string
+	Icons          trayIcons // plain icons
+	Tray           badgeTray
+	Debounce       time.Duration
+	Sync           func() cloudsync.Status // nil = sync off
+	Now            func() time.Time        // nil = time.Now
 	// NewTicker starts the syncing-animation ticker (nil = time.NewTicker).
 	// The returned func releases it.
 	NewTicker func(d time.Duration) (<-chan time.Time, func())
@@ -177,7 +179,11 @@ func (w *badgeWiring) tooltip(st cloudsync.Status) string {
 	if w.d.Now != nil {
 		now = w.d.Now
 	}
-	return pendingTooltip(w.shown, syncTooltip(st, now()), w.d.HotkeyErr())
+	replyErr := ""
+	if w.d.ReplyHotkeyErr != nil {
+		replyErr = w.d.ReplyHotkeyErr()
+	}
+	return pendingTooltip(w.shown, syncTooltip(st, now()), w.d.HotkeyErr(), replyErr)
 }
 
 // render shows the last count and the current sync status on the tray: the
@@ -365,8 +371,8 @@ func (w *badgeWiring) Stop() {
 
 // pendingTooltip is the tray tooltip: "Awesome Reminder — N pending", or
 // just the name when the count is off (n < 0), then the sync text and any
-// hotkey error, each skipped when empty.
-func pendingTooltip(n int, syncText, hotkeyErr string) string {
+// capture and reply hotkey errors, each skipped when empty.
+func pendingTooltip(n int, syncText, hotkeyErr, replyHotkeyErr string) string {
 	s := appName
 	if n >= 0 {
 		s += " — " + strconv.Itoa(n) + " pending"
@@ -376,6 +382,9 @@ func pendingTooltip(n int, syncText, hotkeyErr string) string {
 	}
 	if hotkeyErr != "" {
 		s += " — hotkey error: " + hotkeyErr
+	}
+	if replyHotkeyErr != "" {
+		s += " — reply hotkey error: " + replyHotkeyErr
 	}
 	return s
 }

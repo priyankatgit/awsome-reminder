@@ -72,6 +72,9 @@ type wailsWindows struct {
 	// lastSettings is true while the settings window was focused more
 	// recently than the list (Activate brings it back).
 	lastSettings atomic.Bool
+	// replyOpen is set by ShowReply and cleared when the capture box hides
+	// or opens in normal mode.
+	replyOpen atomic.Bool
 
 	// Set by Run before the app starts.
 	onAlertsClosed   func() // the user closed the alert window (Alt+F4)
@@ -471,7 +474,29 @@ func (w *wailsWindows) newAlert() popup {
 // (falling back to the window's current screen), shows and focuses it, and
 // tells the frontend to reset and focus its input.
 func (w *wailsWindows) ShowCapture() {
+	w.replyOpen.Store(false)
 	w.app.Event.Emit(EventCaptureOpen)
+	w.showCapture()
+	log.Printf("capture: shown")
+}
+
+// ShowReply tells the frontend to open the capture box in reply mode with p,
+// then shows and focuses it like ShowCapture.
+func (w *wailsWindows) ShowReply(p ReplyPrefill) {
+	w.replyOpen.Store(true)
+	w.app.Event.Emit(EventReplyOpen, p)
+	w.showCapture()
+	log.Printf("capture: shown in reply mode")
+}
+
+// ReplyOpen reports whether the capture box is showing in reply mode.
+func (w *wailsWindows) ReplyOpen() bool {
+	return w.replyOpen.Load() && w.capture.IsVisible()
+}
+
+// showCapture centers the capture box on the screen under the mouse cursor
+// (falling back to the window's current screen), shows and focuses it.
+func (w *wailsWindows) showCapture() {
 	if s := cursorScreen(w.app); s != nil {
 		w.capture.SetScreen(s)
 	} else {
@@ -479,11 +504,11 @@ func (w *wailsWindows) ShowCapture() {
 	}
 	w.capture.Show()
 	w.capture.Focus()
-	log.Printf("capture: shown")
 }
 
 // HideCapture hides the capture box.
 func (w *wailsWindows) HideCapture() {
+	w.replyOpen.Store(false)
 	w.capture.Hide()
 }
 

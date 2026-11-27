@@ -13,7 +13,22 @@ const (
 	EventListFocus    = "list:focus"    // item ID
 	EventCaptureOpen  = "capture:open"  // no payload: reset and focus the input
 	EventSyncStatus   = "sync:status"   // cloudsync.Status
+	EventReplyOpen    = "reply:open"    // ReplyPrefill: open the capture box in reply mode
 )
+
+// ReplyPrefill is what the reply hotkey found, for the capture box in reply
+// mode: the suggested one-line task, who is waiting, where the message came
+// from and the message itself. Grabbed is false when Quote is the clipboard's
+// own text (or empty) rather than the selection. NeedsAccess is true when
+// macOS has not granted the Accessibility permission the grab needs.
+type ReplyPrefill struct {
+	Line        string `json:"line"`
+	OwedTo      string `json:"owedTo"`
+	Source      string `json:"source"`
+	Quote       string `json:"quote"`
+	Grabbed     bool   `json:"grabbed"`
+	NeedsAccess bool   `json:"needsAccess"`
+}
 
 func init() {
 	application.RegisterEvent[application.Void]("items:changed")
@@ -21,4 +36,5 @@ func init() {
 	application.RegisterEvent[string]("list:focus")
 	application.RegisterEvent[application.Void]("capture:open")
 	application.RegisterEvent[cloudsync.Status]("sync:status")
+	application.RegisterEvent[ReplyPrefill]("reply:open")
 }

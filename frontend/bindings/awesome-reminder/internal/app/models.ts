@@ -70,6 +70,22 @@ export interface AlertCard {
 }
 
 /**
+ * ReplyPrefill is what the reply hotkey found, for the capture box in reply
+ * mode: the suggested one-line task, who is waiting, where the message came
+ * from and the message itself. Grabbed is false when Quote is the clipboard's
+ * own text (or empty) rather than the selection. NeedsAccess is true when
+ * macOS has not granted the Accessibility permission the grab needs.
+ */
+export interface ReplyPrefill {
+    "line": string;
+    "owedTo": string;
+    "source": string;
+    "quote": string;
+    "grabbed": boolean;
+    "needsAccess": boolean;
+}
+
+/**
  * Status is app health shown in the tray tooltip and the settings window.
  */
 export interface Status {
@@ -77,6 +93,11 @@ export interface Status {
      * "" when the hotkey is registered
      */
     "hotkeyErr": string;
+
+    /**
+     * "" when the reply hotkey is registered
+     */
+    "replyHotkeyErr": string;
 }
 
 /**

@@ -1,6 +1,9 @@
 package hotkey
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParseCombo(t *testing.T) {
 	ok := []struct{ in, want string }{
@@ -44,6 +47,33 @@ func TestParseCombo(t *testing.T) {
 			t.Errorf("ParseCombo(%q): expected error", tc.in)
 		} else if err.Error() != tc.msg {
 			t.Errorf("ParseCombo(%q) error = %q, want %q", tc.in, err, tc.msg)
+		}
+	}
+}
+
+// VirtualKeys gives the modifiers as Windows virtual-key codes, then (on
+// Windows, from the registrar's own key table) the main key.
+func TestVirtualKeys(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		mods []uint16
+		main uint16
+	}{
+		{"Ctrl+Alt+R", []uint16{0x11, 0x12}, 0x52},
+		{"Ctrl+Shift+Space", []uint16{0x11, 0x10}, 0x20},
+		{"Alt+Shift+Cmd+F12", []uint16{0x12, 0x10, 0x5B}, 0x7B},
+		{"Ctrl+7", []uint16{0x11}, 0x37},
+	} {
+		c, err := ParseCombo(tc.in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := tc.mods
+		if goos == "windows" {
+			want = append(slices.Clone(want), tc.main)
+		}
+		if got := c.VirtualKeys(); !slices.Equal(got, want) {
+			t.Errorf("%s: VirtualKeys = %#v, want %#v", tc.in, got, want)
 		}
 	}
 }

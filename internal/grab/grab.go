@@ -8,9 +8,21 @@ package grab
 
 import (
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
+
+// pending counts the background clipboard restores still running after Grab
+// returned (Windows and macOS). Each one is added before its goroutine starts
+// and done when it ends.
+var pending sync.WaitGroup
+
+// Wait waits for a background clipboard restore still pending after Grab
+// returned (up to about 1.6 s after a missed grab), so the user's clipboard
+// goes back before the process exits. App shutdown calls it once no hotkey
+// can start a new grab.
+func Wait() { pending.Wait() }
 
 // Key is one of the hotkey's keys as a Windows virtual-key code: a modifier
 // or the main key. macOS and Linux ignore it.

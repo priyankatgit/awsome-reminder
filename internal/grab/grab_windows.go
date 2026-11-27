@@ -203,10 +203,12 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 	switch afterCopy(changed, restored) {
 	case stepWatchLate:
 		handedOff = true
+		pending.Add(1)
 		go restoreLater(saved, seq, true)
 	case stepRestoreLater:
 		log.Printf("grab: clipboard busy after the copy; restoring in the background")
 		handedOff = true
+		pending.Add(1)
 		go restoreLater(saved, seq, false)
 	}
 	if text != "" {
@@ -217,8 +219,10 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 
 // restoreLater puts the saved clipboard back after Grab has returned. With
 // watch, it first waits up to 1 s for a late copy and does nothing if none
-// lands (the clipboard was never touched). It owns restoreMu and unlocks it.
+// lands (the clipboard was never touched). It owns restoreMu and unlocks it,
+// and marks one pending restore done (see Wait).
 func restoreLater(saved []savedFormat, seq uint32, watch bool) {
+	defer pending.Done()
 	defer restoreMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
