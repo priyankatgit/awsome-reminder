@@ -93,6 +93,7 @@ export function installDemo(): void {
   const byPriority = (a: Item, b: Item) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3);
   const eff = (it: Item) => effectiveDue(it, new Date())?.getTime() ?? 0;
 
+  let pendingIds: string[] = [];
   const view = (): View => {
     const open = items.filter((i) => i.status === "open");
     const horizon = Date.now() + 7 * 24 * 3_600_000;
@@ -102,7 +103,7 @@ export function installDemo(): void {
     const names = [...groups.keys()].sort((a, b) => (a === "inbox" ? -1 : b === "inbox" ? 1 : a.localeCompare(b)));
     // Like Go's View: tag groups sort by priority (stable), Upcoming keeps time order.
     const tags = names.map((tag) => ({ tag, items: [...groups.get(tag)!].sort(byPriority) }));
-    return { upcoming, tags, done: items.filter((i) => i.status === "done"), waiting: [], pending: [] };
+    return { upcoming, tags, done: items.filter((i) => i.status === "done"), waiting: [], pending: [...pendingIds] };
   };
   const patch = (id: string, p: Partial<Item>) => {
     items = items.map((i) => (i.id === id ? { ...i, ...p, updatedAt: new Date().toISOString() } : i));
@@ -134,10 +135,91 @@ export function installDemo(): void {
     closeWindow: async () => console.info("demo: close window"),
     openSettings: async () => console.info("demo: open settings"),
   });
+  installSyncDemo((ids) => {
+    pendingIds = ids;
+  });
   installPanelDemo(() => items, patch);
   installAlertDemo();
   installSettingsDemo();
   installCaptureDemo();
+}
+
+/**
+ * A state switcher for the sync pill (bottom-left select; ?demo#list):
+ * every status the pill and the row markers can show. Switching from
+ * "Synced, 3 waiting" to "All synced" plays the one glow.
+ */
+function installSyncDemo(setPending: (ids: string[]) => void): void {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const base = { error: "", warnings: [] as string[], host: "cluster0.ab1cd.mongodb.net" };
+  type Demo = { label: string; ids: string[]; status: () => Record<string, unknown> };
+  const states: Demo[] = [
+    { label: "Off", ids: [], status: () => ({ ...base, state: "off", lastSyncAt: null, pending: 0, host: "" }) },
+    { label: "Syncing", ids: ["2"], status: () => ({ ...base, state: "syncing", lastSyncAt: ago(120_000), pending: 1 }) },
+    { label: "Synced, 0 waiting", ids: [], status: () => ({ ...base, state: "synced", lastSyncAt: ago(10_000), pending: 0 }) },
+    { label: "Synced, 3 waiting", ids: ["2", "3", "5"], status: () => ({ ...base, state: "synced", lastSyncAt: ago(120_000), pending: 3 }) },
+    { label: "Offline, 0 waiting", ids: [], status: () => ({ ...base, state: "offline", lastSyncAt: ago(3 * 3_600_000), pending: 0, error: "No network connection" }) },
+    { label: "Offline, 1 waiting", ids: ["4"], status: () => ({ ...base, state: "offline", lastSyncAt: ago(3 * 3_600_000), pending: 1, error: "No network connection" }) },
+    { label: "Offline, 4 waiting", ids: ["1", "2", "5", "6"], status: () => ({ ...base, state: "offline", lastSyncAt: ago(30 * 3_600_000), pending: 4, error: "No network connection" }) },
+    { label: "Error", ids: ["3"], status: () => ({ ...base, state: "error", lastSyncAt: ago(600_000), pending: 1, error: "Authentication failed: check the user name and password in your connection string." }) },
+    {
+      label: "Synced with warnings",
+      ids: [],
+      status: () => ({
+        ...base,
+        state: "synced",
+        lastSyncAt: ago(60_000),
+        pending: 0,
+        warnings: [
+          "This computer's clock is 3 min off from your cluster; edits may lose to older ones.",
+          "This Atlas user can reach other databases on your cluster. Limit it to readWrite on awesome_reminder (see the setup guide).",
+        ],
+      }),
+    },
+  ];
+  let current = states[location.hash === "#settings" ? 0 : 3];
+  const apply = (d: Demo) => {
+    current = d;
+    setPending(d.ids);
+    emitLocal(events.syncStatus, d.status());
+  };
+  Object.assign(api.sync, {
+    status: async () => {
+      setPending(current.ids);
+      return { ...current.status(), warnings: (current.status().warnings as string[]) ?? [] };
+    },
+    // Settings preview (?demo#settings): a "good" string is any mongodb+srv://
+    // one; one containing "bad" fails like Go's check.
+    connect: async (u: string) => {
+      await new Promise((r) => window.setTimeout(r, 600));
+      if (u.includes("bad")) throw new Error("Authentication failed: check the user name and password in your connection string.");
+      current = states[2];
+      return current.status();
+    },
+    disconnect: async () => {
+      current = states[0];
+      window.setTimeout(() => emitLocal(events.syncStatus, current.status()), 0);
+    },
+    info: async () => ({
+      connected: current !== states[0],
+      host: current === states[0] ? "" : "cluster0.ab1cd.mongodb.net",
+      secretStore: location.search.includes("fallback") ? "Encrypted file on this computer" : "Windows Credential Manager",
+      attachmentBytes: location.search.includes("unknown") ? -1 : 12_400_000,
+    }),
+    now: async () => {
+      apply(states[1]);
+      await new Promise((r) => window.setTimeout(r, 800));
+      apply(states[2]);
+    },
+  });
+  if (location.hash !== "#list") return;
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "Demo: sync state");
+  select.style.cssText =
+    "position:fixed;left:var(--space-2);bottom:var(--space-2);z-index:20;padding:var(--space-1);background:var(--surface);color:var(--fg);border:var(--hairline) solid var(--border);border-radius:var(--radius-chip);font:inherit;font-size:var(--text-small)";
+  states.forEach((d, i) => select.append(new Option(d.label, String(i), false, d === current)));
+  select.addEventListener("change", () => apply(states[Number(select.value)]));
+  document.body.append(select);
 }
 
 /** Stand-ins for the detail panel's setters, with Go's validation messages. */

@@ -171,8 +171,10 @@ func Run(opts Options) error {
 		Open:     atlasOpen,
 		Host:     atlas.Host,
 		Classify: atlasClassify,
-		// Task 8 adds badges.SyncChanged() here (tray dot and tooltip).
-		OnStatus: func(s cloudsync.Status) { emit(EventSyncStatus, s) },
+		OnStatus: func(s cloudsync.Status) {
+			emit(EventSyncStatus, s)
+			badges.SyncChanged() // tray dot and tooltip; nil-safe before badges exists
+		},
 		// Off the engine's goroutine, like showAlerts: the alert window
 		// calls must not hold up a cycle that shutdown waits for. It does
 		// not touch the store.
@@ -244,6 +246,7 @@ func Run(opts Options) error {
 		Icons:     trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
 		Tray:      wailsBadgeTray{app, tray},
 		Debounce:  badgeDebounce,
+		Sync:      syncCtl.Status,
 	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
