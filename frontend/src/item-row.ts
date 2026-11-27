@@ -1,10 +1,12 @@
-// One row of the list window: checkbox, time, priority dot, text, tag chips and the ⋯
-// button. Rows are keyed by section + item ID; list.ts reuses the element
-// and only refills it when its signature changes.
+// One row of the list window: checkbox, time, priority dot, text, a reply's
+// source and age, tag chips and the ⋯ button. Rows are keyed by section +
+// item ID; list.ts reuses the element and only refills it when its
+// signature changes.
 import type { Item } from "./api";
 import { el, tagChip } from "./dom";
 import { icons } from "./icons";
 import { priorityLabel, type Priority } from "./priority";
+import { ageLabel, isStale } from "./waiting";
 
 /** A row as the list renders it. */
 export interface RowModel {
@@ -48,6 +50,16 @@ export function isDone(it: Item): boolean {
 
 export function isReminder(it: Item): boolean {
   return it.kind === "reminder" && it.dueAt !== null;
+}
+
+/** Whether it is a reply still owed (listed under "Waiting on you"). */
+export function isOpenReply(it: Item): boolean {
+  return !!it.reply && !isDone(it);
+}
+
+/** Whether it is a reply closed with "No reply needed". */
+export function isDropped(it: Item): boolean {
+  return !!it.reply && isDone(it) && it.replyOutcome === "dropped";
 }
 
 function pad(n: number): string {
@@ -113,6 +125,11 @@ export function rowSignature(m: RowModel, now: Date): string {
     d && isReminder(it) ? timeLabel(d, now) : "",
     isOverdue(it, now) && d ? agoLabel(d, now) : "",
     snoozePending(it, now),
+    it.reply,
+    it.source,
+    it.replyOutcome,
+    isOpenReply(it) ? ageLabel(new Date(it.createdAt), now) : "",
+    isOpenReply(it) && isStale(new Date(it.createdAt), now),
   ]);
 }
 
@@ -144,7 +161,7 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
   check.tabIndex = -1;
   check.setAttribute("role", "checkbox");
   check.setAttribute("aria-checked", String(done));
-  check.setAttribute("aria-label", done ? `Reopen: ${it.text}` : `Mark done: ${it.text}`);
+  check.setAttribute("aria-label", done ? `Reopen: ${it.text}` : isOpenReply(it) ? `Mark replied: ${it.text}` : `Mark done: ${it.text}`);
   check.dataset.shape = reminder ? "round" : "square";
   const box = el("span", "check-box");
   box.innerHTML = icons.check;
@@ -180,6 +197,9 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
   main.append(text);
   parts.push(main);
 
+  if (isOpenReply(it)) parts.push(replyMeta(it, now));
+  else if (isDropped(it)) parts.push(el("span", "row-dropped", "no reply needed"));
+
   if (it.rrule && !done) {
     const rep = el("span", "row-repeat");
     rep.title = "Repeats";
@@ -205,6 +225,23 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
 
   row.replaceChildren(...parts);
   applyMarker(row, m);
+}
+
+/**
+ * An open reply's source and age, "Teams · 2 h", in mono; an age over 24 h
+ * reads in --time-text (.is-stale).
+ */
+function replyMeta(it: Item, now: Date): HTMLElement {
+  const box = el("span", "row-reply");
+  const source = (it.source ?? "").trim();
+  if (source) box.append(el("span", "sr-only", "from "), el("span", "row-src", source), el("span", "row-reply-sep", " · "));
+  const created = new Date(it.createdAt);
+  const age = el("time", "row-age", ageLabel(created, now));
+  age.classList.toggle("is-stale", isStale(created, now));
+  age.dateTime = created.toISOString();
+  age.title = `Waiting since ${full.format(created)}`;
+  box.append(el("span", "sr-only", "waiting "), age);
+  return box;
 }
 
 /**
@@ -258,7 +295,7 @@ export function editRow(row: HTMLElement, value: string): { input: HTMLInputElem
   error.setAttribute("role", "alert");
   error.hidden = true;
   const main = row.querySelector(".row-main");
-  row.querySelectorAll(".row-time, .row-repeat, .row-tags, .row-sync").forEach((n) => n.remove());
+  row.querySelectorAll(".row-time, .row-repeat, .row-tags, .row-sync, .row-reply, .row-dropped").forEach((n) => n.remove());
   if (main) main.replaceWith(input);
   else row.append(input);
   row.append(error); // wraps onto its own line below the input

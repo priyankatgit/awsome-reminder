@@ -106,6 +106,27 @@ func (c Combo) String() string {
 	return strings.Join(append(append([]string{}, c.Mods...), c.Key), "+")
 }
 
+// modVKs are the modifiers' Windows virtual-key codes (VK_CONTROL, VK_MENU,
+// VK_SHIFT, VK_LWIN).
+var modVKs = map[string]uint16{"Ctrl": 0x11, "Alt": 0x12, "Shift": 0x10, "Cmd": 0x5B}
+
+// VirtualKeys returns all of c's keys, the modifiers and then the main key,
+// as Windows virtual-key codes (for releasing them before a key is injected).
+// The main key comes from the Windows registrar's key table, so off Windows,
+// where nothing reads the codes, it is left out.
+func (c Combo) VirtualKeys() []uint16 {
+	var out []uint16
+	for _, m := range c.Mods {
+		if vk, ok := modVKs[m]; ok {
+			out = append(out, vk)
+		}
+	}
+	if vk, ok := mainVK(c.Key); ok {
+		out = append(out, vk)
+	}
+	return out
+}
+
 // validateFor reports whether c is usable on the given GOOS.
 func validateFor(goos string, c Combo) error {
 	for _, m := range c.Mods {

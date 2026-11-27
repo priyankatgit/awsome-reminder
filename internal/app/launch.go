@@ -1,6 +1,52 @@
 package app
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
+
+// launchAction is what a command-line flag asks for, on a first launch or
+// from a second instance.
+type launchAction int
+
+const (
+	launchNone     launchAction = iota // no flag
+	launchCapture                      // --capture: the capture box
+	launchReply                        // --reply: the capture box in reply mode
+	launchSettings                     // --settings
+	launchList                         // --list
+)
+
+func (a launchAction) String() string {
+	switch a {
+	case launchCapture:
+		return captureFlag
+	case launchReply:
+		return replyFlag
+	case launchSettings:
+		return settingsFlag
+	case launchList:
+		return listFlag
+	}
+	return "none"
+}
+
+// parseLaunch picks the action from the arguments (without the program
+// name). When several flags are given the first of --capture, --reply,
+// --settings, --list wins.
+func parseLaunch(args []string) launchAction {
+	switch {
+	case slices.Contains(args, captureFlag):
+		return launchCapture
+	case slices.Contains(args, replyFlag):
+		return launchReply
+	case slices.Contains(args, settingsFlag):
+		return launchSettings
+	case slices.Contains(args, listFlag):
+		return launchList
+	}
+	return launchNone
+}
 
 // launchQueue runs second-instance requests (--capture, --list, ...) off the
 // caller's goroutine. Wails may deliver one before Run has created the

@@ -124,8 +124,42 @@ func planFor(t *testing.T, e *env) ([]scheduler.Alert, time.Time) {
 		t.Fatal(err)
 	}
 	s, _ := e.c.Settings()
-	fire, _, next := scheduler.Plan(items, s.LeadTimes, e.now, func(k string) bool { n, _ := e.st.WasNotified(k); return n })
+	fire, _, next := scheduler.Plan(items, SchedulerRules(s, e.c.loc), e.now, func(k string) bool { n, _ := e.st.WasNotified(k); return n })
 	return fire, next
+}
+
+// A reply restored from another machine must not fire its old nudges (e.now
+// is Wednesday 10:00 in New York): only the ones from now on.
+func TestApplyRemoteReplySuppressesPastNudges(t *testing.T) {
+	e := newEnv(t)
+	now := e.now
+	r := remoteItem(idA, "R", now.Add(-48*time.Hour))
+	r.Reply, r.OwedTo = true, "Priya"
+	r.CreatedAt = now.Add(-72 * time.Hour) // Sunday: nudged Mon, Tue and Wed at 09:00
+	if _, err := e.c.ApplyRemoteItems([]model.Item{r}); err != nil {
+		t.Fatal(err)
+	}
+	wed9 := time.Date(2026, 11, 25, 9, 0, 0, 0, ny)
+	if ok, _ := e.st.WasNotified(idA + "|nudge|" + strconv.FormatInt(wed9.Unix(), 10)); !ok {
+		t.Fatal("Wednesday's nudge not marked")
+	}
+	fire, next := planFor(t, e)
+	if len(fire) != 0 {
+		t.Fatalf("restored reply must not fire an old nudge: %+v", fire)
+	}
+	// The next alert is today's end-of-day sweep (on by default), then
+	// Thursday's nudge.
+	if eod := time.Date(2026, 11, 25, 17, 30, 0, 0, ny); !next.Equal(eod) {
+		t.Fatalf("next=%v, want the sweep %v", next, eod)
+	}
+	s, _ := e.c.Settings()
+	s.EndOfDaySweep = false
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if _, next := planFor(t, e); !next.Equal(time.Date(2026, 11, 26, 9, 0, 0, 0, ny)) {
+		t.Fatalf("next=%v, want Thursday's nudge", next)
+	}
 }
 
 func TestApplyRemoteNewItemSuppressesPastAlerts(t *testing.T) {
@@ -564,5 +598,29 @@ func TestApplyRemoteSharedLegacyStampBeatsZero(t *testing.T) {
 	}
 	if got, _ := e.c.Settings(); len(got.LeadTimes) != 1 || got.LeadTimes[0] != 30*time.Minute {
 		t.Errorf("lead times %v", got.LeadTimes)
+	}
+}
+
+// A reply pulled from another machine after the end of the working day must
+// not mark today's sweep as shown: only the item's own old alerts.
+func TestApplyRemoteReplyKeepsSweep(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Date(2026, 11, 25, 18, 0, 0, 0, ny) // Wednesday, after 17:30
+	r := remoteItem(idA, "R", e.now.Add(-time.Hour))
+	r.Reply, r.OwedTo = true, "Priya"
+	r.CreatedAt = time.Date(2026, 11, 25, 16, 0, 0, 0, ny) // before the sweep time, so it sweeps
+	if _, err := e.c.ApplyRemoteItems([]model.Item{r}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := e.st.WasNotified("sweep|2026-11-25"); n {
+		t.Fatal("restoring a reply marked today's sweep as shown")
+	}
+	fire, _ := planFor(t, e)
+	found := false
+	for _, a := range fire {
+		found = found || a.Key == "sweep|2026-11-25"
+	}
+	if !found {
+		t.Fatalf("sweep did not fire: %+v", fire)
 	}
 }

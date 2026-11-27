@@ -42,3 +42,25 @@ func TestLaunchQueueHoldsUntilReady(t *testing.T) {
 		t.Fatalf("ran %v", got)
 	}
 }
+
+// --reply opens the capture box in reply mode, on a first launch and from a
+// second instance, like --capture.
+func TestLaunchReplyFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want launchAction
+	}{
+		{[]string{"--reply"}, launchReply},
+		{[]string{"--capture"}, launchCapture},
+		{[]string{"--settings"}, launchSettings},
+		{[]string{"--list"}, launchList},
+		{nil, launchNone},
+		{[]string{"--unknown"}, launchNone},
+		{[]string{"--reply", "--list"}, launchReply},
+		{[]string{"--capture", "--reply"}, launchCapture},
+	} {
+		if got := parseLaunch(tc.args); got != tc.want {
+			t.Errorf("parseLaunch(%q) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}

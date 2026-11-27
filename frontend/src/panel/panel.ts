@@ -1,5 +1,6 @@
 // The detail panel: slides in from the right of the list window and edits one
-// item's title, priority, due/repeat, tags and description. list.ts imports
+// item's title, priority, due/repeat, tags, a reply's person ("For", with its
+// source "From" read-only) and description. list.ts imports
 // this module the first time a panel opens, so a list that never opens one
 // carries none of it.
 //
@@ -12,11 +13,11 @@ import { api, errorText, events, on, type Item, type SnoozePreset } from "../api
 import { el, motionMs } from "../dom";
 import { canAnimate, easing } from "../motion";
 import { icons } from "../icons";
-import { agoLabel, isDone, isReminder } from "../item-row";
+import { agoLabel, isDone, isOpenReply, isReminder } from "../item-row";
 import { closeMenu, openMenu } from "../menu";
 import { createAutosaver, type Autosaver } from "./autosave";
 import { mountEditor } from "./editor";
-import { dueField, isEditing, priorityField, repeatField, tagsField, titleField } from "./fields";
+import { dueField, isEditing, personField, priorityField, repeatField, sourceField, tagsField, titleField } from "./fields";
 
 const WIDEN_TO = 1100; // px: the list window grows to this when narrower (capped to the screen)
 const REFRESH_DEBOUNCE_MS = 50;
@@ -114,6 +115,9 @@ const priority = priorityField((p) => {
 const due = dueField((d) => shown && void saveNow(due, (id) => api.setDue(id, d)));
 const repeat = repeatField((r) => shown && void saveNow(repeat, (id) => api.setRepeat(id, r)));
 const tags = tagsField((list) => (shown ? saveNow(tags, (id) => api.setTags(id, list)) : Promise.resolve(false)));
+/** Replies only: who it is owed to (saved on Enter or blur) and where it came from. */
+const owedTo = personField((p) => shown && void saveNow(owedTo, (id) => api.setOwedTo(id, p)));
+const source = sourceField();
 
 /** Holds the Markdown description editor (editor.ts). */
 export const descriptionHost = el("div", "panel-desc");
@@ -137,7 +141,7 @@ title.input.addEventListener("blur", () => void titleSaver.flush());
 const body = el("div", "panel-body");
 const desc = el("div", "panel-desc-field");
 desc.append(descLabel, descriptionHost, descError);
-body.append(title.root, priority.root, due.root, repeat.root, tags.root, desc);
+body.append(title.root, priority.root, due.root, repeat.root, tags.root, owedTo.root, source.root, desc);
 
 const foot = el("footer", "panel-foot");
 const meta = el("p", "panel-meta");
@@ -156,10 +160,13 @@ snoozeBtn.type = "button";
 snoozeBtn.setAttribute("aria-haspopup", "menu");
 snoozeBtn.setAttribute("aria-expanded", "false");
 snoozeBtn.innerHTML = `${icons.snooze}<span>Snooze</span>${icons.chevronDown}`;
+const dropBtn = el("button", "btn btn-ghost");
+dropBtn.type = "button";
+dropBtn.innerHTML = `${icons.replyOff}<span>No reply needed</span>`;
 const deleteBtn = el("button", "btn btn-ghost panel-delete");
 deleteBtn.type = "button";
 deleteBtn.innerHTML = `${icons.trash}<span>Delete</span>`;
-actions.append(doneBtn, snoozeBtn, deleteBtn);
+actions.append(doneBtn, snoozeBtn, dropBtn, deleteBtn);
 foot.append(meta, actionError, actions);
 
 root.append(head, body, foot);
@@ -205,6 +212,7 @@ async function saveNow(field: Field, call: (id: string) => Promise<Item>): Promi
 /** Saves every pending edit now; resolves when all saves have settled. */
 async function flushAll(): Promise<void> {
   due.commit(); // a typed but uncommitted due time
+  owedTo.commit(); // and person
   await Promise.all([titleSaver.flush(), descriptionSaver.flush(), ...Array.from(inflight, (p) => p.catch(() => {}))]);
 }
 
@@ -257,6 +265,9 @@ function fill(force: boolean, own?: Field): void {
   if (force || own === due || !isBusy(due)) due.fill(it, force || own === due); // due.fill skips a focused input itself
   if (free(repeat, repeat.root)) repeat.fill(it);
   if (free(tags)) tags.fill(it);
+  owedTo.root.hidden = source.root.hidden = !it.reply;
+  if (force || own === owedTo || !isBusy(owedTo)) owedTo.fill(it, force || own === owedTo); // fill skips a focused input itself
+  source.fill(it);
   if (force || (!isEditing(descriptionHost) && descriptionSaver.status() !== "saving")) editor.fill(it.description ?? "", force);
 
   const now = new Date();
@@ -266,12 +277,13 @@ function fill(force: boolean, own?: Field): void {
 
   const done = isDone(it);
   doneBtn.className = done ? "btn btn-ghost" : "btn btn-primary";
-  doneBtn.innerHTML = done ? "<span>Reopen</span>" : `${icons.check}<span>Mark done</span>`;
-  snoozeBtn.hidden = !isReminder(it) || done; // to-dos have nothing to snooze
+  doneBtn.innerHTML = done ? "<span>Reopen</span>" : `${icons.check}<span>${isOpenReply(it) ? "Replied" : "Mark done"}</span>`;
+  snoozeBtn.hidden = !(isReminder(it) || isOpenReply(it)) || done; // plain to-dos have nothing to snooze; replies have nudges
+  dropBtn.hidden = !isOpenReply(it);
 }
 
 function clearErrors(): void {
-  for (const f of [title, priority, due, repeat, tags]) f.setError("");
+  for (const f of [title, priority, due, repeat, tags, owedTo]) f.setError("");
   setDescError("");
   actionError.hidden = true;
 }
@@ -339,6 +351,21 @@ deleteBtn.addEventListener("click", async () => {
   if (!id) return;
   await closePanel(); // saves pending edits first, so Undo brings them back too
   hooks.remove(id);
+});
+
+/** No reply needed: closes the reply as dropped, then the panel (no Undo: Reopen in Done brings it back). */
+dropBtn.addEventListener("click", async () => {
+  const id = shown?.id;
+  if (!id) return;
+  actionError.hidden = true;
+  await flushAll(); // pending edits land first
+  try {
+    await api.dropReply(id);
+  } catch (err) {
+    if (openId === id) showActionError(err);
+    return;
+  }
+  if (openId === id) await closePanel();
 });
 
 closeBtn.addEventListener("click", () => void closePanel());

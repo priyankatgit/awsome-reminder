@@ -22,6 +22,7 @@ declare module "@wailsio/runtime" {
             "capture:open": void;
             "items:changed": void;
             "list:focus": string;
+            "reply:open": app$0.ReplyPrefill;
             "sync:status": cloudsync$0.Status;
             "voice:status": voice$0.Status;
         }

@@ -72,6 +72,9 @@ type wailsWindows struct {
 	// lastSettings is true while the settings window was focused more
 	// recently than the list (Activate brings it back).
 	lastSettings atomic.Bool
+	// replyOpen is set by ShowReply and cleared when the capture box hides
+	// or opens in normal mode.
+	replyOpen atomic.Bool
 
 	// Set by Run before the app starts.
 	onAlertsClosed   func() // the user closed the alert window (Alt+F4)
@@ -471,7 +474,42 @@ func (w *wailsWindows) newAlert() popup {
 // (falling back to the window's current screen), shows and focuses it, and
 // tells the frontend to reset and focus its input.
 func (w *wailsWindows) ShowCapture() {
+	w.replyOpen.Store(false)
 	w.app.Event.Emit(EventCaptureOpen)
+	w.showCapture()
+	log.Printf("capture: shown")
+}
+
+// ShowReply tells the frontend to open the capture box in reply mode with p,
+// then shows and focuses it like ShowCapture. With p.KeepText the box is
+// already open: it is only focused, where it is.
+func (w *wailsWindows) ShowReply(p ReplyPrefill) {
+	w.replyOpen.Store(true)
+	w.app.Event.Emit(EventReplyOpen, p)
+	if p.KeepText {
+		w.capture.Focus()
+		log.Printf("capture: switched to reply mode")
+		return
+	}
+	w.showCapture()
+	log.Printf("capture: shown in reply mode")
+}
+
+// CaptureMode reports whether the capture box is hidden or showing, and in
+// which mode.
+func (w *wailsWindows) CaptureMode() captureMode {
+	switch {
+	case !w.capture.IsVisible():
+		return captureHidden
+	case w.replyOpen.Load():
+		return captureReply
+	}
+	return captureNormal
+}
+
+// showCapture centers the capture box on the screen under the mouse cursor
+// (falling back to the window's current screen), shows and focuses it.
+func (w *wailsWindows) showCapture() {
 	if s := cursorScreen(w.app); s != nil {
 		w.capture.SetScreen(s)
 	} else {
@@ -479,11 +517,11 @@ func (w *wailsWindows) ShowCapture() {
 	}
 	w.capture.Show()
 	w.capture.Focus()
-	log.Printf("capture: shown")
 }
 
 // HideCapture hides the capture box.
 func (w *wailsWindows) HideCapture() {
+	w.replyOpen.Store(false)
 	w.capture.Hide()
 }
 

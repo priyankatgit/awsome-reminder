@@ -202,7 +202,7 @@ func (d *device) fireNow() []scheduler.Alert {
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	fire, _, _ := scheduler.Plan(items, s.LeadTimes, d.clk.Now(), func(k string) bool {
+	fire, _, _ := scheduler.Plan(items, core.SchedulerRules(s, time.UTC), d.clk.Now(), func(k string) bool {
 		ok, _ := d.st.WasNotified(k)
 		return ok
 	})

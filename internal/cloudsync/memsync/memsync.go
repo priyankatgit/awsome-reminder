@@ -219,6 +219,7 @@ func (s *Syncer) PushItem(ctx context.Context, it model.Item) error {
 		"status": string(it.Status), "done_at": msPtr(it.DoneAt), "snooze_until": msPtr(it.SnoozeUntil),
 		"created_at": ms(it.CreatedAt), "updated_at": ms(it.UpdatedAt), "updated_by": it.UpdatedBy,
 		"priority": it.Priority, "description": it.Description,
+		"reply": it.Reply, "owed_to": it.OwedTo, "source": it.Source, "reply_outcome": it.ReplyOutcome,
 	})
 	return nil
 }
@@ -263,6 +264,7 @@ func (s *Syncer) PushShared(ctx context.Context, d cloudsync.SharedDoc) error {
 	for k, v := range (doc{
 		"lead_times": leadsMs(d.Shared.LeadTimes), "default_time": d.Shared.DefaultTime,
 		"next_week_day": d.Shared.NextWeekDay, "next_week_time": d.Shared.NextWeekTime,
+		"work_days": slices.Clone(d.Shared.WorkDays), "end_of_day": d.Shared.EndOfDay, "end_of_day_sweep": d.Shared.EndOfDaySweep,
 		"updated_at": ms(d.UpdatedAt), "updated_by": d.UpdatedBy,
 	}) {
 		s.shared[k] = v
@@ -340,6 +342,11 @@ func leads(d doc, k string) []time.Duration {
 	return out
 }
 
+func boolean(d doc, k string) bool {
+	b, _ := d[k].(bool)
+	return b
+}
+
 func decodeItem(d doc) model.Item {
 	return model.Item{
 		ID: str(d, "_id"), Kind: model.Kind(str(d, "kind")), Text: str(d, "text"), Tags: strs(d, "tags"),
@@ -347,6 +354,7 @@ func decodeItem(d doc) model.Item {
 		Status: model.Status(str(d, "status")), DoneAt: tmPtr(d, "done_at"), SnoozeUntil: tmPtr(d, "snooze_until"),
 		CreatedAt: tm(d, "created_at"), UpdatedAt: tm(d, "updated_at"), UpdatedBy: str(d, "updated_by"),
 		Priority: str(d, "priority"), Description: str(d, "description"),
+		Reply: boolean(d, "reply"), OwedTo: str(d, "owed_to"), Source: str(d, "source"), ReplyOutcome: str(d, "reply_outcome"),
 	}
 }
 
@@ -409,6 +417,7 @@ func (s *Syncer) PullShared(ctx context.Context) (*cloudsync.SharedDoc, error) {
 		Shared: settings.Shared{
 			LeadTimes: leads(d, "lead_times"), DefaultTime: str(d, "default_time"),
 			NextWeekDay: str(d, "next_week_day"), NextWeekTime: str(d, "next_week_time"),
+			WorkDays: strs(d, "work_days"), EndOfDay: str(d, "end_of_day"), EndOfDaySweep: boolean(d, "end_of_day_sweep"),
 		},
 		UpdatedAt: tm(d, "updated_at"), UpdatedBy: str(d, "updated_by"),
 	}, nil

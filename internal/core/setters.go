@@ -15,6 +15,9 @@ var (
 	ErrBadPriority = errors.New("unknown priority")
 	ErrBadRepeat   = errors.New("unknown repeat")
 	ErrBadTag      = errors.New("tags start with a letter and use a-z, 0-9, - or _")
+	ErrNotReply    = errors.New("Not a reply")
+	ErrReplyClosed = errors.New("This reply is no longer open")
+	ErrDeleted     = errors.New("This item was deleted")
 )
 
 var tagRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -30,6 +33,43 @@ func (c *Core) SetText(id, text string) (model.Item, error) {
 	}
 	return c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.Text = text
+		return nil
+	})
+}
+
+// SetOwedTo sets who the reply is owed to. The value is trimmed; an empty one
+// is allowed and leaves the item a reply, listed under no person. The item
+// must be a reply that is not deleted (another device may have deleted it
+// while the panel was open); a closed reply can still be renamed.
+func (c *Core) SetOwedTo(id, person string) (model.Item, error) {
+	person = strings.TrimSpace(person)
+	return c.mutate(id, func(it *model.Item, _ time.Time) error {
+		switch {
+		case !it.Reply:
+			return ErrNotReply
+		case it.Status == model.StatusDeleted:
+			return ErrDeleted
+		}
+		it.OwedTo = person
+		return nil
+	})
+}
+
+// DropReply closes a reply without answering it: done, with the outcome
+// "dropped". Any recurrence stops mattering since the item is closed. Only
+// an open reply can be dropped: one another device deleted or closed is left
+// as it is (ErrReplyClosed), so it is not brought back as done.
+func (c *Core) DropReply(id string) (model.Item, error) {
+	return c.mutate(id, func(it *model.Item, now time.Time) error {
+		if !it.Reply {
+			return ErrNotReply
+		}
+		if !openReply(*it) {
+			return ErrReplyClosed
+		}
+		done := now
+		it.Status, it.DoneAt, it.SnoozeUntil = model.StatusDone, &done, nil
+		it.ReplyOutcome = model.ReplyDropped
 		return nil
 	})
 }

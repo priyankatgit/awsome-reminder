@@ -13,6 +13,8 @@ import (
 	"awesome-reminder/internal/cloudsync"
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/reply"
+	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/settings"
 )
 
@@ -47,11 +49,13 @@ type Hotkey interface {
 // Deps are the Service's collaborators. Export, StatusChanged and Emit may
 // be nil.
 type Deps struct {
-	Core      *core.Core
-	Windows   Windows
-	Hotkey    Hotkey
-	Autostart func(enabled bool) error
-	Export    func()
+	Core    *core.Core
+	Windows Windows
+	Hotkey  Hotkey
+	// ReplyHotkey is the reply-owed hotkey's manager; nil when there is none.
+	ReplyHotkey Hotkey
+	Autostart   func(enabled bool) error
+	Export      func()
 	// StatusChanged is called after Status() may have changed (e.g. the
 	// hotkey registration failed or recovered).
 	StatusChanged func()
@@ -66,7 +70,8 @@ type Deps struct {
 
 // Status is app health shown in the tray tooltip and the settings window.
 type Status struct {
-	HotkeyErr string `json:"hotkeyErr"` // "" when the hotkey is registered
+	HotkeyErr      string `json:"hotkeyErr"`      // "" when the hotkey is registered
+	ReplyHotkeyErr string `json:"replyHotkeyErr"` // "" when the reply hotkey is registered
 }
 
 // Service is bound to the frontend; its exported methods become bindings.
@@ -90,6 +95,55 @@ func (s *Service) WithDue(input string, due time.Time) string {
 
 // Capture stores a new item parsed from input.
 func (s *Service) Capture(input string) (model.Item, error) { return s.d.Core.Capture(input) }
+
+// CaptureReply stores a new reply owed, parsed from input like Capture, with
+// who it is owed to, where it came from and the quoted message from m.
+func (s *Service) CaptureReply(input string, m reply.Meta) (model.Item, error) {
+	return s.d.Core.CaptureReply(input, m)
+}
+
+// DropReply closes a reply without answering it and removes its alert cards,
+// like Done.
+func (s *Service) DropReply(id string) error {
+	if _, err := s.d.Core.DropReply(id); err != nil {
+		return err
+	}
+	s.dropItemAlerts(id)
+	return nil
+}
+
+// errNoWorkDays is returned by SnoozeReplies when no working day is set.
+var errNoWorkDays = errors.New("No working days are set")
+
+// SnoozeReplies snoozes every open reply until the next working day at the
+// default time, local time (the end-of-day sweep's Tomorrow), and removes
+// the replies' cards and the sweep card.
+func (s *Service) SnoozeReplies() error {
+	st, err := s.d.Core.Settings()
+	if err != nil {
+		return err
+	}
+	r := core.SchedulerRules(st, time.Local)
+	until := r.NextWorkDay(s.d.Core.Now(), r.DefaultTime)
+	if until.IsZero() {
+		return errNoWorkDays
+	}
+	if err := s.d.Core.SnoozeRepliesUntil(until); err != nil {
+		return err
+	}
+	v, err := s.d.Core.View()
+	if err != nil {
+		return err
+	}
+	snoozed := map[string]bool{}
+	for _, g := range v.Waiting {
+		for _, it := range g.Items {
+			snoozed[it.ID] = true
+		}
+	}
+	s.removeAlerts(func(c AlertCard) bool { return c.Kind == scheduler.KindSweep || snoozed[c.ItemID] }, true)
+	return nil
+}
 
 // EditText returns the editable one-line form of an item.
 func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText(id) }
@@ -168,8 +222,8 @@ func (s *Service) StopRepeating(id string) error {
 	return err
 }
 
-// Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
-// are removed.
+// Snooze postpones a reminder or an open reply (a nudge card's Snooze):
+// "10m", "1h" or "tomorrow". Its alert cards are removed.
 func (s *Service) Snooze(id, preset string) error {
 	if err := s.d.Core.Snooze(id, preset); err != nil {
 		return err
@@ -198,8 +252,8 @@ func (s *Service) View() (core.View, error) { return s.d.Core.View() }
 func (s *Service) GetSettings() (settings.Settings, error) { return s.d.Core.Settings() }
 
 // SaveSettings validates and saves st, then applies it: re-registers the
-// hotkey, sets autostart and triggers the export. Invalid settings return an
-// error and change nothing. If the hotkey or autostart cannot be applied the
+// hotkeys, sets autostart and triggers the export. Invalid settings return an
+// error and change nothing. If a hotkey or autostart cannot be applied the
 // settings stay saved, the remaining steps still run, and the error is
 // returned (a hotkey error is also reported by Status).
 func (s *Service) SaveSettings(st settings.Settings) error {
@@ -207,8 +261,12 @@ func (s *Service) SaveSettings(st settings.Settings) error {
 		return err
 	}
 	var errs []error
-	if err := s.d.Hotkey.Set(st.Hotkey); err != nil {
-		errs = append(errs, fmt.Errorf("hotkey: %w", err))
+	capErr, replyErr := s.setHotkeys(st.Hotkey, st.ReplyHotkey)
+	if capErr != nil {
+		errs = append(errs, fmt.Errorf("hotkey: %w", capErr))
+	}
+	if replyErr != nil {
+		errs = append(errs, fmt.Errorf("reply hotkey: %w", replyErr))
 	}
 	if s.d.StatusChanged != nil {
 		s.d.StatusChanged()
@@ -228,11 +286,43 @@ func (s *Service) SaveSettings(st settings.Settings) error {
 	return err
 }
 
+// setHotkeys switches the capture and reply hotkeys to the given combos. A
+// new combo may still be held by the other manager (the two were swapped,
+// or one takes the other's old combo), which the OS refuses, so if either
+// fails both are released and set again; Resume then puts back the old combo
+// of one that still fails, as a failed Set leaves it.
+func (s *Service) setHotkeys(capture, reply string) (capErr, replyErr error) {
+	set := func() {
+		capErr = s.d.Hotkey.Set(capture)
+		if s.d.ReplyHotkey != nil {
+			replyErr = s.d.ReplyHotkey.Set(reply)
+		}
+	}
+	set()
+	if s.d.ReplyHotkey == nil || (capErr == nil && replyErr == nil) {
+		return capErr, replyErr
+	}
+	s.d.Hotkey.Suspend()
+	s.d.ReplyHotkey.Suspend()
+	set()
+	for _, hk := range []Hotkey{s.d.Hotkey, s.d.ReplyHotkey} {
+		if err := hk.Resume(); err != nil {
+			log.Printf("hotkey resume: %v", err)
+		}
+	}
+	return capErr, replyErr
+}
+
 // Status reports app health.
 func (s *Service) Status() Status {
 	var st Status
 	if err := s.d.Hotkey.Err(); err != nil {
 		st.HotkeyErr = err.Error()
+	}
+	if s.d.ReplyHotkey != nil {
+		if err := s.d.ReplyHotkey.Err(); err != nil {
+			st.ReplyHotkeyErr = err.Error()
+		}
 	}
 	return st
 }
@@ -255,16 +345,24 @@ func (s *Service) TakePendingFocus() string { return s.d.Windows.TakePendingFocu
 // OpenSettings shows the settings window.
 func (s *Service) OpenSettings() { s.d.Windows.OpenSettings() }
 
-// SetHotkeyRecording releases the global hotkey while the settings window
-// records a new combo (so pressing the current combo reaches the recorder
-// instead of opening the capture box) and registers it again afterwards.
+// SetHotkeyRecording releases both global hotkeys while the settings window
+// records a new combo (so pressing a current combo reaches the recorder
+// instead of opening the capture box) and registers them again afterwards.
 func (s *Service) SetHotkeyRecording(on bool) {
+	hks := []Hotkey{s.d.Hotkey}
+	if s.d.ReplyHotkey != nil {
+		hks = append(hks, s.d.ReplyHotkey)
+	}
 	if on {
-		s.d.Hotkey.Suspend()
+		for _, hk := range hks {
+			hk.Suspend()
+		}
 		return
 	}
-	if err := s.d.Hotkey.Resume(); err != nil {
-		log.Printf("hotkey resume: %v", err)
+	for _, hk := range hks {
+		if err := hk.Resume(); err != nil {
+			log.Printf("hotkey resume: %v", err)
+		}
 	}
 	if s.d.StatusChanged != nil {
 		s.d.StatusChanged()
@@ -295,6 +393,11 @@ func (s *Service) SetRepeat(id, repeat string) (model.Item, error) {
 // SetTags replaces an item's tags.
 func (s *Service) SetTags(id string, tags []string) (model.Item, error) {
 	return s.d.Core.SetTags(id, tags)
+}
+
+// SetOwedTo sets who a reply is owed to (trimmed; empty is nobody).
+func (s *Service) SetOwedTo(id, person string) (model.Item, error) {
+	return s.d.Core.SetOwedTo(id, person)
 }
 
 // SetDescription saves an item's Markdown description.

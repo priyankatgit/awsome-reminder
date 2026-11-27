@@ -26,7 +26,13 @@ func goldenView() core.View {
 	deploy.Tags = []string{"backend"}
 	weekday := model.Item{Text: "weekday sync", Priority: model.PriorityMedium, DueAt: due("2026-12-01 09:00"), RRule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", Tags: []string{"backend"}}
 	odd := model.Item{Text: "odd one", Priority: model.PriorityLow, DueAt: due("2026-12-02 09:00"), RRule: "FREQ=MONTHLY", Tags: []string{"backend"}}
+	priya := model.Item{Text: "Reply to Priya: can you review the doc?", Reply: true, Source: "Teams", Priority: model.PriorityHigh}
+	sam := model.Item{Text: "Reply to Sam", Reply: true}
 	return core.View{
+		Waiting: []core.PersonGroup{
+			{Person: "Priya", Items: []model.Item{priya}},
+			{Person: "Sam", Items: []model.Item{sam}},
+		},
 		Tags: []core.TagGroup{
 			{Tag: "inbox", Items: []model.Item{read, deploy, standup}},
 			{Tag: "backend", Items: []model.Item{deploy, weekday, odd}},

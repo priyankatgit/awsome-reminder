@@ -14,6 +14,10 @@ export interface AlertCard {
      * scheduler.Alert.Key; unique in the queue
      */
     "key": string;
+
+    /**
+     * "" for a sweep card
+     */
     "itemId": string;
     "text": string;
     "dueAt": string;
@@ -38,6 +42,52 @@ export interface AlertCard {
      * fired at the end of a snooze
      */
     "snoozed": boolean;
+
+    /**
+     * scheduler.Alert.Kind: "", "nudge" or "sweep"
+     */
+    "kind": string;
+
+    /**
+     * the item's OwedTo
+     */
+    "person": string;
+
+    /**
+     * the item's Source
+     */
+    "source": string;
+
+    /**
+     * a nudge: when the reply was captured
+     */
+    "waitingSince": string;
+
+    /**
+     * a sweep: who replies are owed to; never nil
+     */
+    "people": string[] | null;
+}
+
+/**
+ * ReplyPrefill is what the reply hotkey found, for the capture box in reply
+ * mode: the suggested one-line task, who is waiting, where the message came
+ * from and the message itself. Grabbed is false when Quote is the clipboard's
+ * own text (or empty) rather than the selection. NeedsAccess is true when
+ * macOS has not granted the Accessibility permission the grab needs.
+ * 
+ * KeepText is true when the hotkey was pressed with the capture box already
+ * open in normal mode: nothing was grabbed, every other field is empty, and
+ * the box switches to reply mode keeping the text it holds.
+ */
+export interface ReplyPrefill {
+    "line": string;
+    "owedTo": string;
+    "source": string;
+    "quote": string;
+    "grabbed": boolean;
+    "needsAccess": boolean;
+    "keepText": boolean;
 }
 
 /**
@@ -48,6 +98,11 @@ export interface Status {
      * "" when the hotkey is registered
      */
     "hotkeyErr": string;
+
+    /**
+     * "" when the reply hotkey is registered
+     */
+    "replyHotkeyErr": string;
 }
 
 /**

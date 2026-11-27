@@ -320,6 +320,47 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// The reply hotkey's error follows the capture hotkey's in the tooltip,
+// after the sync text; each is left out when empty.
+func TestBadgeWiringReplyHotkeyErr(t *testing.T) {
+	for _, tc := range []struct {
+		n                     int
+		sync, hk, reply, want string
+	}{
+		{3, "", "", "busy", "Awesome Reminder — 3 pending — reply hotkey error: busy"},
+		{3, "Syncing…", "taken", "busy", "Awesome Reminder — 3 pending — Syncing… — hotkey error: taken — reply hotkey error: busy"},
+		{-1, "", "taken", "", "Awesome Reminder — hotkey error: taken"},
+	} {
+		if got := pendingTooltip(tc.n, tc.sync, tc.hk, tc.reply); got != tc.want {
+			t.Errorf("pendingTooltip(%d, %q, %q, %q) = %q, want %q", tc.n, tc.sync, tc.hk, tc.reply, got, tc.want)
+		}
+	}
+
+	last := time.Date(2026, 11, 28, 11, 58, 0, 0, time.UTC)
+	tray := &fakeBadgeTray{}
+	w := newBadgeWiring(badgeDeps{
+		Count:          func() (int, error) { return 3, nil },
+		Show:           func() bool { return true },
+		HotkeyErr:      func() string { return "taken" },
+		ReplyHotkeyErr: func() string { return "busy" },
+		Sync:           func() cloudsync.Status { return cloudsync.Status{State: cloudsync.StateSynced, LastSyncAt: &last} },
+		Now:            func() time.Time { return last.Add(2 * time.Minute) },
+		Icons: trayIcons{
+			Light:    testPNG(t, color.NRGBA{0, 0, 0, 255}),
+			Dark:     testPNG(t, color.NRGBA{255, 255, 255, 255}),
+			Template: testPNG(t, color.NRGBA{0, 0, 0, 255}),
+		},
+		Tray:     tray,
+		Debounce: time.Millisecond,
+	})
+	w.Start(nil)
+	defer w.Stop()
+	waitFor(t, "first refresh", func() bool { _, tip, _ := tray.state(); return tip != "" })
+	if _, tip, _ := tray.state(); tip != "Awesome Reminder — 3 pending — Synced · 2 min ago — hotkey error: taken — reply hotkey error: busy" {
+		t.Fatalf("tooltip %q", tip)
+	}
+}
+
 func TestBadgeWiringSyncChanged(t *testing.T) {
 	plain := trayIcons{
 		Light:    testPNG(t, color.NRGBA{0, 0, 0, 255}),

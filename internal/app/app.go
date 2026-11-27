@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -20,16 +19,19 @@ import (
 	"awesome-reminder/internal/cloudsync/atlas"
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/export"
+	"awesome-reminder/internal/grab"
 	"awesome-reminder/internal/hotkey"
 	"awesome-reminder/internal/paths"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/secret"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
 const (
 	appName        = "Awesome Reminder"
 	captureFlag    = "--capture"
+	replyFlag      = "--reply"
 	listFlag       = "--list"
 	settingsFlag   = "--settings"
 	exportDebounce = time.Second
@@ -86,7 +88,23 @@ func Run(opts Options) error {
 		// Second-instance requests can arrive before win is assigned below;
 		// they are held until ApplicationStarted.
 		launches launchQueue
+		// The reply hotkey's press handler; it ignores presses until
+		// ApplicationStarted gives it the app context.
+		replies = &replyOpener{grab: grab.Grab, trusted: grab.AccessibilityTrusted}
 	)
+	// launch runs a command-line action (first launch or second instance).
+	launch := func(a launchAction) {
+		switch a {
+		case launchCapture:
+			win.ShowCapture()
+		case launchReply:
+			replies.Press(flagKeys)
+		case launchSettings:
+			win.OpenSettings()
+		case launchList:
+			win.OpenList("")
+		}
+	}
 	app := application.New(application.Options{
 		Name:        appName,
 		Description: "Hotkey quick-capture to-dos and reminders",
@@ -114,31 +132,26 @@ func Run(opts Options) error {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "dev.awesome-reminder.app",
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
-				if slices.Contains(d.Args, captureFlag) {
-					log.Printf("second instance: %s", captureFlag)
-					launches.Do(func() { win.ShowCapture() })
-					return
+				a := parseLaunch(d.Args)
+				if a == launchNone {
+					// A plain second launch (e.g. the Start menu entry).
+					a = launchList
 				}
-				if slices.Contains(d.Args, settingsFlag) {
-					log.Printf("second instance: %s", settingsFlag)
-					launches.Do(func() { win.OpenSettings() })
-					return
-				}
-				// --list, or a plain second launch (e.g. the Start menu entry).
-				log.Printf("second instance: open list")
-				launches.Do(func() { win.OpenList("") })
+				log.Printf("second instance: %s", a)
+				launches.Do(func() { launch(a) })
 			},
 		},
 	})
 	hotkey.SetMainThreadRunner(application.InvokeSync)
 
 	emit := func(name string, data ...any) { app.Event.Emit(name, data...) }
-	sched := scheduler.New(st, func() []time.Duration {
+	sched := scheduler.New(st, func() scheduler.Rules {
 		s, err := c.Settings()
 		if err != nil {
-			return nil
+			s = settings.Defaults(runtime.GOOS)
+			s.LeadTimes = nil // as before: no default leads while settings can't be read
 		}
-		return s.LeadTimes
+		return core.SchedulerRules(s, time.Local)
 	}, func(alerts []scheduler.Alert) {
 		// Runs inline in the scheduler loop: never block it. The scheduler
 		// only fires after Start (ApplicationStarted), when svc is set.
@@ -191,13 +204,26 @@ func Run(opts Options) error {
 	}()
 
 	win = newWindows(app)
-	hk := hotkey.NewManager(hotkey.Platform(), win.ShowCapture)
-	defer hk.Close()
+	replies.mode, replies.show = win.CaptureMode, win.ShowReply
+	hk := hotkey.NewManager(hotkey.Platform(captureFlag), win.ShowCapture)
+	// Each registration's press runs on its own goroutine (pumpPresses),
+	// never the main thread, and carries that combo's keys.
+	rhk := hotkey.NewManager(replyRegistrar(hotkey.Platform(replyFlag), replies.Press), nil)
+	// On the way out: no hotkey can start a grab, a grab in flight hands
+	// off its clipboard restore, and the restore finishes before the
+	// process exits.
+	defer func() {
+		hk.Close()
+		rhk.Close()
+		replies.Stop(replyStopTimeout)
+		grab.Wait()
+	}()
 
 	svc = NewService(Deps{
-		Core:    c,
-		Windows: win,
-		Hotkey:  hk,
+		Core:        c,
+		Windows:     win,
+		Hotkey:      hk,
+		ReplyHotkey: rhk,
 		Autostart: func(on bool) error {
 			exe, err := os.Executable()
 			if err != nil {
@@ -240,11 +266,12 @@ func Run(opts Options) error {
 			s, err := c.Settings()
 			return err != nil || s.ShowPendingCount
 		},
-		HotkeyErr: func() string { return svc.Status().HotkeyErr },
-		Icons:     trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
-		Tray:      wailsBadgeTray{app, tray},
-		Debounce:  badgeDebounce,
-		Sync:      syncCtl.Status,
+		HotkeyErr:      func() string { return svc.Status().HotkeyErr },
+		ReplyHotkeyErr: func() string { return svc.Status().ReplyHotkeyErr },
+		Icons:          trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
+		Tray:           wailsBadgeTray{app, tray},
+		Debounce:       badgeDebounce,
+		Sync:           syncCtl.Status,
 	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
@@ -255,8 +282,12 @@ func Run(opts Options) error {
 			if err := hk.Set(s.Hotkey); err != nil {
 				log.Printf("hotkey %s: %v", s.Hotkey, err)
 			}
+			if err := rhk.Set(s.ReplyHotkey); err != nil {
+				log.Printf("reply hotkey %s: %v", s.ReplyHotkey, err)
+			}
 			syncAutostart(s.Autostart)
 		}
+		replies.Start(app.Context())
 		badges.Start(newTaskbar(func() {
 			if app.Context().Err() != nil {
 				return // shutting down: the windows are being torn down
@@ -270,13 +301,8 @@ func Run(opts Options) error {
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()
 		launches.Ready()
-		switch args := os.Args[1:]; {
-		case slices.Contains(args, captureFlag):
-			go win.ShowCapture()
-		case slices.Contains(args, listFlag):
-			go win.OpenList("")
-		case slices.Contains(args, settingsFlag):
-			go win.OpenSettings()
+		if a := parseLaunch(os.Args[1:]); a != launchNone {
+			go launch(a)
 		}
 	})
 
