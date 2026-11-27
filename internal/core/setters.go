@@ -56,11 +56,35 @@ func (c *Core) SetDue(id string, due *time.Time) (model.Item, error) {
 	}
 	return c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.DueAt, it.SnoozeUntil, it.Kind = d, nil, kindFor(d)
-		if d == nil {
+		switch {
+		case d == nil:
 			it.RRule = ""
+		case isSingleDayWeekly(it.RRule):
+			it.RRule = c.weeklyRule(*it)
 		}
 		return nil
 	})
+}
+
+// isSingleDayWeekly reports whether rule is exactly FREQ=WEEKLY;BYDAY=<one
+// day>, the form SetRepeat("weekly") writes.
+func isSingleDayWeekly(rule string) bool {
+	code, ok := strings.CutPrefix(rule, "FREQ=WEEKLY;BYDAY=")
+	if !ok {
+		return false
+	}
+	for _, w := range weekdayCodes {
+		if code == w {
+			return true
+		}
+	}
+	return false
+}
+
+// weeklyRule is the weekly rule on the weekday of the item's due time in the
+// item's zone. The item must have a due time.
+func (c *Core) weeklyRule(it model.Item) string {
+	return "FREQ=WEEKLY;BYDAY=" + weekdayCodes[it.DueAt.In(c.itemLoc(it)).Weekday()]
 }
 
 // SetRepeat sets the recurrence: "none", "daily", "weekdays" or "weekly"
@@ -86,7 +110,7 @@ func (c *Core) SetRepeat(id, repeat string) (model.Item, error) {
 		case "weekdays":
 			it.RRule = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
 		case "weekly":
-			it.RRule = "FREQ=WEEKLY;BYDAY=" + weekdayCodes[it.DueAt.In(c.itemLoc(*it)).Weekday()]
+			it.RRule = c.weeklyRule(*it)
 		}
 		return nil
 	})

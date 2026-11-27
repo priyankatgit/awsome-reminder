@@ -202,3 +202,27 @@ func TestSettersNotifyOnceAndStamp(t *testing.T) {
 		e.now = e.now.Add(time.Minute)
 	}
 }
+
+func TestSetDueReanchorsSingleDayWeekly(t *testing.T) {
+	thu := utc(2026, 12, 3, 14, 0) // Thursday 09:00 in New York
+	for _, tc := range []struct{ in, want string }{
+		{"every monday 9am standup", "FREQ=WEEKLY;BYDAY=TH"},
+		{"every weekday 9am standup", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"},
+		{"every day 9am standup", "FREQ=DAILY"},
+	} {
+		e := newEnv(t)
+		it := mustCapture(t, e, tc.in)
+		got, err := e.c.SetDue(it.ID, &thu)
+		if err != nil || got.RRule != tc.want {
+			t.Fatalf("%q: rrule %q err %v, want %q", tc.in, got.RRule, err, tc.want)
+		}
+	}
+	// multi-day weekly is left alone
+	e := newEnv(t)
+	it := mustCapture(t, e, "tomorrow 9am standup")
+	e.c.mutate(it.ID, func(i *model.Item, _ time.Time) error { i.RRule = "FREQ=WEEKLY;BYDAY=MO,WE"; return nil })
+	got, err := e.c.SetDue(it.ID, &thu)
+	if err != nil || got.RRule != "FREQ=WEEKLY;BYDAY=MO,WE" {
+		t.Fatalf("rrule %q err %v", got.RRule, err)
+	}
+}
