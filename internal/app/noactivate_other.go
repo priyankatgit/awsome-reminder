@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin && !linux
 
 package app
 
@@ -10,6 +10,9 @@ func showNoActivate(win *application.WebviewWindow) (prevForeground uintptr) {
 	win.Show()
 	return 0
 }
+
+// restoreActivation does nothing: showNoActivate changed nothing.
+func restoreActivation(*application.WebviewWindow) {}
 
 // hideRestoringFocus hides win; the OS picks the next active window.
 func hideRestoringFocus(win *application.WebviewWindow, _ uintptr) {

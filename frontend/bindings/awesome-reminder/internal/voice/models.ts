@@ -47,3 +47,40 @@ export interface Status {
      */
     "hint": string;
 }
+
+/**
+ * WakeStatus is what the settings and the capture box need to know about
+ * the "Hey Awesome" wake word.
+ */
+export interface WakeStatus {
+    /**
+     * State is "off" (installed, switched off), "absent" (a consented
+     * download of Download bytes makes it available), "installing",
+     * "starting", "listening", "error" or "unsupported".
+     */
+    "state": string;
+    "enabled": boolean;
+    "chime": boolean;
+
+    /**
+     * "engine" | "model" while installing
+     */
+    "phase": string;
+
+    /**
+     * bytes downloaded so far
+     */
+    "done": number;
+
+    /**
+     * bytes this install downloads
+     */
+    "total": number;
+
+    /**
+     * bytes a consent click will fetch
+     */
+    "download": number;
+    "error": string;
+    "hint": string;
+}

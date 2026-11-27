@@ -241,7 +241,7 @@ func Run(opts Options) error {
 	// Recurring reminders not marked done move on to their latest occurrence
 	// before each plan (ruling R15); the scheduler wakes at the next one.
 	sched.SetBeforePlan(svc.advanceRecurring)
-	registerVoice(app)
+	registerVoice(app, win)
 	win.onAlertsClosed = svc.alertsClosed
 	// A settings window closed while recording a hotkey must not leave the
 	// global hotkey released.

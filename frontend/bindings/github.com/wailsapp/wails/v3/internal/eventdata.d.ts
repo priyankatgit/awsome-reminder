@@ -20,11 +20,13 @@ declare module "@wailsio/runtime" {
         interface CustomEvents {
             "alerts:show": app$0.AlertCard[] | null;
             "capture:open": void;
+            "capture:wake": void;
             "items:changed": void;
             "list:focus": string;
             "reply:open": app$0.ReplyPrefill;
             "sync:status": cloudsync$0.Status;
             "voice:status": voice$0.Status;
+            "voice:wake-status": voice$0.WakeStatus;
         }
     }
 }

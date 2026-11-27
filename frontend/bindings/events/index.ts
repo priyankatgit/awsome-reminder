@@ -19,6 +19,11 @@ export const AlertsShow = "alerts:show";
 export const CaptureOpen = "capture:open";
 
 /**
+ * Name of the custom event "capture:wake".
+ */
+export const CaptureWake = "capture:wake";
+
+/**
  * Name of the custom event "items:changed".
  */
 export const ItemsChanged = "items:changed";
@@ -42,4 +47,9 @@ export const SyncStatus = "sync:status";
  * Name of the custom event "voice:status".
  */
 export const VoiceStatus = "voice:status";
+
+/**
+ * Name of the custom event "voice:wake-status".
+ */
+export const VoiceWakeStatus = "voice:wake-status";
 

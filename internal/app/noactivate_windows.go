@@ -47,6 +47,10 @@ func showNoActivate(win *application.WebviewWindow) (prevForeground uintptr) {
 	return prevForeground
 }
 
+// restoreActivation undoes what showNoActivate changed before a normal,
+// focusing show. Nothing is left changed on Windows.
+func restoreActivation(*application.WebviewWindow) {}
+
 // hideRestoringFocus hides win. If the user had clicked into it (so it is
 // the foreground window), hiding it would leave the hidden window active and
 // the keyboard going nowhere, so activation is first handed back to prev,
