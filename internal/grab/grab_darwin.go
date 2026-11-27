@@ -4,9 +4,10 @@ package grab
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices
+#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices -framework Carbon
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <Carbon/Carbon.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -151,12 +152,73 @@ static int pbRestore(void *saved) {
 	return ok;
 }
 
-// postCopy posts Cmd+C (kVK_ANSI_C down and up). It returns 0 when the
-// events cannot be made.
-static int postCopy(void) {
+// findC is the keycode (0-127) that types "c" in src's layout with the
+// given modifier state (Carbon modifiers >> 8), or -1.
+static int findC(TISInputSourceRef src, UInt32 mods) {
+	CFDataRef data = (CFDataRef)TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData);
+	if (data == NULL) return -1;
+	const UCKeyboardLayout *layout = (const UCKeyboardLayout *)CFDataGetBytePtr(data);
+	for (UInt16 k = 0; k < 128; k++) {
+		UInt32 dead = 0;
+		UniChar ch[4];
+		UniCharCount n = 0;
+		if (UCKeyTranslate(layout, k, kUCKeyActionDown, mods, LMGetKbdType(),
+				kUCKeyTranslateNoDeadKeysMask, &dead, 4, &n, ch) == noErr && n == 1 && ch[0] == 'c') {
+			return k;
+		}
+	}
+	return -1;
+}
+
+// Touched only on the main thread.
+static CFStringRef cachedSourceID = NULL;
+static int cachedKeyCode = -1;
+
+// keyCodeForCOnMain looks "c" up in the current layout, with Command held
+// first (a "Dvorak - QWERTY Cmd" layout switches to QWERTY for shortcuts),
+// then with no modifiers, then in the ASCII-capable layout (what Cmd
+// shortcuts use under Cyrillic, Greek and similar layouts). The answer is
+// cached per current input source ID.
+static int keyCodeForCOnMain(void) {
+	TISInputSourceRef cur = TISCopyCurrentKeyboardLayoutInputSource();
+	if (cur == NULL) return -1;
+	CFStringRef sid = (CFStringRef)TISGetInputSourceProperty(cur, kTISPropertyInputSourceID);
+	if (sid != NULL && cachedSourceID != NULL && CFEqual(sid, cachedSourceID)) {
+		CFRelease(cur);
+		return cachedKeyCode;
+	}
+	UInt32 cmd = (cmdKey >> 8) & 0xFF;
+	int code = findC(cur, cmd);
+	if (code < 0) code = findC(cur, 0);
+	if (code < 0) {
+		TISInputSourceRef ascii = TISCopyCurrentASCIICapableKeyboardLayoutInputSource();
+		if (ascii != NULL) {
+			code = findC(ascii, cmd);
+			CFRelease(ascii);
+		}
+	}
+	if (cachedSourceID != NULL) CFRelease(cachedSourceID);
+	cachedSourceID = sid != NULL ? CFStringCreateCopy(NULL, sid) : NULL;
+	cachedKeyCode = code;
+	CFRelease(cur);
+	return code;
+}
+
+// keyCodeForC runs the lookup on the main queue: TIS requires it on
+// macOS 14 and later. It returns -1 when no key types "c".
+static int keyCodeForC(void) {
+	if ([NSThread isMainThread]) return keyCodeForCOnMain();
+	__block int code = -1;
+	dispatch_sync(dispatch_get_main_queue(), ^{ code = keyCodeForCOnMain(); });
+	return code;
+}
+
+// postCopy posts Cmd plus key (down and up). It returns 0 when the events
+// cannot be made.
+static int postCopy(int key) {
 	CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-	CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, true);
-	CGEventRef up = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, false);
+	CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)key, true);
+	CGEventRef up = CGEventCreateKeyboardEvent(src, (CGKeyCode)key, false);
 	int ok = down != NULL && up != NULL;
 	if (ok) {
 		CGEventSetFlags(down, kCGEventFlagMaskCommand);
@@ -192,7 +254,8 @@ import (
 // background goroutine, as on Windows.
 //
 // AppKit's pasteboard and NSWorkspace are used from the calling goroutine,
-// not the main thread: each C call has its own autorelease pool.
+// not the main thread: each C call has its own autorelease pool. Only the
+// keyboard layout lookup (TIS) runs on the main queue, as macOS 14 needs.
 
 // restoreMu is held from the save until the pasteboard is put back,
 // including by a background restore. A grab that finds it held does not
@@ -255,6 +318,12 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 		}
 	}()
 	fallback, _ := fallbackQuote(goString(C.pbString()))
+	// The key that types "c" on this layout: keycode 8 is "j" on Dvorak.
+	key := C.keyCodeForC()
+	if key < 0 {
+		log.Printf("grab: no key types \"c\" on this keyboard layout; not injecting")
+		return fallback, false
+	}
 	// Reject files and images before reading anything: a read can make the
 	// source app render promised data.
 	types := strings.FieldsFunc(goString(C.pbTypes()), func(r rune) bool { return r == '\n' })
@@ -274,7 +343,7 @@ func copySelection(ctx context.Context) (text string, grabbed bool) {
 		return fallback, false
 	}
 	seq := changeCount()
-	if C.postCopy() == 0 {
+	if C.postCopy(key) == 0 {
 		log.Printf("grab: CGEventCreateKeyboardEvent failed; not injecting")
 		C.pbFree(saved)
 		return fallback, false
