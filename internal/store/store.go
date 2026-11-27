@@ -88,8 +88,17 @@ func fromMs(v sql.NullInt64) *time.Time {
 	return &t
 }
 
-// Put inserts or replaces an item by ID.
+// Put inserts or replaces an item by ID and queues it for sync.
 func (s *Store) Put(it model.Item) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := putItem(tx, it); err != nil {
+			return err
+		}
+		return enqueue(tx, OutboxItem, it.ID)
+	})
+}
+
+func putItem(db execer, it model.Item) error {
 	tags := it.Tags
 	if tags == nil {
 		tags = []string{}
@@ -111,7 +120,7 @@ func (s *Store) Put(it model.Item) error {
 		leads = string(b)
 	}
 	created, updated := it.CreatedAt.UnixMilli(), it.UpdatedAt.UnixMilli()
-	_, err = s.db.Exec(`INSERT INTO items
+	_, err = db.Exec(`INSERT INTO items
 		(id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -224,11 +233,25 @@ func (s *Store) LoadSettings(goos string) (settings.Settings, error) {
 
 // SaveSettings persists the settings (it does not validate them).
 func (s *Store) SaveSettings(st settings.Settings) error {
+	return saveSettings(s.db, st)
+}
+
+// SaveSettingsShared is SaveSettings plus queueing the settings for sync.
+func (s *Store) SaveSettingsShared(st settings.Settings) error {
+	return s.inTx(func(tx *sql.Tx) error {
+		if err := saveSettings(tx, st); err != nil {
+			return err
+		}
+		return enqueue(tx, OutboxSettings, settingsOutboxID)
+	})
+}
+
+func saveSettings(db execer, st settings.Settings) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO settings(id,json) VALUES(1,?)
+	_, err = db.Exec(`INSERT INTO settings(id,json) VALUES(1,?)
 		ON CONFLICT(id) DO UPDATE SET json=excluded.json`, string(b))
 	return err
 }
