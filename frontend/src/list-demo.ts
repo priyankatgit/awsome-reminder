@@ -177,7 +177,7 @@ function installSyncDemo(setPending: (ids: string[]) => void): void {
       }),
     },
   ];
-  let current = states[3];
+  let current = states[location.hash === "#settings" ? 0 : 3];
   const apply = (d: Demo) => {
     current = d;
     setPending(d.ids);
@@ -188,6 +188,24 @@ function installSyncDemo(setPending: (ids: string[]) => void): void {
       setPending(current.ids);
       return { ...current.status(), warnings: (current.status().warnings as string[]) ?? [] };
     },
+    // Settings preview (?demo#settings): a "good" string is any mongodb+srv://
+    // one; one containing "bad" fails like Go's check.
+    connect: async (u: string) => {
+      await new Promise((r) => window.setTimeout(r, 600));
+      if (u.includes("bad")) throw new Error("Authentication failed: check the user name and password in your connection string.");
+      current = states[2];
+      return current.status();
+    },
+    disconnect: async () => {
+      current = states[0];
+      window.setTimeout(() => emitLocal(events.syncStatus, current.status()), 0);
+    },
+    info: async () => ({
+      connected: current !== states[0],
+      host: current === states[0] ? "" : "cluster0.ab1cd.mongodb.net",
+      secretStore: location.search.includes("fallback") ? "Encrypted file on this computer" : "Windows Credential Manager",
+      attachmentBytes: location.search.includes("unknown") ? -1 : 12_400_000,
+    }),
     now: async () => {
       apply(states[1]);
       await new Promise((r) => window.setTimeout(r, 800));

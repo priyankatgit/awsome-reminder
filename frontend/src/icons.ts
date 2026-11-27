@@ -17,6 +17,7 @@ import {
   Download,
   Ellipsis,
   Eye,
+  EyeOff,
   Heading2,
   ImagePlus,
   Inbox,
@@ -93,6 +94,8 @@ export const icons = {
   link: render(Link as IconNode),
   image: render(ImagePlus as IconNode),
   preview: render(Eye as IconNode),
+  eye: render(Eye as IconNode),
+  eyeOff: render(EyeOff as IconNode),
   // Sync (Phase 2)
   cloud: render(Cloud as IconNode),
   cloudCheck: render(CloudCheck as IconNode),

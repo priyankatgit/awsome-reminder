@@ -2129,3 +2129,150 @@ legend.field-label {
   cursor: default;
   opacity: var(--completing-opacity);
 }
+
+/* ---------- Phase 2: Settings › Sync across machines ---------- */
+
+/* Same column as .settings-form; sits below it, outside the Save flow. */
+.settings-sync {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--settings-max);
+  margin: 0 auto;
+  padding: 0 var(--space-5) var(--space-5);
+  border-top: var(--hairline) solid var(--border);
+  box-sizing: content-box;
+}
+
+.sync-title {
+  margin: var(--space-5) 0 0;
+  font-size: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--fg);
+}
+
+.secret-box {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.secret-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.secret-toggle {
+  flex: none;
+  padding: 0 var(--space-2);
+}
+
+.settings-sync .link {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
+.sync-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  height: var(--sync-pill-height);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  color: var(--fg);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+}
+
+.sync-line[data-tone="ok"] {
+  background: var(--sync-ok-bg);
+  color: var(--sync-ok-fg);
+}
+
+.sync-line[data-tone="muted"] {
+  background: var(--sync-muted-bg);
+  color: var(--sync-muted-fg);
+}
+
+.sync-line[data-tone="danger"] {
+  background: var(--sync-danger-bg);
+  color: var(--sync-danger-fg);
+}
+
+.sync-line-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.sync-line .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.sync-line.is-spin .icon {
+  animation: sync-spin var(--dur-sync-spin) linear infinite;
+}
+
+.sync-fact {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sync-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sync-warnings:empty {
+  display: none;
+}
+
+.sync-warning {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--time-text);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.sync-warning-icon {
+  display: inline-flex;
+  flex: none;
+  padding-top: 2px;
+}
+
+.sync-warning .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+}
+
+.sync-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sync-confirm[hidden],
+.settings-sync .field[hidden],
+.settings-sync .field-row[hidden] {
+  display: none;
+}
+
+.sync-confirm-text {
+  margin: 0;
+}
+
+.btn-danger-text {
+  color: var(--danger-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-line.is-spin .icon {
+    animation: none;
+  }
+}
