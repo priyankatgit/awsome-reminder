@@ -19,6 +19,11 @@ import (
 // binary that dies at once ("crash"), so engine tests never need the real
 // engine.
 func TestMain(m *testing.M) {
+	if os.Getenv("FAKE_KWS") == "idle" {
+		// Fake wake helper: prints nothing, runs until killed or stdin closes.
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		os.Exit(0)
+	}
 	switch os.Getenv("FAKE_WHISPER") {
 	case "":
 		os.Exit(m.Run())
