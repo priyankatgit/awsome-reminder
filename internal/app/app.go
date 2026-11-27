@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"time"
@@ -146,6 +147,12 @@ func Run(opts Options) error {
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {
+			return ""
+		}
+		// Settings.Validate rejects a relative path; one stored before that
+		// check would land in the working directory (System32 at login).
+		if s.ExportPath != "" && !filepath.IsAbs(s.ExportPath) {
+			log.Printf("export: ignoring relative path %q", s.ExportPath)
 			return ""
 		}
 		return s.ExportPath

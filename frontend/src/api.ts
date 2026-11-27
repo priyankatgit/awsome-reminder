@@ -105,6 +105,11 @@ export function isMac(): boolean {
   return System.IsMac();
 }
 
+/** Whether we run on Windows (drive-letter paths). */
+export function isWindows(): boolean {
+  return System.IsWindows();
+}
+
 /** Message text of a rejected binding call. */
 export function errorText(err: unknown): string {
   if (err instanceof Error) return err.message;

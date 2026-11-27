@@ -2,7 +2,7 @@
 // helper text below, errors inline. Follows the "Settings" section of the UI
 // guide. Go validates on save (internal/settings Validate); the checks here
 // mirror it so most mistakes show before saving.
-import { api, errorText, isMac, type Settings } from "./api";
+import { api, errorText, isMac, isWindows, type Settings } from "./api";
 import { el, keycaps } from "./dom";
 import { icons } from "./icons";
 
@@ -163,6 +163,7 @@ export function fieldOf(msg: string): { field: FieldKey; text: string } {
     defaultTime: "defaultTime",
     nextWeekTime: "nextWeek",
     nextWeekDay: "nextWeek",
+    exportPath: "exportPath",
     autostart: "autostart",
   };
   if (m && map[m[1]]) {
@@ -173,6 +174,20 @@ export function fieldOf(msg: string): { field: FieldKey; text: string } {
 }
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Whether p looks like a full path (mirrors filepath.IsAbs in
+ * Settings.Validate): "C:\..." or "\\server\share\..." on Windows, "/..."
+ * elsewhere.
+ */
+export function isFullPath(p: string, windows: boolean): boolean {
+  return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(p) : p.startsWith("/");
+}
+
+/** The sample path in the "full path" error (same as Go's). */
+function examplePath(windows: boolean): string {
+  return windows ? "C:\\Users\\you\\todo.md" : "/home/you/todo.md";
+}
 
 const TEMPLATE = `
 <div class="settings-app">
@@ -288,6 +303,7 @@ export function mountSettings(root: HTMLElement): void {
   };
 
   const mac = isMac();
+  const windows = isWindows();
   for (const d of WEEKDAYS) {
     const o = el("option", undefined, d.charAt(0).toUpperCase() + d.slice(1));
     o.value = d;
@@ -411,6 +427,10 @@ export function mountSettings(root: HTMLElement): void {
     };
     if (!CLOCK.test(draft.defaultTime)) fail("defaultTime", "Enter a time, for example 09:00");
     if (!CLOCK.test(draft.nextWeekTime)) fail("nextWeek", "Enter a time, for example 09:00");
+    const path = draft.exportPath.trim();
+    if (path && !isFullPath(path, windows)) {
+      fail("exportPath", `Export path must be a full path, e.g. ${examplePath(windows)}`);
+    }
     if (leadAdd.value.trim() && !addLead()) first ??= "leads";
     return first;
   }
