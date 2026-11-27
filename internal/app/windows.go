@@ -327,9 +327,14 @@ func newWindows(app *application.App) *wailsWindows {
 		Mac: application.MacWindow{
 			Backdrop: application.MacBackdropTranslucent,
 		},
+		// Dictation: grant the mic to our own page without a WebView prompt
+		// (macOS still asks once at the OS level, see Info.plist).
+		Permissions: map[application.PermissionType]application.Permission{
+			application.PermissionMicrophone: application.PermissionAllow,
+		},
 		DefaultContextMenuDisabled: true,
 	})
-	w.size = &heightKeeper{height: captureHeight, set: func(h int) { w.capture.SetSize(captureWidth, h) }}
+	w.size =&heightKeeper{height: captureHeight, set: func(h int) { w.capture.SetSize(captureWidth, h) }}
 	w.capture.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		w.HideCapture()
 	})
