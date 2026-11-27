@@ -1,0 +1,47 @@
+# Manual test checklist
+
+Per-OS verification for the Phase 1 build, from the Verification section of the [design spec](superpowers/specs/2026-11-27-awesome-reminder-design.md). Run it on a release build (`wails3 build`) and record the result per OS.
+
+Result values: **pass**, **fail** (with the number or a note), **needs human** (not verifiable by a script or needs a person at the keyboard or a reboot), **n/a**, or blank (not run yet). Only the Windows column has been filled in so far, and only with what was actually observed; the macOS and Linux columns are still to be run on those machines.
+
+Safety when testing: do not run `bin/awesome-reminder` from the repo folder if you do not want it to register itself for autostart. Copy it elsewhere first, or point `APPDATA` / `XDG_CONFIG_HOME` / `HOME` at a scratch folder so the real data is untouched. (The app skips autostart registration when it runs from a temp directory.)
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| 1 | Hotkey latency < 150 ms | Press the hotkey while another app is focused; the capture box should be visible and typeable almost immediately. Time it with a phone slow-motion video or a stopwatch overlay. | needs human | | | n/a for the global hotkey (bind `awesome-reminder --capture` instead; time that) |
+| 2 | Capture popup centered on the active monitor and focused | With two monitors, put the mouse and the focused app on the second one; press the hotkey; type immediately. The box is centered on that monitor and the first keystrokes land in the input. | needs human | | | |
+| 3 | Tray menu | Tray icon is visible and legible on light and dark taskbars/menu bars; the menu shows Open List, Settings, Quit; the left click opens the list; Quit exits. On macOS the icon is a template image and follows the menu bar color. | needs human (the icon and menu were not inspected or clicked) | | | |
+| 4 | Autostart after reboot | Enable "Start at login", reboot, log in: the app is running in the tray with no window. Disable the setting: the entry is removed (Windows: `HKCU\...\Run\AwesomeReminder`; macOS: `~/Library/LaunchAgents`; Linux: `~/.config/autostart`). | needs human (reboot) | | | |
+| 5 | Catch-up after sleep | Create a reminder due in 3 minutes with the default lead times (1h, 10m, at due). Sleep the machine through the due time, wake it. Exactly one "missed" card per item appears, not one per lead time. | needs human (sleep) | | | |
+| 6 | Idle RAM < 150 MB after 10 min idle, all windows closed | Task Manager (Details, add the app and its WebView2 children) / Activity Monitor / `ps -o rss`. Sum the app and its WebView2/WebKit helper processes. | **fail: about 200 MB private, 390 MB working set summed over the tree** (see measurements; idle time was 3 min, not 10) | | | |
+| 7 | ~0% idle CPU | Same tools, 60 s window with nothing open. | about 1% of one core (0.05% of 16 cores), see measurements | | | |
+| 8 | Second-instance flags | Start the app, then run `awesome-reminder --capture`, `--list`, `--settings`: each opens the matching window in the running copy and the second process exits. | pass (log: `second instance: --capture`/`open list`/`--settings`; windows `Awesome Reminder` and `Awesome Reminder Settings` became visible; second process exit code 0) | | | |
+| 9 | Windows hide, app keeps running | Close the list and settings windows. The app and tray stay alive. | pass (closed via WM_CLOSE; log `settings: closed`, `list: closed`; process alive, 0 visible windows) | | | |
+| 10 | `todo.md` export | Set an export path in Settings (or the database), change an item (toggle done). The file appears within a second or two with sections per tag and a Done section. | pass (seeded the export path, toggled an item in the list with the keyboard; the file was written with the expected content) | | | |
+| 11 | Build metadata | Windows exe properties: product "Awesome Reminder", version 0.1.0, no company. macOS: bundle id `dev.awesome-reminder.app`, name "Awesome Reminder". | pass for the Windows exe (ProductName, FileDescription, 0.1.0, empty CompanyName); macOS not checked | | | |
+| 12 | Unsigned-app prompts | First launch shows SmartScreen / Gatekeeper; the README steps get past it. | needs human | | | |
+| 13 | Hotkey conflict | Register the hotkey in another app first. This app keeps running; the tray tooltip and Settings show the error; a new combo can be saved. | needs human (covered by `TestHotkeyManagerReportsRegisterError`) | | | |
+
+## Windows 11 measurements
+
+Machine: Windows 11 Pro build 26300, 16 logical cores, WebView2 runtime 158.0.4370.45. Build: `wails3 build` (production, 14.8 MB exe), run from a copy under `%TEMP%` with `APPDATA` pointed at a scratch folder (empty database, then seeded with 2 items for the fresh-start run).
+
+Method: PowerShell. Find the app process, walk Win32_Process by `ParentProcessId` (CIM) to collect all descendants (the msedgewebview2 processes of this app only; other apps' WebView2 processes on the machine are excluded), then read `WorkingSet64`, `PrivateMemorySize64` and `TotalProcessorTime` for each. CPU is the change in total processor seconds over the window divided by the wall time, as a percent of one core.
+
+Fresh start, no window ever opened, 3 minutes idle, then a 60 s CPU window:
+
+| Process | Working set | Private | CPU (% of one core) |
+|---|---|---|---|
+| awesome-reminder (Go app) | 34.5 MB | 54.1 MB | 0.85 |
+| msedgewebview2 browser (main) | 129.8 MB | 35.3 MB | 0.08 |
+| msedgewebview2 gpu-process | 80.8 MB | 61.7 MB | 0 |
+| msedgewebview2 renderer | 67.5 MB | 26.1 MB | 0 |
+| msedgewebview2 utility x2 | 40.4 + 21.0 MB | 11.8 + 7.7 MB | 0.08 |
+| msedgewebview2 crashpad-handler | 13.0 MB | 3.0 MB | 0 |
+| **Total (7 processes)** | **387 MB** | **199.7 MB** | **1.01** |
+
+After opening capture, list and settings once, closing them all (windows are hidden, not destroyed), and about 1 to 3 minutes of idle: app alone 38.0 MB working set / 56.1 MB private; whole tree 391 MB working set / 210 MB private; 1.8 to 2.0% of one core over 30 s.
+
+Reading the numbers: the Go process alone is well under the 150 MB budget. With the WebView2 helper processes included, private memory is about 200 MB and the summed working set about 390 MB (the working-set sum double counts pages shared between the browser processes, so private is the fairer total). Either way row 6 fails against the 150 MB target on this machine. Row 7 is 0.05% of total CPU on 16 cores but not literally zero: the Go process itself uses about 0.85% of a core while idle, which is worth a look (timers/polling) before the Phase 1 sign-off. The idle time was 3 minutes, shorter than the 10 minutes in the row; memory was flat between samples (391.3 vs 392.6 MB working set 30 s apart), but a 10 minute run has not been done.
+
+Possible follow-ups, not done here: create the capture/list/settings windows lazily and destroy them (not just hide them) so the WebView2 renderer and GPU processes exit when nothing is open; check whether the hidden capture window can be created on first use.

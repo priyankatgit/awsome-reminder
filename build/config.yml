@@ -5,7 +5,7 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "" # The name of the company (none)
+  companyName: "" # none: the update task falls back to "My Company" in windows/info.json and linux/nfpm/nfpm.yaml; those two are blanked by hand
   productName: "Awesome Reminder" # The name of the application
   productIdentifier: "dev.awesome-reminder.app" # The unique product identifier
   description: "Hotkey quick-capture for to-dos and reminders" # The application description
