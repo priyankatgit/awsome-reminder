@@ -55,7 +55,18 @@ type Item struct {
 	UpdatedBy   string          `json:"updatedBy"`
 	Priority    string          `json:"priority"`    // "", low, medium, high
 	Description string          `json:"description"` // Markdown
+
+	Reply        bool   `json:"reply"`        // a reply is owed
+	OwedTo       string `json:"owedTo"`       // who the reply is owed to
+	Source       string `json:"source"`       // where the message came from
+	ReplyOutcome string `json:"replyOutcome"` // "" while open, else ReplyReplied/ReplyDropped
 }
+
+// Reply outcomes. The empty string means the reply is still owed.
+const (
+	ReplyReplied = "replied"
+	ReplyDropped = "dropped"
+)
 
 // Attachment is an image attached to an item's description.
 type Attachment struct {
