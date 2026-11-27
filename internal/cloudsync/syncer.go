@@ -6,6 +6,8 @@ package cloudsync
 
 import (
 	"context"
+	"log"
+	"regexp"
 	"time"
 
 	"awesome-reminder/internal/core"
@@ -134,6 +136,9 @@ type Options struct {
 	ErrorRetry time.Duration    // default 5 min
 	OnStatus   func(Status)
 	OnApplied  func([]core.Applied)
+	// Logf writes a log line (default log.Printf). Lines never hold the
+	// connection string: errors pass through Redact.
+	Logf func(format string, args ...any)
 }
 
 // Defaults for Options.
@@ -156,5 +161,18 @@ func (o Options) withDefaults() Options {
 	if o.ErrorRetry <= 0 {
 		o.ErrorRetry = DefaultErrorRetry
 	}
+	if o.Logf == nil {
+		o.Logf = log.Printf
+	}
 	return o
+}
+
+// uriUserinfo matches a MongoDB connection string's scheme and user info (up
+// to the last @ before the path, so an unescaped @ in a password is covered).
+var uriUserinfo = regexp.MustCompile(`(mongodb(?:\+srv)?://)[^\s/?#]*@`)
+
+// Redact replaces the user and password of any MongoDB connection string in s
+// with ***, for log lines built from driver errors.
+func Redact(s string) string {
+	return uriUserinfo.ReplaceAllString(s, "${1}***@")
 }
