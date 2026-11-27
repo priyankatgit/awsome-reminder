@@ -351,3 +351,18 @@ func TestMissingReplyHotkeyAvoidsCaptureCollision(t *testing.T) {
 		t.Fatalf("windows default %q", got)
 	}
 }
+
+// WorkDays order does not make two Shared values differ, so saving the same
+// days in another order does not re-stamp the shared settings.
+func TestSharedEqualIgnoresWorkDaysOrder(t *testing.T) {
+	p := Defaults("windows").Shared()
+	q := p
+	q.WorkDays = []string{"friday", "monday", "wednesday", "tuesday", "thursday"}
+	if !p.Equal(q) {
+		t.Errorf("Equal false for the same days in another order")
+	}
+	q.WorkDays = []string{"monday", "tuesday"}
+	if p.Equal(q) {
+		t.Errorf("Equal true for different days")
+	}
+}
