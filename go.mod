@@ -6,6 +6,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/teambition/rrule-go v1.8.2
 	github.com/wailsapp/wails/v3 v3.1.0
+	github.com/zalando/go-keyring v0.2.8
 	golang.design/x/hotkey v0.6.4
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.49.0
@@ -14,6 +15,7 @@ require (
 
 require (
 	github.com/coder/websocket v1.8.14 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
