@@ -295,7 +295,7 @@
   2. **Push:** loop `Outbox(100)` for at most 10 batches. For each entry, read it via `Item` / `AttachmentForSync` / `SharedForSync`, push it, then `Ack` it.
      - `ErrAttachmentFileMissing` and `store.ErrNotFound` → log and `Ack` (drop).
      - Any other error aborts the cycle.
-  3. **Pull** attachments, then items, then shared settings. Each collection starts from `saved.T − 2 min` (meta `sync_wm_attachments` / `sync_wm_items`, JSON) and pages until a short page. Each page goes through `ApplyRemote*`. Afterwards, save `max(saved, last returned)`. `OnApplied` receives the items' `Applied` lists.
+  3. **Pull** attachments, then shared settings, then items (as shipped, so restored items use the remote lead times). Each collection starts from `saved.T − 2 min` (meta `sync_wm_attachments` / `sync_wm_items`, JSON) and pages until a short page. Each page goes through `ApplyRemote*`. Afterwards, save `max(saved, last returned)`. `OnApplied` receives the items' `Applied` lists.
   4. On success: state `synced`, `LastSyncAt = now` (also meta `sync_last_at`), and `Pending = OutboxCount()`. On error: `Classify`, then schedule `nextDelay`. Emit status either way.
   - On the first cycle after `Start`, `ServerTime` vs `Now`: if `|skew| > 2 min`, add to Warnings `This computer's clock is N min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.` Also on the first cycle: `ScopeTooBroad` true → add the scope warning (Global Constraints); an error → log only.
 - `memsync` is an in-memory `Syncer` with the same LWW and `_srv` semantics: a server clock that strictly increases per write, plus `FailNext(err error, n int)`, `BeforePush(fn func())`, `PutRaw(doc map[string]any)` for malformed docs, and `SetScopeTooBroad(v bool, err error)`. Its `Classify` maps an injected `memsync.ErrNetwork` to offline and anything else to error.
@@ -503,7 +503,7 @@
 
 **Files:**
 - Create: `frontend/src/sync-status.ts`, `frontend/src/sync-status.test.ts`, `frontend/src/sync-pill.ts`
-- Modify: `frontend/src/list.ts` (header slot before the settings button; refresh the view when `pending` changes), `frontend/src/item-row.ts` (marker), `frontend/src/icons.ts` (`Cloud`, `CloudCheck`, `CloudOff`, `CloudAlert`, `RefreshCw`; check the names in the installed `lucide`), `frontend/src/tokens.css`, `frontend/src/style.css`, `frontend/src/list-demo.ts` (a state switcher for every status)
+- Modify: `frontend/src/list.ts` (header slot before the settings button; refresh the view when `pending` changes), `frontend/src/item-row.ts` (marker), `frontend/src/icons.ts` (`Cloud`, `CloudCheck`, `CloudOff`, `CloudAlert`, `RefreshCw`; check the names in the installed `lucide`; as shipped, `cloudAlert` renders Lucide `CloudExclamationPoint` (`cloud-exclamation-point`), the installed version has no `cloud-alert`), `frontend/src/tokens.css`, `frontend/src/style.css`, `frontend/src/list-demo.ts` (a state switcher for every status)
 
 **Interfaces:**
 - Consumes: Task 7 `SyncStatus`, `SyncNow`, `OpenSettings`, `onSyncStatus`; `View.pending` (Task 3).
