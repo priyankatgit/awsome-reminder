@@ -48,6 +48,9 @@ Dark is the default; light follows `prefers-color-scheme: light`.
 | `--sync-glow` | `0 0 10px 2px rgba(74,222,128,.6)` | `0 0 10px 2px rgba(22,163,74,.45)` | one glow of the pill when the last waiting change reaches Atlas |
 | `--sync-pill-height`, `--sync-popover-width` | `24px`, `296px` | same | pill and details popover size |
 | `--dur-sync-glow`, `--dur-marker-fade`, `--dur-sync-spin` | `600ms`, `180ms`, `1000ms` | same | glow, marker fade-out, spinner turn |
+| `--person-input-width` | `16ch` | same | reply mode's inline person editor in the capture box |
+| `--reply-source-max` | `14ch` | same | the source name on a Waiting row; a longer name truncates |
+| `--person-field-max` | `28ch` | same | the details panel's **For** input |
 
 Rule: text uses the `-text` / `-fg` variants, never the plain `--accent` / `--time` / `--danger`, so contrast holds on `--bg`, `--surface` and `--muted` in both themes. `frontend/src/tokens.css` is authoritative if this table drifts.
 
@@ -126,6 +129,13 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - After stop, the label changes to "Transcribing…" with a 3-dot shimmer. The text then types into the input (fast fade-in, not char-by-char), the normal preview appears, and focus returns to the input. **Enter saves** — dictation never auto-saves.
 - `role="status"` announces "Listening", "Transcribing", "Ready to save".
 
+### Reply mode (Replies owed)
+- The reply hotkey (or `--reply`) opens the same box with `data-mode="reply"`: the line is pre-filled with the message in double quotes (`Reply to Priya: "can you check the deploy before 5?"`), so its times, `#tags` and `!priority` stay literal text and the saved title drops the quote marks; a `"` inside the message becomes `”`. The preview row starts with a `Reply owed` chip, then `for` and a person chip, then `from Teams` and the nudge plan in mono (`nudge in 2h, then 9:00`; with a due time, `alerts before 17:00, then daily 9:00`). The leading icon is the reply arrow (it swaps in with the bell's pop); the nudge summary stands in for the reminder bell.
+- The person chip is a button (`Alt+P`): it swaps for an inline input `--person-input-width` wide with the placeholder "Someone"; Enter or blur commits, Esc puts the chip back. Preview refreshes never take focus from the input. Nobody is shown as "Someone".
+- **Quote row.** When a quote came with the hotkey, it shows on its own line under the input (`.cap-quote`, a `role="group"` labelled "Quote saved with the reply"): the Lucide `text-quote` icon, the quote on one line in `--fg-muted` small text (ellipsis when long), drawn with the description's block-quote bar (`--md-quote-bar` in `--border`), and an `icon-btn` × labelled **Remove quote** (`Alt+Q`, also reachable with Tab). Removing it hides the row, announces "Quote removed" and puts focus back on the line; only a quote still shown is saved as the description. A quote taken from the clipboard (nothing was selected) also leaves as soon as the line no longer holds its first 20 characters. No new tokens.
+- The hint row changes to `↵ save`, `Alt+P person`, `Alt+Q remove quote` (only while there is a quote), `Tab time`, `Esc cancel`. Priority chips, tokens and `Tab` time work as in normal capture.
+- On macOS without the Accessibility permission, a one-line note under the input says to allow Awesome Reminder in System Settings › Privacy & Security › Accessibility and that the clipboard is used meanwhile.
+
 ## List window (tray)
 ```
 ┌ Awesome Reminder ─────────────────────────────── [ ⌕ Search ] [⚙] ┐
@@ -145,6 +155,7 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - Keys: `/` focus search, `↑/↓` move, `Space` toggle done, `Enter` open the details panel (title focused), `F2` inline edit, `s` snooze menu, `Del` delete, `Esc` close the panel / clear search / close. A click on the row opens the panel once the double-click time has passed; a double-click on the text edits inline.
 - Priority (Phase 1.6): an 8 px `--prio-*` dot before the text with an `aria-label` ("High priority"). Tag sections sort High → Medium → Low → none, keeping creation order within each; Today/Upcoming stays in time order.
 - Done draws the check and a strike-through and fades the row (180 ms + 60 ms stagger), then the row moves to Done while the rows below glide up (see **Motion**). Delete shows a bottom toast "Deleted · Undo" for 5 s (`role="status"`) with a thin bar running down over the undo window.
+- **Waiting on you** is the first section when a reply is open, titled `WAITING ON YOU (n)`. Its rows sit under one subheading per person (oldest group first, "Someone" last). Each reply row carries, in mono at the end of the row, the source and its age: `Teams · 2 h` in `--fg-muted` (source truncated at `--reply-source-max`), with the age in `--time-text` once the reply is older than 24 hours (the words carry it too: "yesterday", "3 days"; the title says "Waiting since ..."). The checkbox's label is "Mark replied". The `⋯` menu adds **No reply needed** and snoozes work without a due time. A closed-as-dropped reply shows "no reply needed" in Done. No new colours: these reuse existing pairs, with contrast figures in `tokens.css`. Open replies are not repeated under tags or Today/Upcoming.
 - Empty state: a centered `inbox` icon, "Nothing here. Press Ctrl+Shift+Space to capture." with the real hotkey shown as keycaps.
 
 ## Details panel (Phase 1.6)
@@ -192,11 +203,16 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - Done is the primary button (`--accent-fill`, green: actions stay distinct from the alert red); Snooze and Open are ghost buttons (border `--remind-border` on the tint). Buttons are 32 px tall with a 40 px hit area. Never steal focus.
 - **Shipped deviation:** Snooze does not open a dropdown. The Snooze button toggles an inline row ("Snooze for" + preset buttons) inside the same card, so the small alert window never needs a popup layer of its own and the choices stay keyboard reachable (`aria-expanded` / `aria-controls`).
 
+### Reply nudge and end-of-day sweep cards
+- Same card, same `--remind` tint and bar, but the lead icon is the reply icon, not the bell. A **nudge** reads `waiting 2 h · Priya` on the time line (recomputed every tick), the reply text as the body, and **Replied** (primary), **Snooze** and **Open**; Snooze works for a reply with no due time. A snoozed reply comes back as this same nudge card (never "snoozed · was due …"), with or without a due time.
+- The **sweep** is one card for the day, not tied to an item: the time line reads `end of day`, the body `3 people are still waiting on you — Priya, Sam, Ops channel`, and the buttons are **Open list** (shows the Waiting section) and **Tomorrow** (snoozes every open reply to the next working day at the default time). A newer sweep replaces an older one; the card has no Snooze row.
+
 ## Settings
 - A single scrolling form, 520 px, with labeled fields (labels above, helper text below in `--fg-muted`, errors inline in `--danger`).
 - Hotkey recorder: a pill showing keycaps; click → "Press keys…" → captures the combo; shows the registration error inline.
 - Lead-time chips with ✕ and an "+ add" input accepting `30m`, `2h`, `1d`.
 - Save button at the bottom-right (accent); unsaved changes enable it.
+- **Replies group** (a `fieldset` titled "Replies", after the capture hotkey): the reply hotkey recorder (same pill as the capture hotkey, with its own inline error; the same key as the capture hotkey is refused), **Working days** as seven day chips, **End of day** as a time field, and an **End-of-day sweep** switch.
 - "Show pending count" switch (Phase 1.6) after "Start at login"; its help text names the tray icon plus the taskbar (Windows) or the Dock (macOS).
 
 ## Sync status (Phase 2)

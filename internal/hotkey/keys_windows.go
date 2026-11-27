@@ -22,3 +22,10 @@ var libKeys = map[string]lib.Key{
 	"F1": lib.KeyF1, "F2": lib.KeyF2, "F3": lib.KeyF3, "F4": lib.KeyF4, "F5": lib.KeyF5, "F6": lib.KeyF6,
 	"F7": lib.KeyF7, "F8": lib.KeyF8, "F9": lib.KeyF9, "F10": lib.KeyF10, "F11": lib.KeyF11, "F12": lib.KeyF12,
 }
+
+// mainVK is the virtual-key code of a canonical key name: the registrar's
+// own key, which RegisterHotKey takes as a virtual-key code.
+func mainVK(key string) (uint16, bool) {
+	k, ok := libKeys[key]
+	return uint16(k), ok
+}

@@ -16,6 +16,7 @@ import (
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/parser"
 	"awesome-reminder/internal/recur"
+	"awesome-reminder/internal/reply"
 	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
@@ -142,6 +143,26 @@ func (c *Core) WithDue(input string, due time.Time) string {
 
 // Capture parses input and stores a new open item.
 func (c *Core) Capture(input string) (model.Item, error) {
+	return c.capture(input, nil)
+}
+
+// CaptureReply is Capture for a reply the user owes: the input is parsed the
+// same way, then the reply fields are set from m. A non-empty quote becomes
+// the description as a markdown block quote, capped by reply.CapQuote.
+func (c *Core) CaptureReply(input string, m reply.Meta) (model.Item, error) {
+	return c.capture(input, func(it *model.Item) {
+		it.Reply = true
+		it.OwedTo = strings.TrimSpace(m.OwedTo)
+		it.Source = strings.TrimSpace(m.Source)
+		if strings.TrimSpace(m.Quote) != "" {
+			it.Description = reply.QuoteMarkdown(reply.CapQuote(m.Quote))
+		}
+	})
+}
+
+// capture parses input and stores a new open item, after adjust (if any)
+// has set extra fields on it.
+func (c *Core) capture(input string, adjust func(*model.Item)) (model.Item, error) {
 	r, _, err := c.parse(input)
 	if err != nil {
 		return model.Item{}, err
@@ -154,6 +175,9 @@ func (c *Core) Capture(input string) (model.Item, error) {
 		ID: ulid.Make().String(), Kind: kindFor(r.DueAt), Text: r.Text, Tags: withInbox(r.Tags),
 		DueAt: r.DueAt, TZ: c.loc.String(), RRule: r.RRule, Priority: r.Priority, Status: model.StatusOpen,
 		CreatedAt: now,
+	}
+	if adjust != nil {
+		adjust(&it)
 	}
 	if err := c.write(func() error { return c.save(&it, now) }); err != nil {
 		return model.Item{}, err
@@ -286,6 +310,9 @@ func (c *Core) DoneThrough(id string, through time.Time) (model.Item, error) {
 			return nil
 		}
 		it.Status = model.StatusDone
+		if it.Reply {
+			it.ReplyOutcome = model.ReplyReplied
+		}
 		return nil
 	})
 }
@@ -346,6 +373,7 @@ func (c *Core) advanceRecurringLocked(now time.Time) ([]string, time.Time, error
 func (c *Core) Reopen(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.Status, it.DoneAt, it.SnoozeUntil = model.StatusOpen, nil, nil
+		it.ReplyOutcome = ""
 		return nil
 	})
 	return err
@@ -372,7 +400,8 @@ func clearStaleDone(it *model.Item) {
 	}
 }
 
-// Snooze postpones a reminder: "10m", "1h" or "tomorrow" (tomorrow at the
+// Snooze postpones a reminder, or an open reply with or without a due time
+// (a nudge card's Snooze): "10m", "1h" or "tomorrow" (tomorrow at the
 // default time, in the item's zone).
 func (c *Core) Snooze(id, preset string) error {
 	s, err := c.settings()
@@ -380,8 +409,8 @@ func (c *Core) Snooze(id, preset string) error {
 		return err
 	}
 	_, err = c.mutate(id, func(it *model.Item, now time.Time) error {
-		if it.Kind != model.KindReminder {
-			return errors.New("only reminders can be snoozed")
+		if it.Kind != model.KindReminder && !openReply(*it) {
+			return errors.New("only reminders and open replies can be snoozed")
 		}
 		var until time.Time
 		switch strings.TrimSpace(preset) {
@@ -402,6 +431,41 @@ func (c *Core) Snooze(id, preset string) error {
 		return nil
 	})
 	return err
+}
+
+// openReply reports whether it is a reply still owed: open, no outcome yet.
+func openReply(it model.Item) bool {
+	return it.Reply && it.Status == model.StatusOpen && it.ReplyOutcome == ""
+}
+
+// SnoozeRepliesUntil snoozes every open reply until t (the end-of-day
+// sweep's Tomorrow), whatever its kind, in one write: listeners are notified
+// once, and not at all if there is no open reply.
+func (c *Core) SnoozeRepliesUntil(t time.Time) error {
+	until := t.UTC()
+	return c.write(func() error {
+		items, err := c.st.ListOpen()
+		if err != nil {
+			return err
+		}
+		now := c.now().UTC()
+		n := 0
+		for _, it := range items {
+			if !openReply(it) {
+				continue
+			}
+			u := until
+			it.SnoozeUntil = &u
+			if err := c.save(&it, now); err != nil {
+				return fmt.Errorf("item %s: %w", it.ID, err)
+			}
+			n++
+		}
+		if n == 0 {
+			return errUnchanged
+		}
+		return nil
+	})
 }
 
 // Delete tombstones an item (status=deleted); the row is kept.
@@ -452,6 +516,9 @@ func (c *Core) View() (View, error) {
 	}
 	return v, nil
 }
+
+// Now returns the current time by the core's clock.
+func (c *Core) Now() time.Time { return c.now() }
 
 // Item returns the stored item with the given ID.
 func (c *Core) Item(id string) (model.Item, error) { return c.st.Get(id) }

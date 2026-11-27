@@ -169,20 +169,22 @@ func putItem(db execer, it model.Item) error {
 	}
 	created, updated := it.CreatedAt.UnixMilli(), it.UpdatedAt.UnixMilli()
 	_, err = db.Exec(`INSERT INTO items
-		(id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description,reply,owed_to,source,reply_outcome)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		kind=excluded.kind,text=excluded.text,tags_json=excluded.tags_json,due_at=excluded.due_at,
 		tz=excluded.tz,rrule=excluded.rrule,lead_times_json=excluded.lead_times_json,status=excluded.status,
 		done_at=excluded.done_at,snooze_until=excluded.snooze_until,created_at=excluded.created_at,
 		updated_at=excluded.updated_at,updated_by=excluded.updated_by,
-		priority=excluded.priority,description=excluded.description`,
+		priority=excluded.priority,description=excluded.description,
+		reply=excluded.reply,owed_to=excluded.owed_to,source=excluded.source,reply_outcome=excluded.reply_outcome`,
 		it.ID, string(it.Kind), it.Text, string(tagsJSON), toMs(it.DueAt), it.TZ, it.RRule, leads,
-		string(it.Status), toMs(it.DoneAt), toMs(it.SnoozeUntil), created, updated, it.UpdatedBy, it.Priority, it.Description)
+		string(it.Status), toMs(it.DoneAt), toMs(it.SnoozeUntil), created, updated, it.UpdatedBy, it.Priority, it.Description,
+		it.Reply, it.OwedTo, it.Source, it.ReplyOutcome)
 	return err
 }
 
-const itemCols = `id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description`
+const itemCols = `id,kind,text,tags_json,due_at,tz,rrule,lead_times_json,status,done_at,snooze_until,created_at,updated_at,updated_by,priority,description,reply,owed_to,source,reply_outcome`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -196,7 +198,8 @@ func scanItem(r scanner) (model.Item, error) {
 		created, updated  int64
 	)
 	if err := r.Scan(&it.ID, &kind, &it.Text, &tagsJSON, &due, &it.TZ, &it.RRule, &leads,
-		&status, &done, &snooze, &created, &updated, &it.UpdatedBy, &it.Priority, &it.Description); err != nil {
+		&status, &done, &snooze, &created, &updated, &it.UpdatedBy, &it.Priority, &it.Description,
+		&it.Reply, &it.OwedTo, &it.Source, &it.ReplyOutcome); err != nil {
 		return model.Item{}, err
 	}
 	it.Kind, it.Status = model.Kind(kind), model.Status(status)

@@ -3,6 +3,7 @@
 
 export type {
     Detail,
+    PersonGroup,
     Preview,
     TagGroup,
     View

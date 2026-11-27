@@ -25,17 +25,20 @@ import {
   Link,
   List,
   ListTodo,
+  MessageSquareOff,
   Mic,
   Pencil,
   Plus,
   RefreshCw,
   Repeat,
   RepeatOff,
+  Reply,
   Search,
   Settings,
   Square,
   SquareCheckBig,
   Trash2,
+  TextQuote,
   TriangleAlert,
   X,
 } from "lucide";
@@ -102,6 +105,10 @@ export const icons = {
   cloudOff: render(CloudOff as IconNode),
   cloudAlert: render(CloudExclamationPoint as IconNode),
   refresh: render(RefreshCw as IconNode),
+  // Replies owed
+  reply: render(Reply as IconNode),
+  replyOff: render(MessageSquareOff as IconNode),
+  quote: render(TextQuote as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

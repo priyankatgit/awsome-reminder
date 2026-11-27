@@ -74,14 +74,14 @@ func TestDotFor(t *testing.T) {
 
 func TestPendingTooltipCap(t *testing.T) {
 	// Short: the usual order, untouched.
-	if got := pendingTooltip(3, "Sync error", "taken"); got != "Awesome Reminder — 3 pending — Sync error — hotkey error: taken" {
+	if got := pendingTooltip(3, "Sync error", "taken", ""); got != "Awesome Reminder — 3 pending — Sync error — hotkey error: taken" {
 		t.Errorf("short tooltip %q", got)
 	}
 
 	// Too long: the hotkey error comes before the sync text, and the cut
 	// ends in an ellipsis at exactly the Windows limit.
 	long := strings.Repeat("x", 60) // fits alone, not with the sync text
-	got := pendingTooltip(12, "Offline · 3 changes waiting", long)
+	got := pendingTooltip(12, "Offline · 3 changes waiting", long, "")
 	if n := utf16Len(got); n > 127 {
 		t.Errorf("tooltip is %d UTF-16 units, over 127: %q", n, got)
 	}
@@ -93,9 +93,20 @@ func TestPendingTooltipCap(t *testing.T) {
 		t.Errorf("hotkey error not kept ahead of the sync text:\n%q", got)
 	}
 
+	// Both hotkey errors stay ahead of the sync text, capture before reply.
+	mid := strings.Repeat("x", 40)
+	got = pendingTooltip(12, "Offline · 3 changes waiting", mid, "busy")
+	if n := utf16Len(got); n > 127 {
+		t.Errorf("two-error tooltip is %d units: %q", n, got)
+	}
+	want = "Awesome Reminder — 12 pending — hotkey error: " + mid + " — reply hotkey error: busy — "
+	if !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "…") {
+		t.Errorf("hotkey errors not kept ahead of the sync text:\n%q", got)
+	}
+
 	// Astral characters count as two units and are never split.
 	emoji := strings.Repeat("\U0001F600", 70)
-	got = pendingTooltip(-1, "", emoji)
+	got = pendingTooltip(-1, "", emoji, "")
 	if n := utf16Len(got); n > 127 {
 		t.Errorf("emoji tooltip is %d units", n)
 	}

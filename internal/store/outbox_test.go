@@ -50,7 +50,7 @@ func TestMigrateV2ToV3SeedsOutbox(t *testing.T) {
 	}
 	defer s.Close()
 	var v string
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "3" {
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "4" {
 		t.Fatalf("v=%q err=%v", v, err)
 	}
 	if n := count(t, s); n != 4 {

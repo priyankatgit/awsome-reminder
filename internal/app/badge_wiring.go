@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/png"
 	"log"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,11 +42,13 @@ type badgeDeps struct {
 	Count     func() (int, error) // open items
 	Show      func() bool         // the "Show pending count" setting
 	HotkeyErr func() string       // appended to the tooltip
-	Icons     trayIcons           // plain icons
-	Tray      badgeTray
-	Debounce  time.Duration
-	Sync      func() cloudsync.Status // nil = sync off
-	Now       func() time.Time        // nil = time.Now
+	// ReplyHotkeyErr is appended to the tooltip after HotkeyErr; nil = none.
+	ReplyHotkeyErr func() string
+	Icons          trayIcons // plain icons
+	Tray           badgeTray
+	Debounce       time.Duration
+	Sync           func() cloudsync.Status // nil = sync off
+	Now            func() time.Time        // nil = time.Now
 	// NewTicker starts the syncing-animation ticker (nil = time.NewTicker).
 	// The returned func releases it.
 	NewTicker func(d time.Duration) (<-chan time.Time, func())
@@ -180,7 +181,11 @@ func (w *badgeWiring) tooltip(st cloudsync.Status) string {
 	if w.d.Now != nil {
 		now = w.d.Now
 	}
-	return pendingTooltip(w.shown, syncTooltip(st, now()), w.d.HotkeyErr())
+	replyErr := ""
+	if w.d.ReplyHotkeyErr != nil {
+		replyErr = w.d.ReplyHotkeyErr()
+	}
+	return pendingTooltip(w.shown, syncTooltip(st, now()), w.d.HotkeyErr(), replyErr)
 }
 
 // render shows the last count and the current sync status on the tray: the
@@ -372,33 +377,40 @@ const maxTooltip = 127
 
 // pendingTooltip is the tray tooltip: "Awesome Reminder — N pending", or
 // just the name when the count is off (n < 0), then the sync text and any
-// hotkey error, each skipped when empty. A tooltip over maxTooltip puts the
-// hotkey error ahead of the sync text, so the cut falls on the sync text,
-// and ends in an ellipsis.
-func pendingTooltip(n int, syncText, hotkeyErr string) string {
+// capture and reply hotkey errors, each skipped when empty. A tooltip over
+// maxTooltip puts the hotkey errors ahead of the sync text, so the cut falls
+// on the sync text, and ends in an ellipsis.
+func pendingTooltip(n int, syncText, hotkeyErr, replyHotkeyErr string) string {
 	s := appName
 	if n >= 0 {
 		s += " — " + strconv.Itoa(n) + " pending"
 	}
-	parts := []string{}
+	errs := []string{}
+	if hotkeyErr != "" {
+		errs = append(errs, "hotkey error: "+hotkeyErr)
+	}
+	if replyHotkeyErr != "" {
+		errs = append(errs, "reply hotkey error: "+replyHotkeyErr)
+	}
+	var parts []string
 	if syncText != "" {
 		parts = append(parts, syncText)
 	}
-	if hotkeyErr != "" {
-		parts = append(parts, "hotkey error: "+hotkeyErr)
-	}
-	full := s
-	for _, p := range parts {
-		full += " — " + p
-	}
-	if utf16Len(full) <= maxTooltip {
+	parts = append(parts, errs...)
+	if full := joinTooltip(s, parts); utf16Len(full) <= maxTooltip {
 		return full
 	}
-	slices.Reverse(parts)
+	if syncText != "" {
+		errs = append(errs, syncText)
+	}
+	return truncateUTF16(joinTooltip(s, errs), maxTooltip)
+}
+
+func joinTooltip(s string, parts []string) string {
 	for _, p := range parts {
 		s += " — " + p
 	}
-	return truncateUTF16(s, maxTooltip)
+	return s
 }
 
 func utf16Len(s string) int {

@@ -159,6 +159,7 @@ func TestDocMapping(t *testing.T) {
 		DueAt: &due, TZ: "Europe/Berlin", RRule: "FREQ=DAILY", LeadTimes: []time.Duration{time.Hour, 15 * time.Minute},
 		Status: model.StatusOpen, DoneAt: &due, SnoozeUntil: &due, CreatedAt: created, UpdatedAt: created, UpdatedBy: "01JDDEV",
 		Priority: "high", Description: "![](att:1)",
+		Reply: true, OwedTo: "Priya", Source: "Teams", ReplyOutcome: "dropped",
 	}
 	nilDue := full
 	nilDue.DueAt, nilDue.DoneAt, nilDue.SnoozeUntil, nilDue.LeadTimes = nil, nil, nil, nil
@@ -177,6 +178,14 @@ func TestDocMapping(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s:\n got %+v\nwant %+v", name, got, want)
 		}
+	}
+	// A document from an older device has no reply fields: zero values.
+	raw, err := bson.Marshal(bson.D{{Key: "text", Value: "old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old := decodeItem(withID(t, raw, "x")); old.Reply || old.OwedTo != "" || old.Source != "" || old.ReplyOutcome != "" {
+		t.Errorf("old doc reply fields: %+v", old)
 	}
 	if emptyLeads.LeadTimes == nil || nilDue.LeadTimes != nil {
 		t.Fatal("test setup")

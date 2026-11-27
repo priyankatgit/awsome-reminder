@@ -54,6 +54,7 @@ func Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer, opts ...Option)
 		{"PullOrderAndPaging", testPullOrderAndPaging},
 		{"SharedLWW", testSharedLWW},
 		{"TestSpecialTextRoundTrips", testSpecialTextRoundTrips},
+		{"ReplyFieldsRoundTrip", testReplyFieldsRoundTrip},
 		{"AttachmentBytesSumsLive", testAttachmentBytesSumsLive},
 		{"MalformedDocDoesNotFailPull", func(t *testing.T, s cloudsync.Syncer) {
 			if cfg.rawInsert == nil {
@@ -299,7 +300,7 @@ func testSharedLWW(t *testing.T, s cloudsync.Syncer) {
 	if err != nil || got != nil {
 		t.Fatalf("empty cluster: %+v %v", got, err)
 	}
-	p := settings.Shared{LeadTimes: []time.Duration{time.Hour, 10 * time.Minute}, DefaultTime: "09:00", NextWeekDay: "monday", NextWeekTime: "08:30"}
+	p := settings.Shared{LeadTimes: []time.Duration{time.Hour, 10 * time.Minute}, DefaultTime: "09:00", NextWeekDay: "monday", NextWeekTime: "08:30", WorkDays: []string{"monday", "saturday"}, EndOfDay: "16:45", EndOfDaySweep: true}
 	pushShared := func(d cloudsync.SharedDoc) {
 		t.Helper()
 		if err := s.PushShared(ctx(t), d); err != nil {
@@ -394,6 +395,24 @@ func testSpecialTextRoundTrips(t *testing.T, s cloudsync.Syncer) {
 		if (g.LeadTimes == nil) != (want.LeadTimes == nil) {
 			t.Errorf("%s: nil lead times %v, want %v", want.ID, g.LeadTimes == nil, want.LeadTimes == nil)
 		}
+	}
+}
+
+func testReplyFieldsRoundTrip(t *testing.T, s cloudsync.Syncer) {
+	reply := item(1, "reply to Priya", base, devA)
+	reply.Reply, reply.OwedTo, reply.Source, reply.ReplyOutcome = true, "Priya", "Teams", "dropped"
+	plain := item(2, "plain", base, devA)
+	push(t, s, reply)
+	push(t, s, plain)
+	got := map[string]model.Item{}
+	for _, it := range pullAllItems(t, s) {
+		got[it.ID] = normItem(it)
+	}
+	if g := got[reply.ID]; !g.Reply || g.OwedTo != "Priya" || g.Source != "Teams" || g.ReplyOutcome != "dropped" {
+		t.Errorf("reply fields lost: %+v", g)
+	}
+	if g := got[plain.ID]; g.Reply || g.OwedTo != "" || g.Source != "" || g.ReplyOutcome != "" {
+		t.Errorf("plain item gained reply fields: %+v", g)
 	}
 }
 

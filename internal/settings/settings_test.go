@@ -20,6 +20,10 @@ func TestDefaults(t *testing.T) {
 		ExportPath:       "",
 		Autostart:        true,
 		ShowPendingCount: true,
+		ReplyHotkey:      "Ctrl+Alt+R",
+		WorkDays:         []string{"monday", "tuesday", "wednesday", "thursday", "friday"},
+		EndOfDay:         "17:30",
+		EndOfDaySweep:    true,
 	}
 	if got := Defaults("windows"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
@@ -195,5 +199,155 @@ func TestSettingsJSONMissingSharedStamp(t *testing.T) {
 	}
 	if !back.SharedUpdatedAt.Equal(s.SharedUpdatedAt) || back.SharedUpdatedBy != "dev1" {
 		t.Fatalf("round trip %v %q", back.SharedUpdatedAt, back.SharedUpdatedBy)
+	}
+}
+
+func TestDefaultsReplySettings(t *testing.T) {
+	w := Defaults("windows")
+	if w.ReplyHotkey != "Ctrl+Alt+R" {
+		t.Fatalf("windows reply hotkey %q", w.ReplyHotkey)
+	}
+	if got := Defaults("darwin").ReplyHotkey; got != "Ctrl+Option+R" {
+		t.Fatalf("darwin reply hotkey %q", got)
+	}
+	if !reflect.DeepEqual(w.WorkDays, []string{"monday", "tuesday", "wednesday", "thursday", "friday"}) {
+		t.Fatalf("work days %v", w.WorkDays)
+	}
+	if w.EndOfDay != "17:30" || !w.EndOfDaySweep {
+		t.Fatalf("eod %q sweep %v", w.EndOfDay, w.EndOfDaySweep)
+	}
+	if err := Defaults("darwin").Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadSettingsMissingReplyFieldsGetDefaults(t *testing.T) {
+	old := `{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`
+	var s Settings
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	d := Defaults(runtime.GOOS)
+	if s.ReplyHotkey != d.ReplyHotkey || !reflect.DeepEqual(s.WorkDays, d.WorkDays) || s.EndOfDay != "17:30" || !s.EndOfDaySweep {
+		t.Fatalf("got %+v", s)
+	}
+	// Explicit values survive a round trip, including sweep=false.
+	s.EndOfDaySweep = false
+	s.EndOfDay = "16:00"
+	s.WorkDays = []string{"sunday", "monday"}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Settings
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.EndOfDaySweep || back.EndOfDay != "16:00" || !reflect.DeepEqual(back.WorkDays, []string{"monday", "sunday"}) {
+		t.Fatalf("round trip %+v (%s)", back, b)
+	}
+}
+
+func TestValidateReplyHotkeySameAsCapture(t *testing.T) {
+	s := Defaults("windows")
+	s.ReplyHotkey = "ctrl+shift+space"
+	err := s.Validate()
+	if err == nil || !strings.Contains(err.Error(), "Pick a different key from the capture hotkey") {
+		t.Fatalf("got %v", err)
+	}
+	s = Defaults("windows")
+	s.Hotkey, s.ReplyHotkey = "Ctrl+Alt+R", "ctrl+alt+r"
+	if err := s.Validate(); err == nil {
+		t.Fatal("normalised equal combos accepted")
+	}
+	s.ReplyHotkey = "nonsense"
+	if err := s.Validate(); err == nil {
+		t.Fatal("bad combo accepted")
+	}
+}
+
+func TestValidateEndOfDayAndWorkDays(t *testing.T) {
+	cases := map[string]func(s *Settings){
+		"bad eod":   func(s *Settings) { s.EndOfDay = "25:00" },
+		"no days":   func(s *Settings) { s.WorkDays = []string{} },
+		"nil days":  func(s *Settings) { s.WorkDays = nil },
+		"bad day":   func(s *Settings) { s.WorkDays = []string{"funday"} },
+		"duplicate": func(s *Settings) { s.WorkDays = []string{"monday", "monday"} },
+	}
+	for name, mut := range cases {
+		s := Defaults("windows")
+		mut(&s)
+		if err := s.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestSharedIncludesReplySchedule(t *testing.T) {
+	s := Defaults("windows")
+	base := s.Shared()
+	for name, mut := range map[string]func(*Settings){
+		"eod":   func(s *Settings) { s.EndOfDay = "18:00" },
+		"days":  func(s *Settings) { s.WorkDays = []string{"monday"} },
+		"sweep": func(s *Settings) { s.EndOfDaySweep = false },
+	} {
+		c := s
+		mut(&c)
+		if c.Shared().Equal(base) {
+			t.Errorf("%s change not in Shared", name)
+		}
+	}
+	c := s
+	c.ReplyHotkey = "Ctrl+Alt+Y"
+	if !c.Shared().Equal(base) {
+		t.Error("ReplyHotkey must not be shared")
+	}
+	p := Shared{LeadTimes: []time.Duration{time.Hour}, DefaultTime: "09:00", NextWeekDay: "monday", NextWeekTime: "09:00",
+		WorkDays: []string{"saturday"}, EndOfDay: "12:00", EndOfDaySweep: false}
+	got := s.WithShared(p)
+	if got.EndOfDay != "12:00" || got.EndOfDaySweep || !reflect.DeepEqual(got.WorkDays, []string{"saturday"}) || got.ReplyHotkey != s.ReplyHotkey {
+		t.Fatalf("WithShared %+v", got)
+	}
+}
+
+func TestIsWorkDay(t *testing.T) {
+	s := Defaults("windows")
+	if !s.IsWorkDay(time.Wednesday) || s.IsWorkDay(time.Saturday) || s.IsWorkDay(time.Sunday) {
+		t.Fatal("default work days wrong")
+	}
+	s.WorkDays = []string{"sunday"}
+	if !s.IsWorkDay(time.Sunday) || s.IsWorkDay(time.Monday) {
+		t.Fatal("custom work days wrong")
+	}
+}
+
+func TestMissingReplyHotkeyAvoidsCaptureCollision(t *testing.T) {
+	old := `{"hotkey":"ctrl+alt+r","leadTimes":["1h0m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":true,"showPendingCount":true}`
+	var s Settings
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := "Ctrl+Alt+Shift+R"
+	if runtime.GOOS == "darwin" {
+		want = "Ctrl+Option+Shift+R"
+		s.Hotkey = "Ctrl+Option+R"
+	}
+	if runtime.GOOS == "darwin" {
+		_ = json.Unmarshal([]byte(strings.Replace(old, "ctrl+alt+r", "Ctrl+Option+R", 1)), &s)
+	}
+	if s.ReplyHotkey != want {
+		t.Fatalf("reply hotkey %q want %q", s.ReplyHotkey, want)
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultReplyHotkey("darwin", "Ctrl+Option+R"); got != "Ctrl+Option+Shift+R" {
+		t.Fatalf("darwin collision %q", got)
+	}
+	if got := defaultReplyHotkey("darwin", "Cmd+Shift+Space"); got != "Ctrl+Option+R" {
+		t.Fatalf("darwin default %q", got)
+	}
+	if got := defaultReplyHotkey("windows", "Ctrl+Shift+Space"); got != "Ctrl+Alt+R" {
+		t.Fatalf("windows default %q", got)
 	}
 }

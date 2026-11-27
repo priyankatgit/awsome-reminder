@@ -57,7 +57,7 @@ func TestSchedulerKickFires(t *testing.T) {
 	due := t0
 	src := newSrc([]model.Item{rem("a", due, due.Add(-24*time.Hour))})
 	ch := make(chan []Alert, 10)
-	s := New(src, func() []time.Duration { return nil }, func(a []Alert) { ch <- a },
+	s := New(src, func() Rules { return Rules{} }, func(a []Alert) { ch <- a },
 		func() time.Time { return due })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -86,7 +86,7 @@ func TestSchedulerRetriesAfterSourceError(t *testing.T) {
 	src := newSrc([]model.Item{rem("a", due, due.Add(-24*time.Hour))})
 	src.failFirst = true
 	ch := make(chan []Alert, 10)
-	s := New(src, func() []time.Duration { return nil }, func(a []Alert) { ch <- a },
+	s := New(src, func() Rules { return Rules{} }, func(a []Alert) { ch <- a },
 		func() time.Time { return due })
 	s.retryDelay = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,7 +105,7 @@ func TestSchedulerRetriesAfterSourceError(t *testing.T) {
 func TestSchedulerBeforePlan(t *testing.T) {
 	src := newSrc(nil)
 	var fired []Alert
-	s := New(src, func() []time.Duration { return nil }, func(a []Alert) { fired = append(fired, a...) },
+	s := New(src, func() Rules { return Rules{} }, func(a []Alert) { fired = append(fired, a...) },
 		func() time.Time { return t0 })
 	calls := 0
 	wake := t0.Add(time.Hour)
@@ -151,7 +151,7 @@ func TestSchedulerBeforePlan(t *testing.T) {
 // store after it; it returns once ctx is cancelled and the plan is done.
 func TestSchedulerWaitJoinsAfterCancel(t *testing.T) {
 	src := newSrc(nil)
-	s := New(src, func() []time.Duration { return nil }, func([]Alert) {}, func() time.Time { return t0 })
+	s := New(src, func() Rules { return Rules{} }, func([]Alert) {}, func() time.Time { return t0 })
 	entered, release := make(chan struct{}), make(chan struct{})
 	s.SetBeforePlan(func(time.Time) (time.Time, error) {
 		close(entered)
@@ -179,7 +179,7 @@ func TestSchedulerWaitJoinsAfterCancel(t *testing.T) {
 }
 
 func TestSchedulerWaitWithoutStart(t *testing.T) {
-	s := New(newSrc(nil), func() []time.Duration { return nil }, func([]Alert) {}, time.Now)
+	s := New(newSrc(nil), func() Rules { return Rules{} }, func([]Alert) {}, time.Now)
 	done := make(chan struct{})
 	go func() { s.Wait(); close(done) }()
 	select {

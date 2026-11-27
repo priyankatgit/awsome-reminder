@@ -4,12 +4,13 @@ import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
 import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
-import type { Detail, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
+import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, ReplyPrefill, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
+import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, Preview, Item, Status, SyncInfo, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, Status, SyncInfo, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -24,8 +25,15 @@ function pcmBase64(pcm: Int16Array): string {
   return btoa(bin);
 }
 
-/** One card of the alert window (internal/app/alerts.go); tags never null. */
-export type AlertCard = Omit<GenAlertCard, "tags"> & { tags: string[] };
+/** Alert card kinds (internal/scheduler Kind*): "" a normal alert, "nudge" an owed reply, "sweep" the end-of-day sweep. */
+export type AlertKind = "" | "nudge" | "sweep";
+
+/**
+ * One card of the alert window (internal/app/alerts.go); tags and people
+ * never null. A sweep card has itemId "" and lists the people replies are
+ * owed to.
+ */
+export type AlertCard = Omit<GenAlertCard, "tags" | "people" | "kind"> & { tags: string[]; people: string[]; kind: AlertKind };
 
 /** Machine sync state (internal/cloudsync State). */
 export type SyncState = "off" | "syncing" | "synced" | "offline" | "error";
@@ -61,6 +69,11 @@ export interface Settings {
   exportPath: string;
   autostart: boolean;
   showPendingCount: boolean;
+  replyHotkey: string;
+  /** Lowercase weekday names, Monday..Sunday order. */
+  workDays: string[];
+  endOfDay: string; // "HH:MM"
+  endOfDaySweep: boolean;
   /** Stamp of the last shared-settings change (unix ms, device id). Set by Go; passed back unchanged. */
   sharedUpdatedAt?: number;
   sharedUpdatedBy?: string;
@@ -70,6 +83,12 @@ export const api = {
   preview: (input: string): Promise<Preview> => Service.Preview(input),
   withDue: (input: string, due: Date): Promise<string> => Service.WithDue(input, due.toISOString()),
   capture: (input: string): Promise<Item> => Service.Capture(input),
+  /** Saves a reply owed: who it is owed to, where it came from, the quoted message. */
+  captureReply: (input: string, meta: ReplyMeta): Promise<Item> => Service.CaptureReply(input, meta),
+  /** Closes a reply without answering it. */
+  dropReply: (id: string): Promise<void> => Service.DropReply(id),
+  /** The sweep's Tomorrow: snoozes every open reply to the next working day at the default time. */
+  snoozeReplies: (): Promise<void> => Service.SnoozeReplies(),
   getSettings: (): Promise<Settings> => Service.GetSettings() as Promise<Settings>,
   status: (): Promise<Status> => Service.Status(),
   hideCapture: (): Promise<void> => Service.HideCapture(),
@@ -122,6 +141,8 @@ export const api = {
   setDue: (id: string, due: Date | null): Promise<Item> => Service.SetDue(id, due ? due.toISOString() : null),
   setRepeat: (id: string, repeat: string): Promise<Item> => Service.SetRepeat(id, repeat),
   setTags: (id: string, tags: string[]): Promise<Item> => Service.SetTags(id, tags),
+  /** Who a reply is owed to; "" is nobody. */
+  setOwedTo: (id: string, person: string): Promise<Item> => Service.SetOwedTo(id, person),
   setDescription: (id: string, md: string): Promise<Item> => Service.SetDescription(id, md),
   /** Stores a compressed WebP image for an item (Go accepts WebP up to 2 MB). */
   addAttachment: async (itemId: string, webp: Blob): Promise<Attachment> => Service.AddAttachment(itemId, await blobBase64(webp)),
@@ -149,6 +170,11 @@ export const events = {
   alertsShow: "alerts:show",
   listFocus: "list:focus",
   captureOpen: "capture:open",
+  /**
+   * ReplyPrefill: open the capture box in reply mode (the reply hotkey or --reply).
+   * With keepText the box was already open: switch it to reply mode and keep its text (the other fields are empty).
+   */
+  replyOpen: "reply:open",
   voiceStatus: "voice:status",
   syncStatus: "sync:status",
 } as const;

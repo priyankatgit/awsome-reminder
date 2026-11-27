@@ -3,13 +3,16 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"awesome-reminder/internal/hotkey"
 	"awesome-reminder/internal/parser"
 )
 
@@ -33,6 +36,16 @@ type Settings struct {
 	// Windows taskbar button and the macOS Dock (true; also for settings
 	// saved before the field existed).
 	ShowPendingCount bool `json:"showPendingCount"`
+	// ReplyHotkey is the per-device global hotkey that marks the selected
+	// message as owing a reply ("Ctrl+Alt+R", "Ctrl+Option+R" on darwin).
+	ReplyHotkey string `json:"replyHotkey"`
+	// WorkDays are the lowercase weekday names that count as working days, in
+	// Monday..Sunday order. Shared.
+	WorkDays []string `json:"workDays"`
+	// EndOfDay is the "HH:MM" end of the working day. Shared.
+	EndOfDay string `json:"endOfDay"`
+	// EndOfDaySweep turns the end-of-day sweep of owed replies on. Shared.
+	EndOfDaySweep bool `json:"endOfDaySweep"`
 	// SharedUpdatedAt and SharedUpdatedBy stamp the last change to the shared
 	// fields (see Shared), for last-writer-wins sync. JSON: unix ms and the
 	// device id; missing means zero and "".
@@ -46,17 +59,22 @@ type Settings struct {
 type Shared struct {
 	LeadTimes                              []time.Duration
 	DefaultTime, NextWeekDay, NextWeekTime string
+	WorkDays                               []string
+	EndOfDay                               string
+	EndOfDaySweep                          bool
 }
 
 // Shared returns the synced fields.
 func (s Settings) Shared() Shared {
-	return Shared{append([]time.Duration(nil), s.LeadTimes...), s.DefaultTime, s.NextWeekDay, s.NextWeekTime}
+	return Shared{append([]time.Duration(nil), s.LeadTimes...), s.DefaultTime, s.NextWeekDay, s.NextWeekTime,
+		slices.Clone(s.WorkDays), s.EndOfDay, s.EndOfDaySweep}
 }
 
 // WithShared returns s with only the shared fields replaced by p.
 func (s Settings) WithShared(p Shared) Settings {
 	s.LeadTimes = append([]time.Duration(nil), p.LeadTimes...)
 	s.DefaultTime, s.NextWeekDay, s.NextWeekTime = p.DefaultTime, p.NextWeekDay, p.NextWeekTime
+	s.WorkDays, s.EndOfDay, s.EndOfDaySweep = slices.Clone(p.WorkDays), p.EndOfDay, p.EndOfDaySweep
 	return s
 }
 
@@ -70,7 +88,8 @@ func (p Shared) Equal(q Shared) bool {
 			return false
 		}
 	}
-	return p.DefaultTime == q.DefaultTime && p.NextWeekDay == q.NextWeekDay && p.NextWeekTime == q.NextWeekTime
+	return p.DefaultTime == q.DefaultTime && p.NextWeekDay == q.NextWeekDay && p.NextWeekTime == q.NextWeekTime &&
+		slices.Equal(p.WorkDays, q.WorkDays) && p.EndOfDay == q.EndOfDay && p.EndOfDaySweep == q.EndOfDaySweep
 }
 
 // wire mirrors Settings with lead times as duration strings.
@@ -85,6 +104,12 @@ type wire struct {
 	// A pointer so a missing field (settings saved before Phase 1.6) can
 	// default to true.
 	ShowPendingCount *bool `json:"showPendingCount"`
+	// Pointers/nil so settings saved before the replies-owed feature get the
+	// defaults.
+	ReplyHotkey   *string  `json:"replyHotkey"`
+	WorkDays      []string `json:"workDays"`
+	EndOfDay      *string  `json:"endOfDay"`
+	EndOfDaySweep *bool    `json:"endOfDaySweep"`
 	// Unix ms; a pointer so a missing field decodes to the zero time.
 	SharedUpdatedAt *int64 `json:"sharedUpdatedAt"`
 	SharedUpdatedBy string `json:"sharedUpdatedBy"`
@@ -92,7 +117,11 @@ type wire struct {
 
 // MarshalJSON encodes LeadTimes as duration strings such as "1h0m0s".
 func (s Settings) MarshalJSON() ([]byte, error) {
-	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount, nil, s.SharedUpdatedBy}
+	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount,
+		&s.ReplyHotkey, slices.Clone(s.WorkDays), &s.EndOfDay, &s.EndOfDaySweep, nil, s.SharedUpdatedBy}
+	if w.WorkDays == nil {
+		w.WorkDays = []string{}
+	}
 	if !s.SharedUpdatedAt.IsZero() {
 		ms := s.SharedUpdatedAt.UnixMilli()
 		w.SharedUpdatedAt = &ms
@@ -123,15 +152,32 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	if w.SharedUpdatedAt != nil {
 		at = time.UnixMilli(*w.SharedUpdatedAt)
 	}
-	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show, at, w.SharedUpdatedBy}
+	d := Defaults(runtime.GOOS)
+	reply, eod, sweep, days := d.ReplyHotkey, d.EndOfDay, d.EndOfDaySweep, d.WorkDays
+	if w.ReplyHotkey != nil {
+		reply = *w.ReplyHotkey
+	} else {
+		reply = defaultReplyHotkey(runtime.GOOS, w.Hotkey)
+	}
+	if w.EndOfDay != nil {
+		eod = *w.EndOfDay
+	}
+	if w.EndOfDaySweep != nil {
+		sweep = *w.EndOfDaySweep
+	}
+	if w.WorkDays != nil {
+		days = canonDays(w.WorkDays)
+	}
+	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show,
+		reply, days, eod, sweep, at, w.SharedUpdatedBy}
 	return nil
 }
 
 // Defaults returns the default settings for the given GOOS.
 func Defaults(goos string) Settings {
-	hk := "Ctrl+Shift+Space"
+	hk, rhk := "Ctrl+Shift+Space", "Ctrl+Alt+R"
 	if goos == "darwin" {
-		hk = "Cmd+Shift+Space"
+		hk, rhk = "Cmd+Shift+Space", "Ctrl+Option+R"
 	}
 	return Settings{
 		Hotkey:       hk,
@@ -142,7 +188,38 @@ func Defaults(goos string) Settings {
 		Autostart:    true,
 
 		ShowPendingCount: true,
+		ReplyHotkey:      rhk,
+		WorkDays:         []string{"monday", "tuesday", "wednesday", "thursday", "friday"},
+		EndOfDay:         "17:30",
+		EndOfDaySweep:    true,
 	}
+}
+
+// weekOrder is the canonical Monday..Sunday order of WorkDays.
+var weekOrder = []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+
+// canonDays returns days sorted Monday..Sunday, with duplicates kept and
+// unknown names last (Validate rejects both).
+func canonDays(days []string) []string {
+	out := slices.Clone(days)
+	rank := func(d string) int {
+		if i := slices.Index(weekOrder, d); i >= 0 {
+			return i
+		}
+		return len(weekOrder)
+	}
+	slices.SortStableFunc(out, func(a, b string) int { return rank(a) - rank(b) })
+	return out
+}
+
+// IsWorkDay reports whether d is one of the working days.
+func (s Settings) IsWorkDay(d time.Weekday) bool {
+	for _, n := range s.WorkDays {
+		if wd, ok := weekdays[n]; ok && wd == d {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -199,6 +276,29 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("leadTimes: %v must be > 0 and <= 7 days", d)
 		}
 	}
+	if _, err := parseClock(s.EndOfDay); err != nil {
+		return fmt.Errorf("endOfDay: %w", err)
+	}
+	if len(s.WorkDays) == 0 {
+		return fmt.Errorf("workDays: pick at least one working day")
+	}
+	seen := map[string]bool{}
+	for _, d := range s.WorkDays {
+		if _, ok := weekdays[d]; !ok {
+			return fmt.Errorf("workDays: unknown weekday %q", d)
+		}
+		if seen[d] {
+			return fmt.Errorf("workDays: %q listed twice", d)
+		}
+		seen[d] = true
+	}
+	rc, err := hotkey.ParseCombo(s.ReplyHotkey)
+	if err != nil {
+		return fmt.Errorf("replyHotkey: %w", err)
+	}
+	if cc, err := hotkey.ParseCombo(s.Hotkey); err == nil && cc.String() == rc.String() {
+		return errors.New("Pick a different key from the capture hotkey")
+	}
 	if s.ExportPath != "" && !filepath.IsAbs(s.ExportPath) {
 		return fmt.Errorf("exportPath: export path must be a full path, e.g. %s", exportExample())
 	}
@@ -211,4 +311,20 @@ func (s Settings) ParserConfig(loc *time.Location) parser.Config {
 	dt, _ := parseClock(s.DefaultTime)
 	nt, _ := parseClock(s.NextWeekTime)
 	return parser.Config{Loc: loc, DefaultTime: dt, NextWeekDay: weekdays[s.NextWeekDay], NextWeekTime: nt}
+}
+
+// defaultReplyHotkey is the reply hotkey for settings saved without one: the
+// platform default, or the Shift variant when the default would collide with
+// the user's existing capture hotkey (compared as parsed combos).
+func defaultReplyHotkey(goos, capture string) string {
+	def, alt := "Ctrl+Alt+R", "Ctrl+Alt+Shift+R"
+	if goos == "darwin" {
+		def, alt = "Ctrl+Option+R", "Ctrl+Option+Shift+R"
+	}
+	dc, err1 := hotkey.ParseCombo(def)
+	cc, err2 := hotkey.ParseCombo(capture)
+	if err1 == nil && err2 == nil && dc.String() == cc.String() {
+		return alt
+	}
+	return def
 }

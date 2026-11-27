@@ -2,11 +2,29 @@ package hotkey
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// On Wayland the registration error names the flag the user should bind
+// instead: --capture for the capture hotkey, --reply for the reply hotkey.
+func TestWaylandErrorNamesFlag(t *testing.T) {
+	c, _ := ParseCombo("Ctrl+Alt+R")
+	for _, flag := range []string{"--capture", "--reply"} {
+		_, err := platformFor("linux", "wayland", flag)(c, func() {})
+		want := `bind "awesome-reminder ` + flag + `"`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("flag %s: err = %v, want it to contain %s", flag, err, want)
+		}
+	}
+	// Elsewhere the real registrar is used.
+	if r := platformFor("linux", "x11", "--reply"); r == nil {
+		t.Fatal("no registrar for X11")
+	}
+}
 
 type fakeReg struct {
 	mu         sync.Mutex

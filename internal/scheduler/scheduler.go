@@ -24,7 +24,7 @@ const (
 // Scheduler fires alerts using a single timer.
 type Scheduler struct {
 	src   Source
-	leads func() []time.Duration
+	rules func() Rules
 	fire  func([]Alert)
 	now   func() time.Time
 	kick  chan struct{}
@@ -35,8 +35,9 @@ type Scheduler struct {
 }
 
 // New creates a Scheduler.
-func New(src Source, leads func() []time.Duration, fire func([]Alert), now func() time.Time) *Scheduler {
-	return &Scheduler{src: src, leads: leads, fire: fire, now: now, kick: make(chan struct{}, 1), retryDelay: checkInterval}
+// rules is read at every plan, so settings changes apply at the next one.
+func New(src Source, rules func() Rules, fire func([]Alert), now func() time.Time) *Scheduler {
+	return &Scheduler{src: src, rules: rules, fire: fire, now: now, kick: make(chan struct{}, 1), retryDelay: checkInterval}
 }
 
 // SetBeforePlan installs fn, run at the start of every plan (at start, on
@@ -158,7 +159,7 @@ func (s *Scheduler) plan() time.Time {
 		}
 		return ok
 	}
-	fireNow, covered, next := Plan(items, s.leads(), now, notified)
+	fireNow, covered, next := Plan(items, s.rules(), now, notified)
 	if !wake.IsZero() && (next.IsZero() || wake.Before(next)) {
 		next = wake
 	}

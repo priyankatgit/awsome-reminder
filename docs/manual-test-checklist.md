@@ -138,3 +138,16 @@ After a window round, sync off against sync on (same build, scratch profile each
 | Sync on (local server, empty database) | 340.4 MB | 151.7 MB | 0.67 | fail (by 1.7 MB) |
 
 After the window round, both sync off and sync on read about 8 MB above the fresh-start 143.6 MB, and sync on and off are the same within 0.1 MB. The cause of that growth is not established; this run did not reproduce Phase 1's 143.6 MB "After" figure, which was taken with a different alert sequence and a 10-minute idle first. The earlier 188.9 MB reading, with a second renderer still alive after the list and Settings windows had been opened and closed in a different order, was not reproduced here (6 processes both times) and should not be relied on; why that run kept a second renderer is not established.
+
+## Replies owed
+
+Run on a release build; each row is for the person at the keyboard. The Windows column is filled in after the run.
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| R1 | Grab in real apps | Select text in Outlook, Teams, Slack and Chrome, then press the reply key: the box opens pre-filled with the line, the person and the source within about 200 ms. | | | | |
+| R2 | Clipboard put back | Copy some formatted text (it has both plain and HTML content), grab a selection, then paste: the clipboard holds exactly its previous text and its previous HTML content. | | | | |
+| R3 | Image on the clipboard | With an image on the clipboard, press the reply key: no copy is injected, and the image is still on the clipboard afterwards. | | | | |
+| R4 | Outlook Reply All | With the reply key `Ctrl+Alt+R`, Outlook's Reply All (`Ctrl+Shift+R`) still works. | | | | |
+| R5 | Nudges and sweep on time | Using the clock or seeded data: a reply nudges 2 hours after saving and at the default time on working days, and the end-of-day sweep card shows at the end-of-day time on a working day. | | | | |
+| R6 | Idle CPU | With the feature on and nothing open, about 0% CPU over 60 s (as row 7). | | | | |

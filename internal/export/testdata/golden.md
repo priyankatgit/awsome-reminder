@@ -1,5 +1,9 @@
 # Awesome Reminder
 
+## Waiting on you
+- [ ] (!high) Reply to Priya: can you review the doc? (from Teams)
+- [ ] Reply to Sam
+
 ## #inbox
 - [ ] (!high) read RFC
 - [ ] check deploy (due 2026-11-26 17:00)

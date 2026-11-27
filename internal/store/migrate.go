@@ -52,6 +52,11 @@ var migrations = []string{
 	INSERT INTO outbox(kind,id,seq) SELECT 'item', id, 1 FROM items;
 	INSERT INTO outbox(kind,id,seq) SELECT 'attachment', id, 1 FROM attachments;
 	INSERT INTO outbox(kind,id,seq) SELECT 'settings', 'settings', 1 FROM settings WHERE id=1;`,
+	// v4: reply-owed fields
+	`ALTER TABLE items ADD COLUMN reply INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE items ADD COLUMN owed_to TEXT NOT NULL DEFAULT '';
+	ALTER TABLE items ADD COLUMN source TEXT NOT NULL DEFAULT '';
+	ALTER TABLE items ADD COLUMN reply_outcome TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(db *sql.DB) error {

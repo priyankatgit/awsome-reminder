@@ -1,4 +1,5 @@
-// The detail panel's field controls: title, priority, due, repeat and tags.
+// The detail panel's field controls: title, priority, due, repeat, tags and a
+// reply's For (editable) and From (read-only).
 // Each builder returns its row element, a fill(item) that shows an item, and
 // setError for the inline per-field message. Saving is the caller's job; the
 // builders only report what the user picked.
@@ -255,6 +256,62 @@ export function repeatField(onSet: (r: Repeat) => void) {
       note.textContent = it.dueAt ? "" : "Set a due time first";
     },
     setError: (msg: string) => row.setError(msg, select),
+  };
+}
+
+/**
+ * A reply's "For": who it is owed to. Like the due time, a change is saved
+ * on Enter, on blur, or by commit() (the panel's flush), and only when the
+ * trimmed name differs from the stored one. Empty is allowed: nobody.
+ */
+export function personField(onSet: (person: string) => void) {
+  const input = el("input", "input pf-person");
+  input.type = "text";
+  input.id = `pf-person-${++seq}`;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.placeholder = "Someone";
+  const row = fieldRow("For", input.id);
+  row.body.append(input);
+  let shown = ""; // the stored person
+
+  function commit(): void {
+    const v = input.value.trim();
+    if (v === shown) return;
+    shown = v;
+    onSet(v);
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      commit();
+    }
+  });
+  input.addEventListener("blur", commit);
+  input.addEventListener("input", () => row.setError("", input));
+  return {
+    root: row.root,
+    commit,
+    fill(it: Item, force: boolean): void {
+      shown = (it.owedTo ?? "").trim();
+      if (force || !isEditing(input)) input.value = shown;
+    },
+    setError: (msg: string) => row.setError(msg, input),
+  };
+}
+
+/** A reply's "From": the app the message came from, read-only. */
+export function sourceField() {
+  const row = fieldRow("From");
+  const value = el("span", "pf-static");
+  row.body.append(value);
+  return {
+    root: row.root,
+    fill(it: Item): void {
+      const source = (it.source ?? "").trim();
+      value.textContent = source || "Unknown";
+      value.classList.toggle("is-empty", !source);
+    },
   };
 }
 

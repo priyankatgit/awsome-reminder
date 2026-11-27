@@ -50,7 +50,8 @@ func itemSet(it model.Item) bson.D {
 		{Key: "done_at", Value: dtPtr(it.DoneAt)}, {Key: "snooze_until", Value: dtPtr(it.SnoozeUntil)},
 		{Key: "created_at", Value: dt(it.CreatedAt)}, {Key: "updated_at", Value: dt(it.UpdatedAt)},
 		{Key: "updated_by", Value: it.UpdatedBy}, {Key: "priority", Value: it.Priority},
-		{Key: "description", Value: it.Description},
+		{Key: "description", Value: it.Description}, {Key: "reply", Value: it.Reply}, {Key: "owed_to", Value: it.OwedTo},
+		{Key: "source", Value: it.Source}, {Key: "reply_outcome", Value: it.ReplyOutcome},
 	}
 }
 
@@ -74,6 +75,8 @@ func sharedSet(d cloudsync.SharedDoc) bson.D {
 	return bson.D{
 		{Key: "lead_times", Value: leadsMs(d.Shared.LeadTimes)}, {Key: "default_time", Value: d.Shared.DefaultTime},
 		{Key: "next_week_day", Value: d.Shared.NextWeekDay}, {Key: "next_week_time", Value: d.Shared.NextWeekTime},
+		{Key: "work_days", Value: d.Shared.WorkDays}, {Key: "end_of_day", Value: d.Shared.EndOfDay},
+		{Key: "end_of_day_sweep", Value: d.Shared.EndOfDaySweep},
 		{Key: "updated_at", Value: dt(d.UpdatedAt)}, {Key: "updated_by", Value: d.UpdatedBy},
 	}
 }
@@ -127,8 +130,10 @@ func rID(r bson.Raw) string {
 	return v.String()
 }
 
-func rTags(r bson.Raw) []string {
-	arr, ok := r.Lookup("tags").ArrayOK()
+func rTags(r bson.Raw) []string { return rStrArr(r, "tags") }
+
+func rStrArr(r bson.Raw, k string) []string {
+	arr, ok := r.Lookup(k).ArrayOK()
 	if !ok {
 		return nil
 	}
@@ -170,6 +175,7 @@ func decodeItem(r bson.Raw) model.Item {
 		Status: model.Status(rStr(r, "status")), DoneAt: rTimePtr(r, "done_at"), SnoozeUntil: rTimePtr(r, "snooze_until"),
 		CreatedAt: rTimeZero(r, "created_at"), UpdatedAt: rTimeZero(r, "updated_at"), UpdatedBy: rStr(r, "updated_by"),
 		Priority: rStr(r, "priority"), Description: rStr(r, "description"),
+		Reply: rBool(r, "reply"), OwedTo: rStr(r, "owed_to"), Source: rStr(r, "source"), ReplyOutcome: rStr(r, "reply_outcome"),
 	}
 }
 
@@ -194,6 +200,7 @@ func decodeShared(r bson.Raw) *cloudsync.SharedDoc {
 		Shared: settings.Shared{
 			LeadTimes: rLeads(r), DefaultTime: rStr(r, "default_time"),
 			NextWeekDay: rStr(r, "next_week_day"), NextWeekTime: rStr(r, "next_week_time"),
+			WorkDays: rStrArr(r, "work_days"), EndOfDay: rStr(r, "end_of_day"), EndOfDaySweep: rBool(r, "end_of_day_sweep"),
 		},
 		UpdatedAt: rTimeZero(r, "updated_at"), UpdatedBy: rStr(r, "updated_by"),
 	}

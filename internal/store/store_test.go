@@ -197,7 +197,7 @@ func TestMigrateIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 		var v string
-		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "3" {
+		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "4" {
 			t.Fatalf("v=%q err=%v", v, err)
 		}
 		s.Close()
@@ -233,7 +233,7 @@ func TestMigrateV1ToV2(t *testing.T) {
 	}
 	defer s.Close()
 	var v string
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "3" {
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "4" {
 		t.Fatalf("v=%q err=%v", v, err)
 	}
 	a, err := s.Get("A")
@@ -276,5 +276,80 @@ func TestPutGetPriorityDescription(t *testing.T) {
 	done, _ := s.ListDone(0)
 	if len(done) != 1 || done[0].Priority != "high" || done[0].Description != it.Description {
 		t.Fatalf("done=%+v", done)
+	}
+}
+
+func TestMigrateV3ToV4(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "v3.db")
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := []string{migrations[0], migrations[1], migrations[2],
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES('schema_version','3')`,
+		`INSERT INTO items VALUES('A','todo','one','["a"]',NULL,'UTC','',NULL,'open',NULL,NULL,1000,2000,'dev','high','d')`,
+		`INSERT INTO settings VALUES(1,'{"hotkey":"Ctrl+Alt+Space"}')`,
+	}
+	for _, q := range stmts {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	db.Close()
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var v string
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "4" {
+		t.Fatalf("v=%q err=%v", v, err)
+	}
+	a, err := s.Get("A")
+	if err != nil || a.Text != "one" || a.Priority != "high" || a.Description != "d" || !reflect.DeepEqual(a.Tags, []string{"a"}) {
+		t.Fatalf("A=%+v err=%v", a, err)
+	}
+	if a.Reply || a.OwedTo != "" || a.Source != "" || a.ReplyOutcome != "" {
+		t.Fatalf("reply defaults: %+v", a)
+	}
+	var js string
+	if err := s.db.QueryRow(`SELECT json FROM settings WHERE id=1`).Scan(&js); err != nil || js != `{"hotkey":"Ctrl+Alt+Space"}` {
+		t.Fatalf("settings=%q err=%v", js, err)
+	}
+}
+
+func TestPutGetReplyFields(t *testing.T) {
+	s := mem(t)
+	it := item("r", model.StatusOpen, 0)
+	it.Reply, it.OwedTo, it.Source = true, "Priya", "Teams"
+	if err := s.Put(it); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get("r")
+	if err != nil || !got.Reply || got.OwedTo != "Priya" || got.Source != "Teams" || got.ReplyOutcome != "" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	it.ReplyOutcome = model.ReplyDropped
+	if err := s.Put(it); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Get("r")
+	if err != nil || !got.Reply || got.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func TestPutRemoteKeepsReplyFields(t *testing.T) {
+	s := mem(t)
+	it := item("rr", model.StatusOpen, 0)
+	it.Reply, it.OwedTo, it.Source, it.ReplyOutcome = true, "Sam", "Email", model.ReplyReplied
+	if err := s.PutRemote(it); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get("rr")
+	if err != nil || !got.Reply || got.OwedTo != "Sam" || got.Source != "Email" || got.ReplyOutcome != model.ReplyReplied {
+		t.Fatalf("got=%+v err=%v", got, err)
 	}
 }
