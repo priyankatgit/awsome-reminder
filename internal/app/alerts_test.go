@@ -16,7 +16,7 @@ import (
 func putReminder(t *testing.T, h *harness, id, text string, tags []string, rrule string) {
 	t.Helper()
 	now := time.Now().UTC()
-	due := now.Add(time.Hour)
+	due := now.Add(time.Hour).Truncate(time.Minute) // a whole minute, so an edit round trip keeps it
 	if err := h.st.Put(model.Item{
 		ID: id, Kind: model.KindReminder, Text: text, Tags: tags, DueAt: &due, TZ: "UTC",
 		RRule: rrule, Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now, UpdatedBy: "test",
@@ -226,5 +226,42 @@ func TestHotkeyErrorSurvivesRecordingCancel(t *testing.T) {
 	h.svc.SetHotkeyRecording(false)
 	if st := h.svc.Status(); st.HotkeyErr != "Alt+K is already used by another app" {
 		t.Fatalf("HotkeyErr after cancel = %q", st.HotkeyErr)
+	}
+}
+
+// M2: an edit that moves the due time drops the item's cards (a "now" or
+// "missed" card would be stale); an edit that keeps it leaves them.
+func TestUpdateDropsCardsWhenDueChanges(t *testing.T) {
+	h := newHarness(t)
+	putReminder(t, h, "A", "check deploy", nil, "")
+	putReminder(t, h, "B", "call Sam", nil, "")
+	h.svc.showAlerts([]scheduler.Alert{alert("A", "a-now"), alert("B", "b-now")})
+
+	txt, err := h.svc.EditText("B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := h.st.Get("B")
+	if _, err := h.svc.Update("B", txt+" #ops"); err != nil { // same due time
+		t.Fatal(err)
+	}
+	if after, _ := h.st.Get("B"); !after.DueAt.Equal(*before.DueAt) {
+		t.Skipf("round trip moved the due time (%v -> %v); can't test the unchanged case", before.DueAt, after.DueAt)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"a-now", "b-now"}) {
+		t.Fatalf("queue %v after a text-only edit", got)
+	}
+
+	if _, err := h.svc.Update("A", "check deploy tomorrow 5pm"); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"b-now"}) {
+		t.Fatalf("queue %v, want [b-now]", got)
+	}
+	if _, err := h.svc.Update("B", "call Sam"); err != nil { // reminder -> to-do
+		t.Fatal(err)
+	}
+	if len(h.svc.PendingAlerts()) != 0 || h.win.alertsHidden != 1 {
+		t.Fatalf("queue %v hidden %d", keys(h.svc.PendingAlerts()), h.win.alertsHidden)
 	}
 }

@@ -82,8 +82,31 @@ func (s *Service) Capture(input string) (model.Item, error) { return s.d.Core.Ca
 // EditText returns the editable one-line form of an item.
 func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText(id) }
 
-// Update re-parses input for an existing item.
-func (s *Service) Update(id, input string) (model.Item, error) { return s.d.Core.Update(id, input) }
+// Update re-parses input for an existing item. If that moves its due time
+// (or changes its status) the item's alert cards are removed, since a "now"
+// or "missed" card would be stale.
+func (s *Service) Update(id, input string) (model.Item, error) {
+	before, err := s.d.Core.Item(id)
+	if err != nil {
+		return s.d.Core.Update(id, input) // reports the missing item
+	}
+	after, err := s.d.Core.Update(id, input)
+	if err != nil {
+		return after, err
+	}
+	if !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status {
+		s.dropItemAlerts(id)
+	}
+	return after, nil
+}
+
+// sameTime reports whether a and b are both nil or the same instant.
+func sameTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
 
 // Done completes an item (a recurring one advances instead) and removes its
 // alert cards.
