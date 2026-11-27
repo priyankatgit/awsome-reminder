@@ -1,5 +1,7 @@
 # Hands-free voice — Design (Phase 3)
 
+**Status:** approved by the user on 2026-11-28. It is built after Phase 2 (Atlas sync) and the replies-owed feature. Plan: `docs/superpowers/plans/2026-11-28-phase3-hands-free-voice.md`.
+
 Builds on `2026-11-27-awesome-reminder-design.md`, the Phase 1.5 voice work (`docs/superpowers/plans/2026-11-27-phase1.5-voice.md`, `internal/voice/`, `frontend/src/voice.ts`) and `2026-11-27-ui-design-guide.md`. Roadmap position: after Phase 2 (Atlas sync), before Phase 4 (ntfy). It is designed while Phase 2 is being built, so it stays out of the files Phase 2 changes (see "Files and Phase 2 isolation").
 
 The user handed the product and technical calls to the designer ("take your best call"), so every decision below is *[my call]* unless it repeats something the user said earlier (the roadmap line in the README: "Say 'Hey Awesome' to start capturing without the hotkey, and dictate several tasks in one go: saying 'create new task' saves the current one and starts the next").
