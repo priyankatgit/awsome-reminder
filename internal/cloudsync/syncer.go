@@ -167,9 +167,10 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// uriUserinfo matches a MongoDB connection string's scheme and user info (up
-// to the last @ before the path, so an unescaped @ in a password is covered).
-var uriUserinfo = regexp.MustCompile(`(mongodb(?:\+srv)?://)[^\s/?#]*@`)
+// uriUserinfo matches a MongoDB connection string's scheme and user info, up
+// to the last @ before whitespace or the options, so an unescaped @ or / in a
+// password is covered (as atlas.Redact does).
+var uriUserinfo = regexp.MustCompile(`(mongodb(?:\+srv)?://)[^\s?]*@`)
 
 // Redact replaces the user and password of any MongoDB connection string in s
 // with ***, for log lines built from driver errors.

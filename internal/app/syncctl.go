@@ -179,7 +179,7 @@ func (c *syncController) opener(ctx context.Context, gen int, done chan struct{}
 	if !c.setIdle(gen, offStatus(host), false) {
 		return
 	}
-	failures := 0
+	failures, lastText := 0, ""
 	for {
 		s, err := c.d.Open(ctx, uri)
 		if err == nil {
@@ -198,7 +198,10 @@ func (c *syncController) opener(ctx context.Context, gen int, done chan struct{}
 		}
 		failures++
 		state, text := c.d.Classify(err, uri)
-		c.logf("sync: connect to %s: %s", host, text)
+		if text != lastText { // a retry that fails the same way logs nothing
+			lastText = text
+			c.logf("sync: connect to %s: %s", host, text)
+		}
 		st := cloudsync.Status{State: state, Error: text, Host: host, Pending: c.pending(), Warnings: []string{}}
 		if !c.setIdle(gen, st, true) {
 			return
@@ -266,9 +269,9 @@ func (c *syncController) install(gen int, s cloudsync.Syncer, host string) {
 	e = cloudsync.NewEngine(c.d.Core, s, o)
 	c.eng, c.syncer, c.connected, c.host = e, s, true, host
 	c.idle = offStatus(host)
-	e.Start(c.root) // returns at once
+	c.logf("sync: connected to %s", host) // before the engine's first status
+	e.Start(c.root)                       // returns at once
 	c.mu.Unlock()
-	c.logf("sync: connected to %s", host)
 }
 
 // halt stops the opener and the engine and waits for both. opMu is held.
@@ -379,7 +382,9 @@ func (c *syncController) Disconnect() error {
 	host := c.host
 	c.mu.Unlock()
 	c.halt()
-	c.logf("sync: disconnected from %s", host)
+	if host != "" {
+		c.logf("sync: disconnected from %s", host)
+	}
 	err := c.d.Secret.Delete()
 	if err != nil {
 		c.logf("sync: forget the connection string: %v", err)

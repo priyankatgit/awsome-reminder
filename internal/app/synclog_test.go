@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"awesome-reminder/internal/cloudsync"
-	"awesome-reminder/internal/cloudsync/memsync"
 )
 
 type ctlLog struct {
@@ -79,20 +78,32 @@ func TestSyncControllerLogsConnectStatusAndDisconnect(t *testing.T) {
 	}
 }
 
+// A failing open whose error carries the connection string logs it redacted,
+// once over repeated retries.
 func TestSyncControllerLogsOpenFailureStatus(t *testing.T) {
 	l := &ctlLog{}
-	f := newSyncFixture(t, func(d *syncDeps) { d.Logf = l.logf })
+	f := newSyncFixture(t, func(d *syncDeps) {
+		d.Logf = l.logf
+		d.ErrorRetry = 2 * time.Millisecond
+	})
 	f.sec.Set(uriA)
 	f.openFn = func(context.Context, string, int) error {
-		return errors.Join(memsync.ErrNetwork, errors.New("dial "+uriA))
+		return errors.New("server said no to " + uriA) // the generic Classify branch
 	}
 	f.ctl.Start(context.Background())
-	f.waitState(cloudsync.StateOffline)
-	got := l.all()
-	if !strings.Contains(got, "sync: status offline") {
-		t.Errorf("log lacks the offline status:\n%s", got)
+	f.waitState(cloudsync.StateError)
+	deadline := time.Now().Add(5 * time.Second)
+	for f.openCount() < 4 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
 	}
-	if strings.Contains(got, "S3cretPa55") {
+	got := l.all()
+	if !strings.Contains(got, "sync: status error") || !strings.Contains(got, "mongodb+srv://***@"+hostA) {
+		t.Errorf("log lacks the redacted error status:\n%s", got)
+	}
+	if strings.Contains(got, "S3cretPa55") || strings.Contains(got, "alice") {
 		t.Errorf("log leaks credentials:\n%s", got)
+	}
+	if n := l.count("sync: connect to"); n != 1 {
+		t.Errorf("%d connect-failure lines over %d opens, want 1:\n%s", n, f.openCount(), got)
 	}
 }

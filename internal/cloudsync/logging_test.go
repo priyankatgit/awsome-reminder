@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"awesome-reminder/internal/cloudsync"
+	"awesome-reminder/internal/cloudsync/memsync"
 )
 
 // logSink collects an engine's log lines.
@@ -108,9 +109,63 @@ func TestRedact(t *testing.T) {
 		"no uri here":                           "no uri here",
 		"mongodb+srv://host.example.net/":       "mongodb+srv://host.example.net/",
 		"mongodb+srv://u:pa@ss@host.example/db": "mongodb+srv://***@host.example/db",
+		"mongodb+srv://u:pa/ss@host.example/db": "mongodb+srv://***@host.example/db",
 	} {
 		if got := cloudsync.Redact(in); got != want {
 			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func (d *device) seen() []cloudsync.Status {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]cloudsync.Status{}, d.statuses...)
+}
+
+func countLines(l *logSink, sub string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, s := range l.lines {
+		if strings.Contains(s, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// A retry loop that keeps failing the same way logs once, not per retry; a
+// success in between makes the next failure log again.
+func TestRepeatedFailuresLogOnce(t *testing.T) {
+	ms, clk := setup()
+	l := &logSink{}
+	d := newDeviceOpts(t, ms, clk, cloudsync.Options{Logf: l.logf, Poll: 2 * time.Millisecond, ErrorRetry: 2 * time.Millisecond})
+	d.capture("queued")
+	ms.FailNext(memsync.ErrNetwork, 1_000_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.e.Start(ctx)
+	waitFor(t, "several failed cycles", func() bool {
+		n := 0
+		for _, s := range d.seen() {
+			if s.State == cloudsync.StateOffline {
+				n++
+			}
+		}
+		return n >= 4
+	})
+	if n := countLines(l, "sync: cycle failed"); n != 1 {
+		t.Errorf("%d cycle-failed lines over repeated retries, want 1:\n%s", n, strings.Join(l.take(), "\n"))
+	}
+	if n := countLines(l, "sync: server time"); n > 1 {
+		t.Errorf("%d server-time lines over repeated retries, want at most 1", n)
+	}
+	ms.FailNext(nil, 0)
+	d.e.SyncNow()
+	waitFor(t, "a good cycle", func() bool { return d.lastIs(cloudsync.StateSynced) })
+	ms.FailNext(memsync.ErrNetwork, 1_000_000)
+	d.e.SyncNow()
+	waitFor(t, "a second failure line", func() bool { return countLines(l, "sync: cycle failed") == 2 })
+	d.e.Stop()
 }

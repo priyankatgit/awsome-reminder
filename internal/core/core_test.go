@@ -1,9 +1,9 @@
 package core
 
 import (
-	"slices"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -844,9 +844,10 @@ func TestDropReplyNeedsOpenReply(t *testing.T) {
 	}
 }
 
-// A dropped recurring reply stops recurring: Delete then Undelete brings it
-// back done (dropped), not open with the outcome "dropped".
-func TestDropRecurringReplyStopsRecurring(t *testing.T) {
+// A dropped recurring reply keeps its rule, so Reopen brings it back
+// recurring; Delete then Undelete brings it back done (dropped), not open
+// with the outcome "dropped".
+func TestDropRecurringReply(t *testing.T) {
 	e := newEnv(t)
 	it := mustReply(t, e, "send the status every day at 9am", "Priya")
 	if it.RRule == "" {
@@ -856,7 +857,7 @@ func TestDropRecurringReplyStopsRecurring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RRule != "" || got.Status != model.StatusDone || got.ReplyOutcome != model.ReplyDropped {
+	if got.RRule != it.RRule || got.Status != model.StatusDone || got.ReplyOutcome != model.ReplyDropped {
 		t.Fatalf("dropped: %+v", got)
 	}
 	if err := e.c.Delete(it.ID); err != nil {
@@ -867,6 +868,12 @@ func TestDropRecurringReplyStopsRecurring(t *testing.T) {
 	}
 	if back, _ := e.st.Get(it.ID); back.Status != model.StatusDone || back.ReplyOutcome != model.ReplyDropped {
 		t.Fatalf("undeleted: status %q outcome %q, want done/dropped", back.Status, back.ReplyOutcome)
+	}
+	if err := e.c.Reopen(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := e.st.Get(it.ID); back.Status != model.StatusOpen || back.RRule != it.RRule || back.ReplyOutcome != "" {
+		t.Fatalf("reopened: %+v, want open with its rule", back)
 	}
 }
 

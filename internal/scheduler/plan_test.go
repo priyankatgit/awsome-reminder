@@ -602,7 +602,7 @@ func TestNextWorkMorning(t *testing.T) {
 	thu := func(h, m int) time.Time { return time.Date(2026, 12, 3, h, m, 0, 0, loc) }
 	sat := time.Date(2026, 12, 5, 1, 0, 0, 0, loc)
 	for _, c := range []struct {
-		name     string
+		name      string
 		now, want time.Time
 	}{
 		{"evening", wed(loc, 17, 30), thu(9, 0)},

@@ -59,6 +59,11 @@ type Engine struct {
 	// start (srvKnown). Pull starts are stamped in server time with it.
 	srvOffset time.Duration
 	srvKnown  bool
+	// pushFail and clockFail are the last failures logged by the cycle, so
+	// a cycle that keeps failing the same way logs once.
+	pushFail, clockFail string
+	// cycleFail is runLogged's (the loop goroutine's) last failure logged.
+	cycleFail string
 
 	mu       sync.Mutex // guards st, failures, started, stopped, cancel, done
 	st       Status
@@ -256,9 +261,28 @@ func (e *Engine) logf(format string, args ...any) {
 	e.o.Logf("%s", Redact(fmt.Sprintf(format, args...)))
 }
 
+// failKey identifies a failure for logging: retries that fail with the same
+// state and reason log once.
+func (e *Engine) failKey(err error) string {
+	st, text := e.s.Classify(err)
+	return string(st) + " | " + text
+}
+
+// logFailure logs a failure unless *last says it was the last one logged.
+func (e *Engine) logFailure(last *string, err error, format string, args ...any) {
+	if k := e.failKey(err); k != *last {
+		*last = k
+		e.logf(format, args...)
+	}
+}
+
 func (e *Engine) runLogged(ctx context.Context, manual bool) {
-	if err := e.RunOnce(ctx, manual); err != nil && ctx.Err() == nil {
-		e.logf("sync: cycle failed: %v", err)
+	err := e.RunOnce(ctx, manual)
+	switch {
+	case err == nil:
+		e.cycleFail = ""
+	case ctx.Err() == nil:
+		e.logFailure(&e.cycleFail, err, "sync: cycle failed: %v", err)
 	}
 }
 
@@ -339,7 +363,9 @@ func (e *Engine) cycle(ctx context.Context) error {
 		if st, _ := e.s.Classify(pushErr); st != StateError || ctx.Err() != nil {
 			return pushErr
 		}
-		e.logf("sync: push failed, pulling anyway: %v", pushErr)
+		e.logFailure(&e.pushFail, pushErr, "sync: push failed, pulling anyway: %v", pushErr)
+	} else {
+		e.pushFail = ""
 	}
 	if e.needChecks {
 		e.readServerClock(ctx)
@@ -513,9 +539,10 @@ func (e *Engine) serverNow() time.Time {
 func (e *Engine) readServerClock(ctx context.Context) {
 	srv, err := e.s.ServerTime(ctx)
 	if err != nil {
-		e.logf("sync: server time: %v", err)
+		e.logFailure(&e.clockFail, err, "sync: server time: %v", err)
 		return
 	}
+	e.clockFail = ""
 	e.srvOffset, e.srvKnown = srv.Sub(e.o.Now()), true
 }
 

@@ -491,7 +491,8 @@ func (c *Core) Undelete(id string) error {
 			return errUnchanged
 		}
 		it.Status = model.StatusOpen
-		if it.DoneAt != nil && it.RRule == "" {
+		// A closed reply (dropped, or replied) was done even with a rule.
+		if it.DoneAt != nil && (it.RRule == "" || it.ReplyOutcome != "") {
 			it.Status = model.StatusDone
 		}
 		return nil
