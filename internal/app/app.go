@@ -147,6 +147,12 @@ func Run(opts Options) error {
 		}
 		return wake, err
 	})
+	// On the way out, stop the scheduler and wait for a plan in flight, so it
+	// never reaches a closed store (st.Close is deferred above, so runs after).
+	defer func() {
+		cancel()
+		sched.Wait()
+	}()
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
 		if err != nil {

@@ -47,6 +47,9 @@ func TestAppleScriptString(t *testing.T) {
 	if want := `"a \"b\" \\c` + "\n" + `d\\"`; got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
+	if got, want := appleScriptString(`x\"y`), `"x\\\"y"`; got != want {
+		t.Fatalf("backslash before quote: got %s want %s", got, want)
+	}
 }
 
 func TestFatalCommands(t *testing.T) {

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"awesome-reminder/internal/model"
@@ -27,6 +28,7 @@ type Scheduler struct {
 	fire  func([]Alert)
 	now   func() time.Time
 	kick  chan struct{}
+	wg    sync.WaitGroup // the run goroutine
 
 	retryDelay time.Duration // re-plan delay after a Source error
 	beforePlan func(now time.Time) (wake time.Time, err error)
@@ -57,7 +59,18 @@ func (s *Scheduler) Kick() {
 
 // Start launches the scheduling goroutine; it exits when ctx is done.
 func (s *Scheduler) Start(ctx context.Context) {
-	go s.run(ctx)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.run(ctx)
+	}()
+}
+
+// Wait blocks until the goroutine started by Start has exited (after its ctx
+// is done and any plan in flight has finished). It returns at once if Start
+// was never called. The app calls it before closing the store.
+func (s *Scheduler) Wait() {
+	s.wg.Wait()
 }
 
 func (s *Scheduler) run(ctx context.Context) {
