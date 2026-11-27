@@ -95,11 +95,11 @@ func Plan(items []model.Item, defaultLeads []time.Duration, now time.Time, notif
 		occurrence(*it.DueAt)
 		if it.RRule != "" {
 			// The first occurrence after DueAt; zero if the rule has ended.
-			_, next, err := recur.CatchUp(it.RRule, *it.DueAt, *it.DueAt, recur.Loc(it.TZ, time.Local))
+			_, nextDue, err := recur.CatchUp(it.RRule, *it.DueAt, *it.DueAt, recur.Loc(it.TZ, time.Local))
 			if err != nil {
 				log.Printf("scheduler: next occurrence of %s: %v", it.ID, err)
-			} else if !next.IsZero() {
-				occurrence(next)
+			} else if !nextDue.IsZero() {
+				occurrence(nextDue)
 			}
 		}
 
