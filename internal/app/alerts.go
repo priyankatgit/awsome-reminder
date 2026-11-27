@@ -14,8 +14,8 @@ import (
 // AlertCard is one alert as the alert window shows it: the scheduler's alert
 // plus the item details the card displays.
 type AlertCard struct {
-	Key       string        `json:"key"` // scheduler.Alert.Key; unique in the queue
-	ItemID    string        `json:"itemId"`
+	Key       string        `json:"key"`    // scheduler.Alert.Key; unique in the queue
+	ItemID    string        `json:"itemId"` // "" for a sweep card
 	Text      string        `json:"text"`
 	DueAt     time.Time     `json:"dueAt"`
 	Lead      time.Duration `json:"lead"`   // nanoseconds; 0 = at due time
@@ -23,6 +23,12 @@ type AlertCard struct {
 	Tags      []string      `json:"tags"`   // never nil
 	Recurring bool          `json:"recurring"`
 	Snoozed   bool          `json:"snoozed"` // fired at the end of a snooze
+
+	Kind         string    `json:"kind"`         // scheduler.Alert.Kind: "", "nudge" or "sweep"
+	Person       string    `json:"person"`       // the item's OwedTo
+	Source       string    `json:"source"`       // the item's Source
+	WaitingSince time.Time `json:"waitingSince"` // a nudge: when the reply was captured
+	People       []string  `json:"people"`       // a sweep: who replies are owed to; never nil
 }
 
 // alertQueue holds the cards the alert window shows, oldest first. Its mutex
@@ -35,13 +41,15 @@ type alertQueue struct {
 	cards []AlertCard
 }
 
-// card enriches a scheduler alert with the item's tags and recurrence. An
-// item that can't be read still gets a card from the alert alone. stale
-// reports an alert for an occurrence before the item's current DueAt: it was
-// fired before the item moved on or was marked done, and reached here late.
+// card enriches a scheduler alert with the item's tags, recurrence and
+// reply fields. An item that can't be read still gets a card from the alert
+// alone; a sweep has no item. stale reports an alert for an occurrence before
+// the item's current DueAt: it was fired before the item moved on or was
+// marked done, and reached here late.
 func (s *Service) card(a scheduler.Alert) (c AlertCard, stale bool) {
-	c = AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{}}
-	if s.d.Core == nil {
+	c = AlertCard{Key: a.Key, ItemID: a.ItemID, Text: a.Text, DueAt: a.DueAt, Lead: a.Lead, Missed: a.Missed, Snoozed: a.Snooze, Tags: []string{},
+		Kind: a.Kind, WaitingSince: a.WaitingSince, People: append([]string{}, a.People...)}
+	if s.d.Core == nil || a.ItemID == "" {
 		return c, false
 	}
 	it, err := s.d.Core.Item(a.ItemID)
@@ -51,6 +59,7 @@ func (s *Service) card(a scheduler.Alert) (c AlertCard, stale bool) {
 	}
 	c.Tags = append(c.Tags, it.Tags...)
 	c.Recurring = it.RRule != ""
+	c.Person, c.Source = it.OwedTo, it.Source
 	return c, it.DueAt != nil && a.DueAt.Before(*it.DueAt)
 }
 
@@ -58,7 +67,9 @@ func (s *Service) card(a scheduler.Alert) (c AlertCard, stale bool) {
 // window. It is called from the scheduler's fire callback (off its loop). A
 // card for a later occurrence of a recurring item replaces the item's cards
 // for earlier ones, and one for an earlier occurrence than a queued card is
-// dropped, so an item never shows cards for two occurrences.
+// dropped, so an item never shows cards for two occurrences. A sweep card
+// has no item and its own slot: a newer sweep replaces it, and the queue
+// never holds two.
 func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	cards := make([]AlertCard, 0, len(alerts))
 	for _, a := range alerts {
@@ -71,6 +82,17 @@ func (s *Service) showAlerts(alerts []scheduler.Alert) {
 	defer q.mu.Unlock()
 	added := 0
 	for _, c := range cards {
+		if c.Kind == scheduler.KindSweep {
+			if slices.ContainsFunc(q.cards, func(o AlertCard) bool {
+				return o.Key == c.Key || (o.Kind == scheduler.KindSweep && o.DueAt.After(c.DueAt))
+			}) {
+				continue
+			}
+			q.cards = slices.DeleteFunc(q.cards, func(o AlertCard) bool { return o.Kind == scheduler.KindSweep })
+			q.cards = append(q.cards, c)
+			added++
+			continue
+		}
 		if slices.ContainsFunc(q.cards, func(o AlertCard) bool {
 			return o.Key == c.Key || (o.ItemID == c.ItemID && o.DueAt.After(c.DueAt))
 		}) {
@@ -112,8 +134,12 @@ func (s *Service) emitAlertsLocked() {
 }
 
 // dropItemAlerts removes every card of an item (it was done, snoozed or
-// deleted, from the alert window or anywhere else).
+// deleted, from the alert window or anywhere else). The sweep card has no
+// item and is never dropped this way.
 func (s *Service) dropItemAlerts(id string) {
+	if id == "" {
+		return
+	}
 	s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id }, true)
 }
 

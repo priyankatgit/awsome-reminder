@@ -432,6 +432,36 @@ func (c *Core) Snooze(id, preset string) error {
 	return err
 }
 
+// SnoozeRepliesUntil snoozes every open reply until t (the end-of-day
+// sweep's Tomorrow), whatever its kind, in one write: listeners are notified
+// once, and not at all if there is no open reply.
+func (c *Core) SnoozeRepliesUntil(t time.Time) error {
+	until := t.UTC()
+	return c.write(func() error {
+		items, err := c.st.ListOpen()
+		if err != nil {
+			return err
+		}
+		now := c.now().UTC()
+		n := 0
+		for _, it := range items {
+			if it.Status != model.StatusOpen || !it.Reply || it.ReplyOutcome != "" {
+				continue
+			}
+			u := until
+			it.SnoozeUntil = &u
+			if err := c.save(&it, now); err != nil {
+				return fmt.Errorf("item %s: %w", it.ID, err)
+			}
+			n++
+		}
+		if n == 0 {
+			return errUnchanged
+		}
+		return nil
+	})
+}
+
 // Delete tombstones an item (status=deleted); the row is kept.
 func (c *Core) Delete(id string) error {
 	_, err := c.mutate(id, func(it *model.Item, _ time.Time) error {
@@ -480,6 +510,9 @@ func (c *Core) View() (View, error) {
 	}
 	return v, nil
 }
+
+// Now returns the current time by the core's clock.
+func (c *Core) Now() time.Time { return c.now() }
 
 // Item returns the stored item with the given ID.
 func (c *Core) Item(id string) (model.Item, error) { return c.st.Get(id) }

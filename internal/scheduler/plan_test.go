@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata" // Asia/Kolkata on systems without zoneinfo
@@ -393,5 +394,137 @@ func TestNudgeDST(t *testing.T) {
 		if !times[i].Equal(want[i]) {
 			t.Fatalf("nudge %d at %v, want %v", i, times[i].In(ny), want[i])
 		}
+	}
+}
+
+func sweepRules(loc *time.Location) Rules {
+	r := replyRules(loc, nil)
+	r.Sweep = true
+	return r
+}
+
+// sweeps returns the sweep alerts of fire.
+func sweeps(fire []Alert) []Alert {
+	var out []Alert
+	for _, a := range fire {
+		if a.Kind == KindSweep {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func TestSweepAtEndOfDay(t *testing.T) {
+	loc := kolkata(t)
+	priya := reply("p", wed(loc, 10, 0))
+	priya.OwedTo = "Priya"
+	anon := reply("s", wed(loc, 11, 0))
+	priyaAgain := reply("p2", wed(loc, 12, 0))
+	priyaAgain.OwedTo = " priya "
+	items := []model.Item{anon, priyaAgain, priya}
+
+	allNudges := func(k string) bool { return strings.Contains(k, "|nudge|") }
+	if _, _, next := Plan(items, sweepRules(loc), wed(loc, 17, 30), allNudges); !next.Equal(time.Date(2026, 12, 3, 17, 30, 0, 0, loc)) {
+		t.Fatalf("firing: next=%v, want Thursday's sweep", next.In(loc))
+	}
+	fire, cov, _ := Plan(items, sweepRules(loc), wed(loc, 17, 30), none)
+	sw := sweeps(fire)
+	if len(sw) != 1 {
+		t.Fatalf("sweeps %+v", sw)
+	}
+	a := sw[0]
+	if a.Key != "sweep|2026-12-02" || a.ItemID != "" || a.Missed || !a.DueAt.Equal(wed(loc, 17, 30)) {
+		t.Fatalf("sweep %+v", a)
+	}
+	if len(a.People) != 2 || a.People[0] != "Priya" || a.People[1] != "Someone" {
+		t.Fatalf("people %q, want [Priya Someone]", a.People)
+	}
+	found := false
+	for _, k := range cov {
+		found = found || k == a.Key
+	}
+	if !found {
+		t.Fatalf("sweep key not covered: %v", cov)
+	}
+
+	fire, _, next := Plan(items, sweepRules(loc), wed(loc, 17, 29), none)
+	if sw := sweeps(fire); len(sw) != 0 {
+		t.Fatalf("17:29: %+v", sw)
+	}
+	if !next.Equal(wed(loc, 17, 30)) {
+		t.Fatalf("17:29: next=%v, want the sweep at 17:30", next.In(loc))
+	}
+
+	sat := time.Date(2026, 12, 5, 17, 30, 0, 0, loc)
+	if fire, _, _ := Plan(items, sweepRules(loc), sat, none); len(sweeps(fire)) != 0 {
+		t.Fatalf("saturday: %+v", sweeps(fire))
+	}
+	if fire, _, _ := Plan(items, replyRules(loc, nil), wed(loc, 17, 30), none); len(sweeps(fire)) != 0 {
+		t.Fatalf("sweep off: %+v", sweeps(fire))
+	}
+
+	// No open replies: no sweep, and no wake for one.
+	done := priya
+	done.Status, done.ReplyOutcome = model.StatusDone, model.ReplyReplied
+	other := rem("r", wed(loc, 20, 0), wed(loc, 9, 0))
+	fire, cov, next = Plan([]model.Item{done, other}, sweepRules(loc), wed(loc, 17, 30), none)
+	if len(fire) != 0 || len(cov) != 0 || !next.Equal(wed(loc, 20, 0)) {
+		t.Fatalf("no replies: fire=%+v cov=%v next=%v", fire, cov, next.In(loc))
+	}
+	if _, _, next := Plan([]model.Item{done}, sweepRules(loc), wed(loc, 17, 0), none); !next.IsZero() {
+		t.Fatalf("no replies: next=%v, want none", next.In(loc))
+	}
+}
+
+// Once today's sweep is done, the next wake for it is the next working day's
+// end of day.
+func TestSweepNextWorkingDay(t *testing.T) {
+	loc := kolkata(t)
+	fri := func(h, m int) time.Time { return time.Date(2026, 12, 4, h, m, 0, 0, loc) }
+	it := reply("r", fri(10, 0))
+	seen := func(k string) bool { return strings.Contains(k, "|nudge|") || k == "sweep|2026-12-04" }
+	fire, cov, next := Plan([]model.Item{it}, sweepRules(loc), fri(18, 0), seen)
+	if len(fire) != 0 || len(cov) != 0 {
+		t.Fatalf("fire=%+v cov=%v", fire, cov)
+	}
+	if mon := time.Date(2026, 12, 7, 17, 30, 0, 0, loc); !next.Equal(mon) {
+		t.Fatalf("next=%v, want %v", next.In(loc), mon)
+	}
+}
+
+// Review Focus 4: a sweep missed while asleep fires late the same day only.
+func TestSweepSameDayOnly(t *testing.T) {
+	loc := kolkata(t)
+	it := reply("r", wed(loc, 10, 0))
+	it.OwedTo = "Priya"
+	items := []model.Item{it}
+	notified := map[string]bool{}
+	seen := func(k string) bool { return notified[k] }
+	_, cov, next := Plan(items, sweepRules(loc), wed(loc, 17, 0), seen)
+	for _, k := range cov {
+		notified[k] = true
+	}
+	if !next.Equal(wed(loc, 17, 30)) {
+		t.Fatalf("at 17:00 next=%v", next.In(loc))
+	}
+
+	thu8 := time.Date(2026, 12, 3, 8, 0, 0, 0, loc)
+	fire, cov, next := Plan(items, sweepRules(loc), thu8, seen)
+	if sw := sweeps(fire); len(sw) != 0 {
+		t.Fatalf("thursday morning: %+v", sw)
+	}
+	for _, k := range cov {
+		if strings.HasPrefix(k, "sweep|") {
+			t.Fatalf("thursday morning covered %q", k)
+		}
+	}
+	if thu9 := time.Date(2026, 12, 3, 9, 0, 0, 0, loc); !next.Equal(thu9) {
+		t.Fatalf("thursday morning next=%v", next.In(loc))
+	}
+
+	fire, _, _ = Plan(items, sweepRules(loc), wed(loc, 22, 0), seen)
+	sw := sweeps(fire)
+	if len(sw) != 1 || !sw[0].Missed || sw[0].Key != "sweep|2026-12-02" {
+		t.Fatalf("wed 22:00: %+v", sw)
 	}
 }

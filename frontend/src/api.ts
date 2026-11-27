@@ -4,12 +4,13 @@ import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
 import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
 import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
-import type { Detail, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
+import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
+import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, Preview, Item, Status, SyncInfo, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, Status, SyncInfo, TagGroup, View, VoiceStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -24,8 +25,15 @@ function pcmBase64(pcm: Int16Array): string {
   return btoa(bin);
 }
 
-/** One card of the alert window (internal/app/alerts.go); tags never null. */
-export type AlertCard = Omit<GenAlertCard, "tags"> & { tags: string[] };
+/** Alert card kinds (internal/scheduler Kind*): "" a normal alert, "nudge" an owed reply, "sweep" the end-of-day sweep. */
+export type AlertKind = "" | "nudge" | "sweep";
+
+/**
+ * One card of the alert window (internal/app/alerts.go); tags and people
+ * never null. A sweep card has itemId "" and lists the people replies are
+ * owed to.
+ */
+export type AlertCard = Omit<GenAlertCard, "tags" | "people" | "kind"> & { tags: string[]; people: string[]; kind: AlertKind };
 
 /** Machine sync state (internal/cloudsync State). */
 export type SyncState = "off" | "syncing" | "synced" | "offline" | "error";
@@ -75,6 +83,12 @@ export const api = {
   preview: (input: string): Promise<Preview> => Service.Preview(input),
   withDue: (input: string, due: Date): Promise<string> => Service.WithDue(input, due.toISOString()),
   capture: (input: string): Promise<Item> => Service.Capture(input),
+  /** Saves a reply owed; meta keys are Go's field names (OwedTo, Source, Quote). */
+  captureReply: (input: string, meta: ReplyMeta): Promise<Item> => Service.CaptureReply(input, meta),
+  /** Closes a reply without answering it. */
+  dropReply: (id: string): Promise<void> => Service.DropReply(id),
+  /** The sweep's Tomorrow: snoozes every open reply to the next working day at the default time. */
+  snoozeReplies: (): Promise<void> => Service.SnoozeReplies(),
   getSettings: (): Promise<Settings> => Service.GetSettings() as Promise<Settings>,
   status: (): Promise<Status> => Service.Status(),
   hideCapture: (): Promise<void> => Service.HideCapture(),

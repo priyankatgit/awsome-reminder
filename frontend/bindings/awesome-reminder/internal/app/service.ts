@@ -21,6 +21,9 @@ import * as core$0 from "../core/models.js";
 import * as model$0 from "../model/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as reply$0 from "../reply/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as settings$0 from "../settings/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -39,6 +42,14 @@ export function AddAttachment(itemID: string, data: string | null): $Cancellable
  */
 export function Capture(input: string): $CancellablePromise<model$0.Item> {
     return $Call.ByID(2637989342, input);
+}
+
+/**
+ * CaptureReply stores a new reply owed, parsed from input like Capture, with
+ * who it is owed to, where it came from and the quoted message from m.
+ */
+export function CaptureReply(input: string, m: reply$0.Meta): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(3927535266, input, m);
 }
 
 /**
@@ -70,6 +81,14 @@ export function DismissAlerts(): $CancellablePromise<void> {
  */
 export function Done(id: string): $CancellablePromise<void> {
     return $Call.ByID(3388264204, id);
+}
+
+/**
+ * DropReply closes a reply without answering it and removes its alert cards,
+ * like Done.
+ */
+export function DropReply(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2556609827, id);
 }
 
 /**
@@ -237,6 +256,15 @@ export function SetText(id: string, text: string): $CancellablePromise<model$0.I
  */
 export function Snooze(id: string, preset: string): $CancellablePromise<void> {
     return $Call.ByID(1387438710, id, preset);
+}
+
+/**
+ * SnoozeReplies snoozes every open reply until the next working day at the
+ * default time, local time (the end-of-day sweep's Tomorrow), and removes
+ * the replies' cards and the sweep card.
+ */
+export function SnoozeReplies(): $CancellablePromise<void> {
+    return $Call.ByID(1057928698);
 }
 
 /**

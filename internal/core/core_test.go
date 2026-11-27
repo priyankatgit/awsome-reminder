@@ -879,3 +879,46 @@ func TestDoneAndDropReply(t *testing.T) {
 		t.Fatalf("todo outcome %q", got.ReplyOutcome)
 	}
 }
+
+func TestSnoozeRepliesUntil(t *testing.T) {
+	e := newEnv(t)
+	a := mustReply(t, e, "a", "Priya")
+	b := mustReply(t, e, "b", "")
+	closed := mustReply(t, e, "c", "Sam")
+	if _, err := e.c.DropReply(closed.ID); err != nil {
+		t.Fatal(err)
+	}
+	todo := mustCapture(t, e, "plain")
+	changes := 0
+	e.c.OnChange(func() { changes++ })
+	e.now = e.now.Add(time.Minute)
+	until := time.Date(2026, 11, 26, 9, 0, 0, 0, ny)
+	if err := e.c.SnoozeRepliesUntil(until); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 1 {
+		t.Fatalf("OnChange called %d times, want 1", changes)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		got, _ := e.st.Get(id)
+		if got.SnoozeUntil == nil || !got.SnoozeUntil.Equal(until) || got.SnoozeUntil.Location() != time.UTC || !got.UpdatedAt.After(a.UpdatedAt) {
+			t.Fatalf("reply %s: snooze %v updated %v", id, got.SnoozeUntil, got.UpdatedAt)
+		}
+	}
+	for _, id := range []string{closed.ID, todo.ID} {
+		if got, _ := e.st.Get(id); got.SnoozeUntil != nil {
+			t.Fatalf("%s snoozed: %+v", id, got)
+		}
+	}
+
+	// No open replies left: nothing saved, no one notified.
+	for _, id := range []string{a.ID, b.ID} {
+		if _, err := e.c.DropReply(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changes = 0
+	if err := e.c.SnoozeRepliesUntil(until); err != nil || changes != 0 {
+		t.Fatalf("err %v changes %d", err, changes)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"awesome-reminder/internal/model"
@@ -116,10 +117,14 @@ func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 		// Mark the already-old alerts of an inserted item first: if we stop
 		// between the two writes, a retry still sees no local copy and
 		// marks again, and the marks are harmless without the row. An owed
-		// reply's old nudges are covered the same way, due time or not.
+		// reply's old nudges are covered the same way, due time or not. Only
+		// the item's own keys: the end-of-day sweep is about every reply.
 		if before == nil && it.Status == model.StatusOpen {
 			_, covered, _ := scheduler.Plan([]model.Item{it}, rules, now.Add(-staleAlertAge), never)
 			for _, key := range covered {
+				if !strings.HasPrefix(key, it.ID+"|") {
+					continue
+				}
 				if err := c.st.MarkNotified(key, now); err != nil {
 					return applied, err
 				}

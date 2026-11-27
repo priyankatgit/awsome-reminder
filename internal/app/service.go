@@ -13,6 +13,8 @@ import (
 	"awesome-reminder/internal/cloudsync"
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/reply"
+	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/settings"
 )
 
@@ -90,6 +92,55 @@ func (s *Service) WithDue(input string, due time.Time) string {
 
 // Capture stores a new item parsed from input.
 func (s *Service) Capture(input string) (model.Item, error) { return s.d.Core.Capture(input) }
+
+// CaptureReply stores a new reply owed, parsed from input like Capture, with
+// who it is owed to, where it came from and the quoted message from m.
+func (s *Service) CaptureReply(input string, m reply.Meta) (model.Item, error) {
+	return s.d.Core.CaptureReply(input, m)
+}
+
+// DropReply closes a reply without answering it and removes its alert cards,
+// like Done.
+func (s *Service) DropReply(id string) error {
+	if _, err := s.d.Core.DropReply(id); err != nil {
+		return err
+	}
+	s.dropItemAlerts(id)
+	return nil
+}
+
+// errNoWorkDays is returned by SnoozeReplies when no working day is set.
+var errNoWorkDays = errors.New("No working days are set")
+
+// SnoozeReplies snoozes every open reply until the next working day at the
+// default time, local time (the end-of-day sweep's Tomorrow), and removes
+// the replies' cards and the sweep card.
+func (s *Service) SnoozeReplies() error {
+	st, err := s.d.Core.Settings()
+	if err != nil {
+		return err
+	}
+	r := core.SchedulerRules(st, time.Local)
+	until := r.NextWorkDay(s.d.Core.Now(), r.DefaultTime)
+	if until.IsZero() {
+		return errNoWorkDays
+	}
+	if err := s.d.Core.SnoozeRepliesUntil(until); err != nil {
+		return err
+	}
+	v, err := s.d.Core.View()
+	if err != nil {
+		return err
+	}
+	snoozed := map[string]bool{}
+	for _, g := range v.Waiting {
+		for _, it := range g.Items {
+			snoozed[it.ID] = true
+		}
+	}
+	s.removeAlerts(func(c AlertCard) bool { return c.Kind == scheduler.KindSweep || snoozed[c.ItemID] }, true)
+	return nil
+}
 
 // EditText returns the editable one-line form of an item.
 func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText(id) }

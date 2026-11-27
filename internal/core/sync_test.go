@@ -147,8 +147,18 @@ func TestApplyRemoteReplySuppressesPastNudges(t *testing.T) {
 	if len(fire) != 0 {
 		t.Fatalf("restored reply must not fire an old nudge: %+v", fire)
 	}
-	if thu9 := time.Date(2026, 11, 26, 9, 0, 0, 0, ny); !next.Equal(thu9) {
-		t.Fatalf("next=%v, want Thursday's nudge %v", next, thu9)
+	// The next alert is today's end-of-day sweep (on by default), then
+	// Thursday's nudge.
+	if eod := time.Date(2026, 11, 25, 17, 30, 0, 0, ny); !next.Equal(eod) {
+		t.Fatalf("next=%v, want the sweep %v", next, eod)
+	}
+	s, _ := e.c.Settings()
+	s.EndOfDaySweep = false
+	if err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if _, next := planFor(t, e); !next.Equal(time.Date(2026, 11, 26, 9, 0, 0, 0, ny)) {
+		t.Fatalf("next=%v, want Thursday's nudge", next)
 	}
 }
 
@@ -555,5 +565,28 @@ func TestAttachmentStampsStrictlyIncrease(t *testing.T) {
 	got, _ := e.st.GetAttachment(a.ID)
 	if !got.UpdatedAt.After(a.UpdatedAt) {
 		t.Errorf("attachment restamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
+	}
+}
+
+// A reply pulled from another machine after the end of the working day must
+// not mark today's sweep as shown: only the item's own old alerts.
+func TestApplyRemoteReplyKeepsSweep(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Date(2026, 11, 25, 18, 0, 0, 0, ny) // Wednesday, after 17:30
+	r := remoteItem(idA, "R", e.now.Add(-time.Hour))
+	r.Reply, r.OwedTo = true, "Priya"
+	if _, err := e.c.ApplyRemoteItems([]model.Item{r}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := e.st.WasNotified("sweep|2026-11-25"); n {
+		t.Fatal("restoring a reply marked today's sweep as shown")
+	}
+	fire, _ := planFor(t, e)
+	found := false
+	for _, a := range fire {
+		found = found || a.Key == "sweep|2026-11-25"
+	}
+	if !found {
+		t.Fatalf("sweep did not fire: %+v", fire)
 	}
 }

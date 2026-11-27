@@ -102,7 +102,7 @@ export function installDemo(): void {
     const names = [...groups.keys()].sort((a, b) => (a === "inbox" ? -1 : b === "inbox" ? 1 : a.localeCompare(b)));
     // Like Go's View: tag groups sort by priority (stable), Upcoming keeps time order.
     const tags = names.map((tag) => ({ tag, items: [...groups.get(tag)!].sort(byPriority) }));
-    return { upcoming, tags, done: items.filter((i) => i.status === "done"), pending: [] };
+    return { upcoming, tags, done: items.filter((i) => i.status === "done"), waiting: [], pending: [] };
   };
   const patch = (id: string, p: Partial<Item>) => {
     items = items.map((i) => (i.id === id ? { ...i, ...p, updatedAt: new Date().toISOString() } : i));
@@ -266,6 +266,11 @@ function installAlertDemo(): void {
     missed: false,
     recurring: false,
     snoozed: false,
+    kind: "",
+    person: "",
+    source: "",
+    waitingSince: "0001-01-01T00:00:00Z",
+    people: [],
     ...extra,
   });
   let queue: AlertCard[] = [

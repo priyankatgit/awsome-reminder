@@ -14,6 +14,10 @@ export interface AlertCard {
      * scheduler.Alert.Key; unique in the queue
      */
     "key": string;
+
+    /**
+     * "" for a sweep card
+     */
     "itemId": string;
     "text": string;
     "dueAt": string;
@@ -38,6 +42,31 @@ export interface AlertCard {
      * fired at the end of a snooze
      */
     "snoozed": boolean;
+
+    /**
+     * scheduler.Alert.Kind: "", "nudge" or "sweep"
+     */
+    "kind": string;
+
+    /**
+     * the item's OwedTo
+     */
+    "person": string;
+
+    /**
+     * the item's Source
+     */
+    "source": string;
+
+    /**
+     * a nudge: when the reply was captured
+     */
+    "waitingSince": string;
+
+    /**
+     * a sweep: who replies are owed to; never nil
+     */
+    "people": string[] | null;
 }
 
 /**

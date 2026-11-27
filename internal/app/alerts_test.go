@@ -509,3 +509,58 @@ func TestRemoteDoneDropsAlertCards(t *testing.T) {
 		t.Fatalf("queue %v after a done insert", keys(h.svc.PendingAlerts()))
 	}
 }
+
+// A reply's card carries who it is owed to, where it came from and how long
+// it has waited; a sweep card has no item and lists the people. A sweep card
+// has its own slot: a newer sweep replaces it, item cards never do.
+func TestAlertCardCarriesReplyFields(t *testing.T) {
+	h := newHarness(t)
+	created := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
+	if err := h.st.Put(model.Item{
+		ID: "P", Kind: model.KindTodo, Text: "reply to Priya", Tags: []string{"inbox"}, Status: model.StatusOpen,
+		Reply: true, OwedTo: "Priya", Source: "Teams", CreatedAt: created, UpdatedAt: created, UpdatedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nudgeAt := time.Now().UTC().Truncate(time.Minute)
+	sweep1 := scheduler.Alert{Key: "sweep|2026-12-01", Text: "", DueAt: nudgeAt.Add(-24 * time.Hour), Kind: scheduler.KindSweep, People: []string{"Priya"}}
+	h.svc.showAlerts([]scheduler.Alert{
+		{Key: "P|nudge|1", ItemID: "P", Text: "reply to Priya", DueAt: nudgeAt, Kind: scheduler.KindNudge, WaitingSince: created},
+		sweep1,
+	})
+	got := h.svc.PendingAlerts()
+	if len(got) != 2 {
+		t.Fatalf("queue %v", keys(got))
+	}
+	n := got[0]
+	if n.Kind != "nudge" || n.Person != "Priya" || n.Source != "Teams" || !n.WaitingSince.Equal(created) || n.People == nil || len(n.People) != 0 {
+		t.Fatalf("nudge card %+v", n)
+	}
+	s := got[1]
+	if s.Kind != "sweep" || s.ItemID != "" || !reflect.DeepEqual(s.People, []string{"Priya"}) || s.Person != "" || s.Tags == nil {
+		t.Fatalf("sweep card %+v", s)
+	}
+
+	// An item card at a later time leaves the sweep card alone; the same
+	// sweep again is not added twice; a newer sweep replaces the older one.
+	h.svc.showAlerts([]scheduler.Alert{{Key: "P|nudge|2", ItemID: "P", Text: "reply to Priya", DueAt: nudgeAt.Add(time.Hour), Kind: scheduler.KindNudge}})
+	h.svc.showAlerts([]scheduler.Alert{sweep1})
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"sweep|2026-12-01", "P|nudge|2"}) {
+		t.Fatalf("queue %v", got)
+	}
+	sweep2 := scheduler.Alert{Key: "sweep|2026-12-02", DueAt: nudgeAt, Kind: scheduler.KindSweep, People: []string{"Priya", "Someone"}}
+	h.svc.showAlerts([]scheduler.Alert{sweep2})
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"P|nudge|2", "sweep|2026-12-02"}) {
+		t.Fatalf("queue %v", got)
+	}
+	// An older sweep arriving late is not shown over a newer one.
+	h.svc.showAlerts([]scheduler.Alert{sweep1})
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"P|nudge|2", "sweep|2026-12-02"}) {
+		t.Fatalf("queue %v after a late older sweep", got)
+	}
+	// Dropping the item's cards keeps the sweep card.
+	h.svc.dropItemAlerts("P")
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"sweep|2026-12-02"}) {
+		t.Fatalf("queue %v", got)
+	}
+}

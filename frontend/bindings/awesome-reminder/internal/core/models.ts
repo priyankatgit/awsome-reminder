@@ -14,6 +14,14 @@ export interface Detail {
 }
 
 /**
+ * PersonGroup is the open replies owed to one person.
+ */
+export interface PersonGroup {
+    "person": string;
+    "items": model$0.Item[] | null;
+}
+
+/**
  * Preview is the live feedback shown while the user types a capture line.
  */
 export interface Preview {
@@ -55,6 +63,11 @@ export interface View {
     "upcoming": model$0.Item[] | null;
     "tags": TagGroup[] | null;
     "done": model$0.Item[] | null;
+
+    /**
+     * Waiting lists open replies by person; never null.
+     */
+    "waiting": PersonGroup[] | null;
 
     /**
      * Pending lists the items with local changes not yet synced; never null.
