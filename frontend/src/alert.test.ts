@@ -91,6 +91,28 @@ describe("nudge card", () => {
 describe("nudge card snooze", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("a snoozed reply comes back as a nudge card, never 'was due'", async () => {
+    const now = new Date();
+    // An undated reply's snooze card: dueAt is the snooze end, an hour ago.
+    const c = card({
+      key: "r1|snooze|1",
+      itemId: "r1",
+      text: "Reply to Priya",
+      kind: "nudge",
+      snoozed: true,
+      dueAt: new Date(now.getTime() - HOUR).toISOString(),
+      person: "Priya",
+      waitingSince: new Date(now.getTime() - 3 * HOUR).toISOString(),
+    });
+    expect(whenLabel(c, now)).toEqual({ text: "waiting 3 h · Priya", state: "nudge" });
+    const root = await mount([c]);
+    const node = root.querySelector<HTMLElement>(".alert-card")!;
+    expect(node.dataset.kind).toBe("nudge");
+    expect(node.querySelector(".alert-when")!.textContent).toBe("waiting 3 h · Priya");
+    expect(node.textContent).not.toContain("was due");
+    expect(buttons(node)[0].textContent).toBe("Replied");
+  });
+
   it("Priya's 2 h nudge: Snooze, then 1 hour, snoozes the reply", async () => {
     const root = await mount([card({ key: "n1", itemId: "r1", text: "Reply to Priya", kind: "nudge", person: "Priya", waitingSince: new Date(Date.now() - 2 * HOUR).toISOString() })]);
     const node = root.querySelector<HTMLElement>(".alert-card")!;

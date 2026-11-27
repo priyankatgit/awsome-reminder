@@ -78,7 +78,8 @@ type candidate struct {
 // closed; see nudges. Only the latest nudge at or before now and the first
 // after it are candidates: the earlier ones are collapsed away for good, as
 // time only moves on. Nudges are not leads, so an edit does not skip them;
-// a snooze replaces the ones at or before its end.
+// a snooze replaces the ones at or before its end, and its own alert at
+// SnoozeUntil is a nudge too (Kind, WaitingSince; the "|snooze|" key).
 //
 // With r.Sweep on and an open reply anywhere, the end-of-day sweep fires at
 // EndOfDay on each working day (see sweep). It belongs to no item.
@@ -108,11 +109,14 @@ func Plan(items []model.Item, r Rules, now time.Time, notified func(key string) 
 			if it.DueAt != nil {
 				due = *it.DueAt
 			}
-			cands = append(cands, candidate{
-				alert: Alert{Key: fmt.Sprintf("%s|snooze|%d", it.ID, it.SnoozeUntil.Unix()),
-					ItemID: it.ID, Text: it.Text, DueAt: due, Snooze: true},
-				fire: *it.SnoozeUntil,
-			})
+			a := Alert{Key: fmt.Sprintf("%s|snooze|%d", it.ID, it.SnoozeUntil.Unix()),
+				ItemID: it.ID, Text: it.Text, DueAt: due, Snooze: true}
+			if owed {
+				// A snoozed reply comes back as a nudge card (Replied, who is
+				// waiting and for how long), not as a plain reminder.
+				a.Kind, a.WaitingSince = KindNudge, it.CreatedAt
+			}
+			cands = append(cands, candidate{alert: a, fire: *it.SnoozeUntil})
 		}
 		leads := it.LeadTimes
 		if leads == nil {

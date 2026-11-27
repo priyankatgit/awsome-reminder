@@ -381,6 +381,41 @@ func TestNudgeEditAndSnooze(t *testing.T) {
 	}
 }
 
+// A snoozed reply comes back as a nudge (Replied, the person, how long it
+// has waited), dated or not; a snoozed reminder stays a plain snooze.
+func TestSnoozedReplyComesBackAsNudge(t *testing.T) {
+	loc := kolkata(t)
+	created := wed(loc, 10, 0)
+	sn := wed(loc, 11, 0).UTC()
+
+	undated := reply("u", created)
+	undated.SnoozeUntil = &sn
+	dated := reply("d", created)
+	due := wed(loc, 17, 0).UTC()
+	dated.Kind, dated.DueAt, dated.SnoozeUntil = model.KindReminder, &due, &sn
+	plain := model.Item{ID: "p", Kind: model.KindReminder, Text: "t-p", Status: model.StatusOpen, DueAt: &due, SnoozeUntil: &sn,
+		CreatedAt: created.UTC(), UpdatedAt: created.UTC()}
+
+	fire, _, _ := Plan([]model.Item{undated, dated, plain}, replyRules(loc, nil), sn, none)
+	got := map[string]Alert{}
+	for _, a := range fire {
+		got[a.ItemID] = a
+	}
+	snoozeKey := func(id string) string { return id + "|snooze|" + strconv.FormatInt(sn.Unix(), 10) }
+	for _, id := range []string{"u", "d"} {
+		a, ok := got[id]
+		if !ok || a.Key != snoozeKey(id) || !a.Snooze || a.Kind != KindNudge || !a.WaitingSince.Equal(created.UTC()) {
+			t.Fatalf("reply %s at snooze end: %+v", id, a)
+		}
+	}
+	if a := got["u"]; !a.DueAt.Equal(sn) {
+		t.Fatalf("undated reply DueAt %v, want the snooze end %v", a.DueAt, sn)
+	}
+	if a, ok := got["p"]; !ok || a.Key != snoozeKey("p") || !a.Snooze || a.Kind != "" || !a.WaitingSince.IsZero() {
+		t.Fatalf("plain reminder at snooze end: %+v", a)
+	}
+}
+
 // Nudge times are wall-clock times in the rules' zone across a DST change.
 func TestNudgeDST(t *testing.T) {
 	ny, err := time.LoadLocation("America/New_York")
