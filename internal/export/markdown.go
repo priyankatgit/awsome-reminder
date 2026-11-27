@@ -39,7 +39,16 @@ func oneLine(s string) string {
 }
 
 func openLine(it model.Item, loc *time.Location) string {
-	s := "- [ ] " + oneLine(it.Text)
+	s := "- [ ]"
+	switch it.Priority {
+	case model.PriorityHigh:
+		s += " (!high)"
+	case model.PriorityMedium:
+		s += " (!med)"
+	case model.PriorityLow:
+		s += " (!low)"
+	}
+	s += " " + oneLine(it.Text)
 	var meta []string
 	if it.DueAt != nil {
 		meta = append(meta, "due "+it.DueAt.In(loc).Format("2006-01-02 15:04"))

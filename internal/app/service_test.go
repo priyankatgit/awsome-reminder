@@ -57,6 +57,8 @@ func (w *fakeWindows) ShowAlerts() {
 	w.mu.Unlock()
 }
 func (w *fakeWindows) ResizeAlerts(h int) { w.alertHeights = append(w.alertHeights, h) }
+func (w *fakeWindows) WidenList(int)      {}
+func (w *fakeWindows) RestoreListWidth()  {}
 func (w *fakeWindows) DismissAlerts() {
 	w.mu.Lock()
 	w.alertsHidden++

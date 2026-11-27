@@ -1,9 +1,10 @@
-// One row of the list window: checkbox, time, text, tag chips and the ⋯
+// One row of the list window: checkbox, time, priority dot, text, tag chips and the ⋯
 // button. Rows are keyed by section + item ID; list.ts reuses the element
 // and only refills it when its signature changes.
 import type { Item } from "./api";
 import { el, tagChip } from "./dom";
 import { icons } from "./icons";
+import { priorityLabel, type Priority } from "./priority";
 
 /** A row as the list renders it. */
 export interface RowModel {
@@ -97,6 +98,7 @@ export function rowSignature(m: RowModel, now: Date): string {
   const d = effectiveDue(it, now);
   return JSON.stringify([
     it.text,
+    it.priority,
     it.tags,
     it.kind,
     it.status,
@@ -151,6 +153,16 @@ export function fillRow(row: HTMLElement, m: RowModel, now: Date): void {
     t.dateTime = due.toISOString();
     t.title = full.format(due);
     parts.push(t);
+  }
+
+  const prio = (it.priority ?? "") as Priority;
+  if (prio) {
+    const dot = el("span", "row-prio");
+    dot.dataset.prio = prio;
+    dot.setAttribute("role", "img");
+    dot.setAttribute("aria-label", `${priorityLabel(prio)} priority`);
+    dot.title = `${priorityLabel(prio)} priority`;
+    parts.push(dot);
   }
 
   const main = el("span", "row-main");

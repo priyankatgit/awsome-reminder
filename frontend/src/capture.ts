@@ -1,11 +1,19 @@
 // Capture box (#capture): one-line input with a live parse preview.
 // Layout and behaviour follow the "Capture box" section of the UI guide.
 import { api, errorText, events, on, type Preview } from "./api";
-import { chip, el, motionMs, tagChip } from "./dom";
+import { el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
+import { priorityLabel, setPriorityToken, type Priority } from "./priority";
 import { mountVoice } from "./voice";
 
 const PREVIEW_DEBOUNCE_MS = 80;
+
+/** Capture chips in Alt+digit order; Alt+0 clears. */
+const CHIPS: { p: Exclude<Priority, "">; text: string; key: string }[] = [
+  { p: "high", text: "High", key: "1" },
+  { p: "medium", text: "Med", key: "2" },
+  { p: "low", text: "Low", key: "3" },
+];
 
 /** "YYYY-MM-DDTHH:MM" in local time, for <input type="datetime-local">. */
 function toLocalInput(d: Date): string {
@@ -48,6 +56,17 @@ const TEMPLATE = `
       <button class="btn btn-primary" id="cap-due-set" type="button">Set time</button>
       <span class="cap-picker-hint"><kbd>↵</kbd> set <kbd>Esc</kbd> cancel</span>
     </div>
+    <div class="cap-prio" id="cap-prio" role="group" aria-label="Priority">
+      ${CHIPS.map(
+        (c) =>
+          `<button class="prio-chip" type="button" data-prio="${c.p}" aria-pressed="false" aria-keyshortcuts="Alt+${c.key}"
+                   title="${priorityLabel(c.p)} priority (Alt+${c.key})"><span class="prio-dot" aria-hidden="true"></span>${c.text}</button>`,
+      ).join("")}
+      <span class="cap-prio-hint">
+        <span><kbd>Alt</kbd><span class="keycap-plus">+</span><kbd>1</kbd>–<kbd>3</kbd> priority</span>
+        <span><kbd>Alt</kbd><span class="keycap-plus">+</span><kbd>0</kbd> clear</span>
+      </span>
+    </div>
     <div class="cap-preview" id="cap-preview" role="status" aria-live="polite"></div>
     <div class="cap-listen-sub">Speak naturally — “remind me tomorrow at 5 pm to call Sam”</div>
     <footer class="cap-hint" id="cap-hint">
@@ -76,6 +95,19 @@ export function mountCapture(root: HTMLElement): void {
   const due = root.querySelector<HTMLInputElement>("#cap-due")!;
   const dueSet = root.querySelector<HTMLButtonElement>("#cap-due-set")!;
   const previewRow = root.querySelector<HTMLElement>("#cap-preview")!;
+  const prioChips = [...root.querySelectorAll<HTMLButtonElement>(".prio-chip")];
+
+  // The preview row keeps the reminder badge and its announcement across
+  // renders so they can animate in and out; only the rest is rebuilt.
+  const remindSay = el("span", "sr-only");
+  const badge = el("span", "chip chip-remind");
+  badge.setAttribute("aria-hidden", "true"); // remindSay carries the words
+  badge.hidden = true;
+  const lineBody = el("span", "cap-line-body");
+  const more = el("div", "cap-more");
+  const line = el("div", "cap-line");
+  line.append(badge, lineBody);
+  previewRow.append(remindSay, line, more);
 
   let seq = 0; // invalidates in-flight previews
   let timer: number | undefined;
@@ -86,6 +118,11 @@ export function mountCapture(root: HTMLElement): void {
 
   let leadIcon: IconName = "search"; // what the parse preview wants
   let listeningLead = false; // voice shows a mic instead while recording
+
+  let remindOn = false; // a due time is detected and the indicator is shown
+  let remindHuman = "";
+  let restingLead: IconName = "search"; // the lead once the reminder fades out
+  let remindTimer: number | undefined; // pending end of the fade-out
 
   function setLead(name: IconName): void {
     leadIcon = name;
@@ -104,33 +141,89 @@ export function mountCapture(root: HTMLElement): void {
     errorRow.hidden = msg === "";
   }
 
-  function renderPreview(p: Preview | null): void {
-    current = p;
-    previewRow.replaceChildren();
-    if (!p) {
-      setLead("search");
-      previewRow.append(el("span", "cap-empty", "Type a to-do, or add a time like “tomorrow 5pm”"));
+  /** Restarts a one-shot CSS animation class and drops it when it ends. */
+  function play(node: HTMLElement, cls: string): void {
+    node.classList.remove(cls);
+    void node.offsetWidth;
+    node.classList.add(cls);
+    node.addEventListener("animationend", () => node.classList.remove(cls), { once: true });
+  }
+
+  /**
+   * The live reminder indicator: a light-red bell that pops in and a
+   * "Reminder · <human>" badge leading the preview row, both fading out when
+   * the time words go away. Announced through the preview's role=status.
+   */
+  function setRemind(on: boolean, human: string): void {
+    if (on) {
+      window.clearTimeout(remindTimer);
+      lead.classList.remove("is-leaving");
+      badge.classList.remove("is-leaving");
+      badge.textContent = `Reminder · ${human}`;
+      badge.hidden = false;
+      if (!remindOn || human !== remindHuman) remindSay.textContent = `Reminder detected for ${human}`;
+      if (!remindOn) {
+        lead.classList.add("is-remind");
+        setLead("bell");
+        play(lead, "is-pop");
+        play(badge, "is-pop");
+      }
+      remindOn = true;
+      remindHuman = human;
       return;
     }
-    const reminder = p.kind === "reminder";
-    setLead(reminder ? "bell" : "todo");
+    if (!remindOn) {
+      if (!lead.classList.contains("is-leaving")) setLead(restingLead); // mid-fade, endRemind sets it
+      return;
+    }
+    remindOn = false;
+    remindHuman = "";
+    remindSay.textContent = "Reminder removed";
+    lead.classList.add("is-leaving");
+    badge.classList.add("is-leaving");
+    remindTimer = window.setTimeout(endRemind, motionMs("--dur-exit"));
+  }
 
-    const line = el("div", "cap-line");
-    line.append(el("span", "cap-kind", reminder ? "Reminder" : "To-do"));
-    if (reminder && p.human) line.append(chip(p.human, "chip-time"));
-    for (const t of p.tags ?? []) line.append(tagChip(t));
-    previewRow.append(line);
+  /** Puts the indicator away at once (end of the fade-out, or a reset). */
+  function endRemind(): void {
+    window.clearTimeout(remindTimer);
+    lead.classList.remove("is-leaving", "is-remind", "is-pop");
+    badge.classList.remove("is-leaving", "is-pop");
+    badge.hidden = true;
+    remindOn = false;
+    remindHuman = "";
+    setLead(restingLead);
+  }
+
+  function showPriority(p: string): void {
+    for (const c of prioChips) c.setAttribute("aria-pressed", String(c.dataset.prio === p));
+  }
+
+  function renderPreview(p: Preview | null): void {
+    current = p;
+    lineBody.replaceChildren();
+    more.replaceChildren();
+    showPriority(p?.priority ?? "");
+    restingLead = !p ? "search" : p.dueAt ? "bell" : "todo";
+    setRemind(Boolean(p?.dueAt), p?.human ?? "");
+    if (!p) {
+      lineBody.append(el("span", "cap-empty", "Type a to-do, or add a time like “tomorrow 5pm”"));
+      return;
+    }
+    const reminder = Boolean(p.dueAt);
+    if (!reminder) lineBody.append(el("span", "cap-kind", "To-do"));
+    for (const t of p.tags ?? []) lineBody.append(tagChip(t));
 
     if (reminder && p.alerts && p.alerts.length > 0) {
-      previewRow.append(el("div", "cap-sub", `alerts ${p.alerts.map((a) => a.replace(/ before$/, "")).join(" · ")}`));
+      more.append(el("div", "cap-sub", `alerts ${p.alerts.map((a) => a.replace(/ before$/, "")).join(" · ")}`));
     } else if (reminder) {
-      previewRow.append(el("div", "cap-sub", "already past: no alerts"));
+      more.append(el("div", "cap-sub", "already past: no alerts"));
     }
     for (const w of p.warnings ?? []) {
       const row = el("div", "cap-warning");
       row.innerHTML = icons.warning;
       row.append(el("span", undefined, w));
-      previewRow.append(row);
+      more.append(row);
     }
   }
 
@@ -166,7 +259,14 @@ export function mountCapture(root: HTMLElement): void {
     if (!keepDraft) input.value = "";
     showError("");
     closePicker(false);
-    if (input.value.trim() === "") renderPreview(null); // a kept draft keeps its preview until refreshed
+    if (input.value.trim() === "") {
+      // A new draft starts quiet: no fade-out, no "Reminder removed".
+      // A kept draft keeps its preview until refreshed.
+      remindSay.textContent = "";
+      restingLead = "search";
+      endRemind();
+      renderPreview(null);
+    }
     flash.classList.remove("is-on");
     busy = false;
   }
@@ -270,6 +370,27 @@ export function mountCapture(root: HTMLElement): void {
     }
   });
 
+  /** Rewrites the priority token in the text and re-previews at once. */
+  function applyPriority(p: Priority): void {
+    input.value = setPriorityToken(input.value, p);
+    showError("");
+    showPriority(p); // the parse confirms it a moment later
+    window.clearTimeout(timer);
+    void runPreview();
+  }
+
+  for (const c of prioChips) {
+    c.addEventListener("click", (e) => {
+      const p = c.dataset.prio as Priority;
+      applyPriority(c.getAttribute("aria-pressed") === "true" ? "" : p);
+      if (e.detail > 0) {
+        // A mouse click goes back to typing; keyboard users stay on the chips.
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }
+
   picker.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -303,6 +424,14 @@ export function mountCapture(root: HTMLElement): void {
     if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
       e.preventDefault();
       if (!busy && picker.hidden) voice.toggle();
+      return;
+    }
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
+      const digit = /^(?:Digit|Numpad)([0-3])$/.exec(e.code)?.[1];
+      if (digit === undefined) return;
+      e.preventDefault();
+      if (busy || box.dataset.voice === "listening" || box.dataset.voice === "transcribing") return;
+      applyPriority(digit === "0" ? "" : CHIPS[Number(digit) - 1].p);
       return;
     }
     if (e.key !== "Escape") return;

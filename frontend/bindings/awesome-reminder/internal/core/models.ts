@@ -6,6 +6,14 @@
 import * as model$0 from "../model/models.js";
 
 /**
+ * Detail is an item with its live attachments, for the details panel.
+ */
+export interface Detail {
+    "item": model$0.Item;
+    "attachments": model$0.Attachment[] | null;
+}
+
+/**
  * Preview is the live feedback shown while the user types a capture line.
  */
 export interface Preview {
@@ -18,6 +26,7 @@ export interface Preview {
     "tags": string[] | null;
     "dueAt": string | null;
     "rrule": string;
+    "priority": string;
 
     /**
      * e.g. "Thu 26 Nov, 17:00 · every Monday"

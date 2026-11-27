@@ -273,6 +273,48 @@ func TestUpdateDropsCardsWhenDueChanges(t *testing.T) {
 	}
 }
 
+// M2 for the detail panel's setters: SetDue moving the due time (or making
+// the item a to-do) drops the item's cards like Update does; SetDue to the
+// same time, SetRepeat and the other setters keep them.
+func TestDetailSettersDropCardsWhenDueChanges(t *testing.T) {
+	h := newHarness(t)
+	putReminder(t, h, "A", "check deploy", nil, "")
+	putReminder(t, h, "B", "call Sam", nil, "")
+	h.svc.showAlerts([]scheduler.Alert{alert("A", "a-now"), alert("B", "b-now")})
+
+	b, _ := h.st.Get("B")
+	same := *b.DueAt
+	if _, err := h.svc.SetDue("B", &same); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetRepeat("B", "daily"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetText("B", "call Sam back"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.SetPriority("B", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"a-now", "b-now"}) {
+		t.Fatalf("queue %v after edits that keep the due time", got)
+	}
+
+	later := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Minute)
+	if _, err := h.svc.SetDue("A", &later); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"b-now"}) {
+		t.Fatalf("queue %v, want [b-now]", got)
+	}
+	if _, err := h.svc.SetDue("B", nil); err != nil { // reminder -> to-do
+		t.Fatal(err)
+	}
+	if len(h.svc.PendingAlerts()) != 0 || h.win.alertsHidden != 1 {
+		t.Fatalf("queue %v hidden %d", keys(h.svc.PendingAlerts()), h.win.alertsHidden)
+	}
+}
+
 // putDaily stores an open daily reminder whose DueAt is due (UTC).
 func putDaily(t *testing.T, h *harness, id string, due time.Time) {
 	t.Helper()
@@ -372,5 +414,45 @@ func TestStaleOccurrenceAlertIgnored(t *testing.T) {
 	h.svc.showAlerts([]scheduler.Alert{occurrenceAlert("A", today.Add(-24*time.Hour), 0)})
 	if n := len(h.svc.PendingAlerts()); n != 0 || h.win.alertsShown != 0 {
 		t.Fatalf("queue %v shown %d", keys(h.svc.PendingAlerts()), h.win.alertsShown)
+	}
+}
+
+// Changing only an item's rule (SetRepeat, StopRepeating) keeps the cards for
+// its current occurrence but drops look-ahead cards for a later one, which
+// the old rule planned: Done on such a card would skip to an occurrence the
+// new rule may not have.
+func TestRuleChangeDropsLookAheadCards(t *testing.T) {
+	for name, change := range map[string]func(h *harness) error{
+		"SetRepeat weekly": func(h *harness) error { _, err := h.svc.SetRepeat("A", "weekly"); return err },
+		"SetRepeat none":   func(h *harness) error { _, err := h.svc.SetRepeat("A", "none"); return err },
+		"StopRepeating":    func(h *harness) error { return h.svc.StopRepeating("A") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			today := time.Now().UTC().Add(time.Hour).Truncate(time.Minute)
+			putDaily(t, h, "A", today)
+			cur := occurrenceAlert("A", today, 0)
+			h.svc.showAlerts([]scheduler.Alert{cur})
+			if err := change(h); err != nil {
+				t.Fatal(err)
+			}
+			if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{cur.Key}) {
+				t.Fatalf("current-occurrence card dropped: %v", got)
+			}
+
+			h.svc.removeAlerts(func(AlertCard) bool { return true }, true)
+			putDaily(t, h, "A", today)
+			ahead := occurrenceAlert("A", today.Add(24*time.Hour), time.Hour)
+			h.svc.showAlerts([]scheduler.Alert{ahead})
+			if n := len(h.svc.PendingAlerts()); n != 1 {
+				t.Fatalf("look-ahead card not queued: %v", keys(h.svc.PendingAlerts()))
+			}
+			if err := change(h); err != nil {
+				t.Fatal(err)
+			}
+			if n := len(h.svc.PendingAlerts()); n != 0 {
+				t.Fatalf("look-ahead card kept: %v", keys(h.svc.PendingAlerts()))
+			}
+		})
 	}
 }

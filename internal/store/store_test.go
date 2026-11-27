@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -196,9 +197,84 @@ func TestMigrateIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 		var v string
-		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "1" {
+		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "2" {
 			t.Fatalf("v=%q err=%v", v, err)
 		}
 		s.Close()
+	}
+}
+
+func TestMigrateV1ToV2(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrations[0]); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES('schema_version','1')`,
+		`INSERT INTO items VALUES('A','todo','one','["a"]',NULL,'UTC','',NULL,'open',NULL,NULL,1000,2000,'dev')`,
+		`INSERT INTO items VALUES('B','reminder','two','[]',5000,'UTC','',NULL,'done',6000,NULL,1000,2000,'dev')`,
+		`INSERT INTO settings VALUES(1,'{"hotkey":"Ctrl+Alt+Space"}')`,
+		`INSERT INTO notify_log VALUES('k',7000)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	db.Close()
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var v string
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil || v != "2" {
+		t.Fatalf("v=%q err=%v", v, err)
+	}
+	a, err := s.Get("A")
+	if err != nil || a.Text != "one" || a.Priority != "" || a.Description != "" || !reflect.DeepEqual(a.Tags, []string{"a"}) {
+		t.Fatalf("A=%+v err=%v", a, err)
+	}
+	b, err := s.Get("B")
+	if err != nil || b.Text != "two" || b.Priority != "" || b.Description != "" || b.Status != model.StatusDone {
+		t.Fatalf("B=%+v err=%v", b, err)
+	}
+	var js string
+	if err := s.db.QueryRow(`SELECT json FROM settings WHERE id=1`).Scan(&js); err != nil || js != `{"hotkey":"Ctrl+Alt+Space"}` {
+		t.Fatalf("settings=%q err=%v", js, err)
+	}
+	if ok, _ := s.WasNotified("k"); !ok {
+		t.Fatal("notify_log lost")
+	}
+}
+
+func TestPutGetPriorityDescription(t *testing.T) {
+	s := mem(t)
+	it := model.Item{ID: "P1", Kind: model.KindTodo, Text: "x", Tags: []string{}, TZ: "UTC",
+		Status: model.StatusOpen, Priority: model.PriorityHigh, Description: "# notes\nline",
+		CreatedAt: ms(1), UpdatedAt: ms(2), UpdatedBy: "d"}
+	if err := s.Put(it); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get("P1")
+	if err != nil || got.Priority != "high" || got.Description != it.Description {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	open, _ := s.ListOpen()
+	if len(open) != 1 || open[0].Priority != "high" || open[0].Description != it.Description {
+		t.Fatalf("open=%+v", open)
+	}
+	it.Status, it.DoneAt = model.StatusDone, ptr(ms(3))
+	if err := s.Put(it); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := s.ListDone(0)
+	if len(done) != 1 || done[0].Priority != "high" || done[0].Description != it.Description {
+		t.Fatalf("done=%+v", done)
 	}
 }

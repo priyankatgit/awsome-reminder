@@ -231,3 +231,65 @@
   --dot-dim: 0.25;
   --progress-height: 4px;
 }
+
+/* ---- Phase 1.6: priority + reminder accent ----
+   Kept in its own block so it merges cleanly with other token changes.
+   Text pairs (WCAG ratio, dark / light):
+     --prio-high on --bg 6.45 / 6.18, --surface 5.66 / 6.47, --muted 4.83 / 5.76
+     --prio-med  on --bg 10.69 / 6.78, --surface 9.39 / 7.09, --muted 8.00 / 6.31
+     --prio-low  on --bg 7.02 / 6.41, --surface 6.16 / 6.70, --muted 5.26 / 5.96
+   The capture box's live reminder bell and badge reuse the alert card's
+   reminder red (--remind, --remind-tint, --remind-text above):
+     badge text --remind-text on --remind-tint 8.70 / 5.91
+     bell --remind (graphic) on --bg 6.45 / 4.62, --surface 5.66 / 4.83 */
+:root {
+  --prio-high: #F87171;
+  --prio-med: #FBBF24;
+  --prio-low: #60A5FA;
+
+  --prio-chip-height: 24px;
+  --prio-dot: 8px;
+  --dur-pop: 160ms;
+  --pop-scale: 0.6;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --prio-high: #B91C1C;
+    --prio-med: #92400E;
+    --prio-low: #1D4ED8;
+  }
+}
+
+/* ---- Phase 1.6: detail panel ----
+   Kept in its own block so it merges cleanly with other token changes.
+   Sizes and motion only: the panel reuses the existing colour tokens on
+   --surface / --bg / --muted (all >= 4.5:1, ratios in the Task 7 report). */
+:root {
+  --panel-share: 50%; /* of the list window */
+  --panel-min: 420px;
+  --panel-width: max(var(--panel-share), var(--panel-min));
+  --panel-label: 10ch;
+  --panel-title-size: 16px;
+  --panel-title-line: 24px;
+  --panel-desc-min: 160px;
+  --dur-panel: 180ms; /* slide-in */
+
+  /* Description editor (Task 8). Preview text sits on --bg: --fg 17.06 / 17.06,
+     links --accent-text 10.25 / 4.79, --fg-muted 6.96 / 7.24; code and pre
+     use --fg on --muted 12.77 / 15.88 (dark / light). The lightbox close
+     button is --fg on --surface (14.98 / 17.85), so its contrast never depends on the
+     backdrop. */
+  --md-sep-height: 20px;
+  --md-h1: 18px;
+  --md-h2: 16px;
+  --md-quote-bar: 3px;
+  --md-image-max: 320px;
+  --lightbox-backdrop: rgba(2, 6, 23, 0.86);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --lightbox-backdrop: rgba(15, 23, 42, 0.72);
+  }
+}

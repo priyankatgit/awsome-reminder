@@ -1762,3 +1762,163 @@ legend.field-label {
     transition: none;
   }
 }
+
+/* ---------- Capture box: priority chips + live reminder indicator (Phase 1.6) ---------- */
+
+/* Chip row under the input (after the time picker when that is open, which
+   matches the focus order input -> time -> chips). */
+.cap-prio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-2);
+}
+
+.cap-picker:not([hidden]) + .cap-prio {
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.prio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--prio-chip-height);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  cursor: pointer;
+  transition: background-color var(--dur-hover), color var(--dur-hover), border-color var(--dur-hover);
+}
+
+.prio-chip:hover {
+  background: var(--muted);
+  color: var(--fg);
+}
+
+.prio-dot {
+  width: var(--prio-dot);
+  height: var(--prio-dot);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+.prio-chip[data-prio="high"] .prio-dot { background: var(--prio-high); }
+.prio-chip[data-prio="medium"] .prio-dot { background: var(--prio-med); }
+.prio-chip[data-prio="low"] .prio-dot { background: var(--prio-low); }
+
+/* Pressed: the level's colour as text and border, never colour alone (the
+   chip keeps its word). */
+.prio-chip[aria-pressed="true"] {
+  background: var(--muted);
+  font-weight: var(--weight-medium);
+}
+
+.prio-chip[data-prio="high"][aria-pressed="true"] { color: var(--prio-high); border-color: var(--prio-high); }
+.prio-chip[data-prio="medium"][aria-pressed="true"] { color: var(--prio-med); border-color: var(--prio-med); }
+.prio-chip[data-prio="low"][aria-pressed="true"] { color: var(--prio-low); border-color: var(--prio-low); }
+
+.cap-prio-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.cap-prio-hint > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Voice owns the box while recording or setting up. */
+.capture[data-voice="listening"] .cap-prio,
+.capture[data-voice="transcribing"] .cap-prio,
+.capture[data-voice="consent"] .cap-prio,
+.capture[data-voice="installing"] .cap-prio,
+.capture[data-voice="ready-note"] .cap-prio {
+  display: none;
+}
+
+/* Persistent parts of the preview row; the rebuilt parts flow as before. */
+.cap-line-body,
+.cap-more {
+  display: contents;
+}
+
+/* Live reminder indicator: light-red bell + "Reminder · <time>" badge. */
+.cap-lead.is-remind:not(.is-listening) {
+  color: var(--remind);
+}
+
+.chip-remind {
+  background: var(--remind-tint);
+  color: var(--remind-text);
+  font-weight: var(--weight-medium);
+}
+
+.chip-remind[hidden] {
+  display: none;
+}
+
+.cap-lead.is-pop,
+.chip-remind.is-pop {
+  animation: remind-pop var(--dur-pop) var(--ease-enter);
+}
+
+.cap-lead.is-leaving,
+.chip-remind.is-leaving {
+  opacity: 0;
+  transition: opacity var(--dur-exit) var(--ease-exit);
+}
+
+@keyframes remind-pop {
+  from {
+    opacity: 0;
+    transform: scale(var(--pop-scale));
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Reduced motion: the global rule above already drops the animation; this
+   keeps the pop scale-free even if that rule changes. */
+@media (prefers-reduced-motion: reduce) {
+  .cap-lead.is-pop,
+  .chip-remind.is-pop {
+    animation-name: remind-fade;
+  }
+}
+
+@keyframes remind-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- List: priority dot (Phase 1.6) ---------- */
+
+/* An 8px dot before the text; it carries an aria-label, so not colour alone. */
+.row-prio {
+  flex: none;
+  width: var(--prio-dot);
+  height: var(--prio-dot);
+  border-radius: var(--radius-pill);
+}
+
+.row-prio[data-prio="high"] { background: var(--prio-high); }
+.row-prio[data-prio="medium"] { background: var(--prio-med); }
+.row-prio[data-prio="low"] { background: var(--prio-low); }

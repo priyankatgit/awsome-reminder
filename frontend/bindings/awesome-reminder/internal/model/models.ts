@@ -6,6 +6,24 @@
 import * as time$0 from "../../../time/models.js";
 
 /**
+ * Attachment is an image attached to an item's description.
+ */
+export interface Attachment {
+    "id": string;
+    "itemId": string;
+    "mime": string;
+    "sha256": string;
+    "width": number;
+    "height": number;
+    "bytes": number;
+    "createdAt": string;
+    "updatedAt": string;
+    "updatedBy": string;
+    "deleted": boolean;
+    "unreferencedSince": string | null;
+}
+
+/**
  * Item is a captured todo or reminder.
  */
 export interface Item {
@@ -46,6 +64,16 @@ export interface Item {
     "createdAt": string;
     "updatedAt": string;
     "updatedBy": string;
+
+    /**
+     * "", low, medium, high
+     */
+    "priority": string;
+
+    /**
+     * Markdown
+     */
+    "description": string;
 }
 
 /**

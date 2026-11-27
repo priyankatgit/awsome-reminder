@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"awesome-reminder/internal/core"
@@ -27,6 +28,10 @@ type Windows interface {
 	ResizeAlerts(height int)
 	// DismissAlerts hides the alert window.
 	DismissAlerts()
+	// WidenList widens the open list window to minWidth (capped to the
+	// screen) while the detail panel is open; RestoreListWidth undoes it.
+	WidenList(minWidth int)
+	RestoreListWidth()
 }
 
 // Hotkey is the subset of *hotkey.Manager the Service uses.
@@ -50,6 +55,8 @@ type Deps struct {
 	StatusChanged func()
 	// Emit sends an event to the frontend (EventAlertsShow).
 	Emit func(name string, data any)
+	// OpenURL opens a link in the system browser (OpenURL binding).
+	OpenURL func(url string) error
 }
 
 // Status is app health shown in the tray tooltip and the settings window.
@@ -86,16 +93,30 @@ func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText
 // (or changes its status) the item's alert cards are removed, since a "now"
 // or "missed" card would be stale.
 func (s *Service) Update(id, input string) (model.Item, error) {
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.Update(id, input) })
+}
+
+// dropIfMoved runs edit on item id and, like Update, removes the item's
+// alert cards when the edit moved its due time or changed its status. When
+// only the rule changed, the cards for the current occurrence stay but
+// look-ahead cards for a later occurrence (planned from the old rule) go:
+// that occurrence may not exist any more, and Done on its card would skip to
+// it.
+func (s *Service) dropIfMoved(id string, edit func() (model.Item, error)) (model.Item, error) {
 	before, err := s.d.Core.Item(id)
 	if err != nil {
-		return s.d.Core.Update(id, input) // reports the missing item
+		return edit() // reports the missing item
 	}
-	after, err := s.d.Core.Update(id, input)
+	after, err := edit()
 	if err != nil {
 		return after, err
 	}
-	if !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status {
+	switch {
+	case !sameTime(before.DueAt, after.DueAt) || before.Status != after.Status:
 		s.dropItemAlerts(id)
+	case before.RRule != after.RRule && after.DueAt != nil:
+		due := *after.DueAt
+		s.removeAlerts(func(c AlertCard) bool { return c.ItemID == id && c.DueAt.After(due) }, true)
 	}
 	return after, nil
 }
@@ -123,8 +144,17 @@ func (s *Service) Done(id string) error {
 // Reopen marks a done item open again.
 func (s *Service) Reopen(id string) error { return s.d.Core.Reopen(id) }
 
-// StopRepeating clears an item's recurrence.
-func (s *Service) StopRepeating(id string) error { return s.d.Core.StopRepeating(id) }
+// StopRepeating clears an item's recurrence. Look-ahead cards for a later
+// occurrence go (see dropIfMoved).
+func (s *Service) StopRepeating(id string) error {
+	_, err := s.dropIfMoved(id, func() (model.Item, error) {
+		if err := s.d.Core.StopRepeating(id); err != nil {
+			return model.Item{}, err
+		}
+		return s.d.Core.Item(id)
+	})
+	return err
+}
 
 // Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
 // are removed.
@@ -227,4 +257,63 @@ func (s *Service) SetHotkeyRecording(on bool) {
 	if s.d.StatusChanged != nil {
 		s.d.StatusChanged()
 	}
+}
+
+// SetText replaces an item's text verbatim (no re-parse).
+func (s *Service) SetText(id, text string) (model.Item, error) { return s.d.Core.SetText(id, text) }
+
+// SetPriority sets an item's priority: "", "low", "medium" or "high".
+func (s *Service) SetPriority(id, p string) (model.Item, error) {
+	return s.d.Core.SetPriority(id, p)
+}
+
+// SetDue sets or (nil) clears an item's due time. Like Update, moving the
+// due time removes the item's alert cards.
+func (s *Service) SetDue(id string, due *time.Time) (model.Item, error) {
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.SetDue(id, due) })
+}
+
+// SetRepeat sets an item's recurrence: "none", "daily", "weekdays" or
+// "weekly". It keeps the due time today; it shares Update's card rule so a
+// future change that moves the due time drops stale cards.
+func (s *Service) SetRepeat(id, repeat string) (model.Item, error) {
+	return s.dropIfMoved(id, func() (model.Item, error) { return s.d.Core.SetRepeat(id, repeat) })
+}
+
+// SetTags replaces an item's tags.
+func (s *Service) SetTags(id string, tags []string) (model.Item, error) {
+	return s.d.Core.SetTags(id, tags)
+}
+
+// SetDescription saves an item's Markdown description.
+func (s *Service) SetDescription(id, md string) (model.Item, error) {
+	return s.d.Core.SetDescription(id, md)
+}
+
+// AddAttachment stores a WebP image for an item.
+func (s *Service) AddAttachment(itemID string, data []byte) (model.Attachment, error) {
+	return s.d.Core.AddAttachment(itemID, data)
+}
+
+// ItemDetail returns an item with its attachments.
+func (s *Service) ItemDetail(id string) (core.Detail, error) { return s.d.Core.ItemDetail(id) }
+
+// WidenList widens the list window for the detail panel.
+func (s *Service) WidenList(minWidth int) { s.d.Windows.WidenList(minWidth) }
+
+// RestoreListWidth undoes WidenList.
+func (s *Service) RestoreListWidth() { s.d.Windows.RestoreListWidth() }
+
+// OpenURL opens a link in the system browser. Only http, https and mailto
+// links are allowed.
+func (s *Service) OpenURL(url string) error {
+	if !allowedLink(url) {
+		return errors.New("unsupported link")
+	}
+	return s.d.OpenURL(url)
+}
+
+func allowedLink(url string) bool {
+	l := strings.ToLower(url)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "mailto:")
 }

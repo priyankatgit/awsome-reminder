@@ -17,6 +17,10 @@ const RETICK_MS = 60_000; // relative times and the Upcoming horizon move on
 const TOAST_MS = 5_000;
 const DONE_OPEN_KEY = "awesome-reminder.list.doneOpen";
 const DEFAULT_HOTKEY = "Ctrl+Shift+Space";
+/** A click on the row text waits this long for a double-click (inline edit) before opening the panel. */
+const DBLCLICK_MS = 250;
+
+type PanelModule = typeof import("./panel/panel");
 
 interface SectionModel {
   key: string; // "upcoming" | `tag:${tag}` | "done"
@@ -526,7 +530,12 @@ export function mountList(root: HTMLElement): void {
     if (!(await settleEdit())) return;
     const m = modelOf(row);
     if (!m) return;
-    const id = m.item.id;
+    if (panel?.panelItemId() === m.item.id) await panel.closePanel(); // its pending edits save first
+    removeId(m.item.id);
+  }
+
+  /** Deletes with the Undo toast (rows and the detail panel). */
+  function removeId(id: string): void {
     api
       .deleteItem(id)
       .then(() =>
@@ -584,6 +593,40 @@ export function mountList(root: HTMLElement): void {
     if (isMenuOpen()) row.classList.add("has-menu");
   }
 
+  // ---------- detail panel (lazy: loaded the first time it opens) ----------
+
+  let panel: PanelModule | null = null;
+  let panelLoading: Promise<PanelModule> | null = null;
+
+  function loadPanel(): Promise<PanelModule> {
+    panelLoading ??= import("./panel/panel").then((mod) => {
+      mod.initPanel(root, {
+        remove: removeId,
+        closed: () => (selectedRow() ?? visibleRows()[0])?.focus({ preventScroll: true }),
+      });
+      panel = mod;
+      return mod;
+    });
+    return panelLoading;
+  }
+
+  function panelOpen(): boolean {
+    return panel?.isPanelOpen() ?? false;
+  }
+
+  /** Opens the panel on row's item; focus "title" puts the caret in its title. */
+  async function openDetails(row: HTMLElement | null | undefined, focus?: "title"): Promise<void> {
+    const m = modelOf(row ?? null);
+    if (!m) return;
+    const mod = await loadPanel();
+    await mod.openPanel(m.item.id, focus);
+  }
+
+  /** After a keyboard move: an open panel follows the selection. */
+  function syncPanel(): void {
+    if (panelOpen()) void openDetails(selectedRow());
+  }
+
   // ---------- inline edit ----------
 
   async function startEdit(row: HTMLElement): Promise<void> {
@@ -594,6 +637,9 @@ export function mountList(root: HTMLElement): void {
     if (!(await settleEdit())) return;
     const m = modelOf(row);
     if (!m || !row.isConnected) return;
+    // One editor per item: the inline edit replaces the panel on the same item.
+    if (panel?.panelItemId() === m.item.id) await panel.closePanel();
+    if (!row.isConnected) return;
     select(row, false);
     const state: EditState = { key: m.key, id: m.item.id, original: "", saving: null };
     edit = state;
@@ -700,11 +746,17 @@ export function mountList(root: HTMLElement): void {
 
   // ---------- events ----------
 
+  // A click on the row text may be the first half of a double-click (inline
+  // edit): the panel opens only once the double-click time has passed.
+  let openTimer: number | undefined;
+  const cancelPendingOpen = () => window.clearTimeout(openTimer);
+
   // A click anywhere in the list outside the edited row settles the edit
   // first; the clicked action runs only if that succeeded.
   scroll.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement;
     const row = t.closest<HTMLElement>(".row");
+    cancelPendingOpen();
     if (row?.classList.contains("is-editing")) return;
     if (!(await settleEdit())) return;
     if (!row || !row.isConnected) return;
@@ -715,13 +767,19 @@ export function mountList(root: HTMLElement): void {
       void showMenu(row);
     } else {
       select(row, false); // the row is under the pointer: don't jump
+      if (!t.closest(".row-main")) void openDetails(row);
+      else if (e.detail <= 1) openTimer = window.setTimeout(() => row.isConnected && void openDetails(row), DBLCLICK_MS);
+      // the second click of a double-click opens nothing: dblclick edits inline
     }
   });
 
   sectionsBox.addEventListener("dblclick", (e) => {
     const t = e.target as HTMLElement;
     const row = t.closest<HTMLElement>(".row");
-    if (row && t.closest(".row-main")) void startEdit(row);
+    if (row && t.closest(".row-main")) {
+      cancelPendingOpen();
+      void startEdit(row);
+    }
   });
 
   sectionsBox.addEventListener("contextmenu", (e) => {
@@ -741,6 +799,7 @@ export function mountList(root: HTMLElement): void {
   document.addEventListener("keydown", (e) => {
     if (e.isComposing || isMenuOpen()) return;
     const t = e.target;
+    if (t instanceof Element && t.closest(".panel")) return; // the panel has its own keys
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && toastRun && !isTyping(t)) {
       e.preventDefault();
@@ -753,7 +812,9 @@ export function mountList(root: HTMLElement): void {
       if (t !== search) return; // the edit input handles its own Enter/Esc
       if (e.key === "Escape") {
         e.preventDefault();
-        if (search.value !== "") {
+        if (panelOpen()) {
+          void panel?.closePanel();
+        } else if (search.value !== "") {
           search.value = query = "";
           render();
         } else {
@@ -779,22 +840,29 @@ export function mountList(root: HTMLElement): void {
       case "ArrowDown":
         e.preventDefault();
         move(1);
+        syncPanel();
         return;
       case "ArrowUp":
         e.preventDefault();
         move(-1);
+        syncPanel();
         return;
       case "Home":
         e.preventDefault();
         select(visibleRows()[0]);
+        syncPanel();
         return;
       case "End":
         e.preventDefault();
         select(visibleRows().at(-1));
+        syncPanel();
         return;
       case "Escape":
         e.preventDefault();
-        if (query !== "") {
+        // Esc order: the panel, then the search, then the window.
+        if (panelOpen()) {
+          void panel?.closePanel();
+        } else if (query !== "") {
           search.value = query = "";
           render();
         } else if (edit) {
@@ -811,6 +879,10 @@ export function mountList(root: HTMLElement): void {
         void toggleDone(row);
         return;
       case "Enter":
+        e.preventDefault();
+        void openDetails(row, "title");
+        return;
+      case "F2":
         e.preventDefault();
         void startEdit(row);
         return;

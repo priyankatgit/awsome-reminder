@@ -20,7 +20,7 @@ import (
 //
 //	{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s","10m0s"],
 //	 "defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00",
-//	 "exportPath":"","autostart":true}
+//	 "exportPath":"","autostart":true,"showPendingCount":true}
 type Settings struct {
 	Hotkey       string          `json:"hotkey"`       // "Ctrl+Shift+Space" ("Cmd+Shift+Space" on darwin)
 	LeadTimes    []time.Duration `json:"leadTimes"`    // [1h, 10m]
@@ -29,6 +29,10 @@ type Settings struct {
 	NextWeekTime string          `json:"nextWeekTime"` // "09:00"
 	ExportPath   string          `json:"exportPath"`   // "" = off
 	Autostart    bool            `json:"autostart"`    // true
+	// ShowPendingCount shows the open-item count on the tray icon, the
+	// Windows taskbar button and the macOS Dock (true; also for settings
+	// saved before the field existed).
+	ShowPendingCount bool `json:"showPendingCount"`
 }
 
 // wire mirrors Settings with lead times as duration strings.
@@ -40,18 +44,22 @@ type wire struct {
 	NextWeekTime string   `json:"nextWeekTime"`
 	ExportPath   string   `json:"exportPath"`
 	Autostart    bool     `json:"autostart"`
+	// A pointer so a missing field (settings saved before Phase 1.6) can
+	// default to true.
+	ShowPendingCount *bool `json:"showPendingCount"`
 }
 
 // MarshalJSON encodes LeadTimes as duration strings such as "1h0m0s".
 func (s Settings) MarshalJSON() ([]byte, error) {
-	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart}
+	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount}
 	for i, d := range s.LeadTimes {
 		w.LeadTimes[i] = d.String()
 	}
 	return json.Marshal(w)
 }
 
-// UnmarshalJSON decodes LeadTimes from duration strings.
+// UnmarshalJSON decodes LeadTimes from duration strings. A missing
+// showPendingCount means true.
 func (s *Settings) UnmarshalJSON(b []byte) error {
 	var w wire
 	if err := json.Unmarshal(b, &w); err != nil {
@@ -65,7 +73,8 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		}
 		leads[i] = d
 	}
-	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart}
+	show := w.ShowPendingCount == nil || *w.ShowPendingCount
+	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show}
 	return nil
 }
 
@@ -82,6 +91,8 @@ func Defaults(goos string) Settings {
 		NextWeekDay:  "monday",
 		NextWeekTime: "09:00",
 		Autostart:    true,
+
+		ShowPendingCount: true,
 	}
 }
 

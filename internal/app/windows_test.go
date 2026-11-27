@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // Concurrent resizes (each binding call runs on its own goroutine) must leave
@@ -291,5 +293,61 @@ func TestAlertPopupClosedRecreates(t *testing.T) {
 	a.Resize(160)
 	if cur.shows != 1 {
 		t.Fatalf("new window shows %d", cur.shows)
+	}
+}
+
+type fakeWidenWin struct {
+	b, wa application.Rect
+}
+
+func (f *fakeWidenWin) Bounds() application.Rect     { return f.b }
+func (f *fakeWidenWin) WorkArea() application.Rect   { return f.wa }
+func (f *fakeWidenWin) SetBounds(r application.Rect) { f.b = r }
+
+func TestWidenListCaps(t *testing.T) {
+	wa := application.Rect{X: 0, Y: 0, Width: 1920, Height: 1000}
+
+	// Narrow window: widened to the minimum, restored afterwards.
+	f := &fakeWidenWin{b: application.Rect{X: 100, Y: 50, Width: 900, Height: 640}, wa: wa}
+	var w listWidener
+	w.Widen(f, 1100)
+	if f.b.Width != 1100 || f.b.X != 100 || f.b.Height != 640 {
+		t.Fatalf("widen: %+v", f.b)
+	}
+	w.Restore(f)
+	if f.b != (application.Rect{X: 100, Y: 50, Width: 900, Height: 640}) {
+		t.Fatalf("restore: %+v", f.b)
+	}
+	w.Restore(f) // second restore is a no-op
+	if f.b.Width != 900 {
+		t.Fatalf("double restore: %+v", f.b)
+	}
+
+	// Near the right edge: shifted left so it stays on screen.
+	f = &fakeWidenWin{b: application.Rect{X: 1500, Y: 0, Width: 900 - 480, Height: 640}, wa: wa}
+	w.Widen(f, 1100)
+	if f.b.Width != 1100 || f.b.X+f.b.Width != 1920 {
+		t.Fatalf("edge: %+v", f.b)
+	}
+	w.Restore(f)
+	if f.b.Width != 420 || f.b.X != 1500 {
+		t.Fatalf("edge restore: %+v", f.b)
+	}
+
+	// Small screen: capped to the work area.
+	f = &fakeWidenWin{b: application.Rect{X: 0, Y: 0, Width: 900, Height: 640}, wa: application.Rect{Width: 1024, Height: 768}}
+	w.Widen(f, 1100)
+	if f.b.Width != 1024 {
+		t.Fatalf("cap: %+v", f.b)
+	}
+
+	// Already wide: unchanged, and restore does nothing.
+	f = &fakeWidenWin{b: application.Rect{X: 10, Y: 10, Width: 1300, Height: 640}, wa: wa}
+	w = listWidener{}
+	w.Widen(f, 1100)
+	f.b.Width = 1250 // user resizes meanwhile
+	w.Restore(f)
+	if f.b.Width != 1250 || f.b.X != 10 {
+		t.Fatalf("wide: %+v", f.b)
 	}
 }

@@ -12,13 +12,14 @@ import (
 
 func TestDefaults(t *testing.T) {
 	want := Settings{
-		Hotkey:       "Ctrl+Shift+Space",
-		LeadTimes:    []time.Duration{time.Hour, 10 * time.Minute},
-		DefaultTime:  "09:00",
-		NextWeekDay:  "monday",
-		NextWeekTime: "09:00",
-		ExportPath:   "",
-		Autostart:    true,
+		Hotkey:           "Ctrl+Shift+Space",
+		LeadTimes:        []time.Duration{time.Hour, 10 * time.Minute},
+		DefaultTime:      "09:00",
+		NextWeekDay:      "monday",
+		NextWeekTime:     "09:00",
+		ExportPath:       "",
+		Autostart:        true,
+		ShowPendingCount: true,
 	}
 	if got := Defaults("windows"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
@@ -115,5 +116,38 @@ func TestValidateExportPath(t *testing.T) {
 		if err := s.Validate(); err != nil {
 			t.Errorf("%q: %v", p, err)
 		}
+	}
+}
+
+// Review Focus 4: settings saved before Phase 1.6 have no showPendingCount
+// field; the badge is on for them.
+func TestLoadSettingsMissingShowPendingCountDefaultsTrue(t *testing.T) {
+	old := `{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s"],"defaultTime":"09:00",` +
+		`"nextWeekDay":"monday","nextWeekTime":"09:00","exportPath":"","autostart":false}`
+	var s Settings
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	if !s.ShowPendingCount {
+		t.Fatal("ShowPendingCount = false for settings saved without the field")
+	}
+	if s.Autostart {
+		t.Fatal("other fields must still load")
+	}
+	if !Defaults("windows").ShowPendingCount {
+		t.Fatal("default ShowPendingCount = false")
+	}
+	// An explicit false survives a round trip.
+	s.ShowPendingCount = false
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Settings
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.ShowPendingCount {
+		t.Fatalf("explicit false lost: %s", b)
 	}
 }

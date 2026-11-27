@@ -20,12 +20,12 @@ func due(s string) *time.Time {
 }
 
 func goldenView() core.View {
-	read := model.Item{Text: "read RFC", Kind: model.KindTodo}
+	read := model.Item{Text: "read RFC", Kind: model.KindTodo, Priority: model.PriorityHigh}
 	deploy := model.Item{Text: "check\ndeploy", Kind: model.KindReminder, DueAt: due("2026-11-26 17:00")}
 	standup := model.Item{Text: "standup", Kind: model.KindReminder, DueAt: due("2026-11-30 10:00"), RRule: "FREQ=WEEKLY;BYDAY=MO"}
 	deploy.Tags = []string{"backend"}
-	weekday := model.Item{Text: "weekday sync", DueAt: due("2026-12-01 09:00"), RRule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", Tags: []string{"backend"}}
-	odd := model.Item{Text: "odd one", DueAt: due("2026-12-02 09:00"), RRule: "FREQ=MONTHLY", Tags: []string{"backend"}}
+	weekday := model.Item{Text: "weekday sync", Priority: model.PriorityMedium, DueAt: due("2026-12-01 09:00"), RRule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", Tags: []string{"backend"}}
+	odd := model.Item{Text: "odd one", Priority: model.PriorityLow, DueAt: due("2026-12-02 09:00"), RRule: "FREQ=MONTHLY", Tags: []string{"backend"}}
 	return core.View{
 		Tags: []core.TagGroup{
 			{Tag: "inbox", Items: []model.Item{read, deploy, standup}},

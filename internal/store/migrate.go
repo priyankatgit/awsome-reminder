@@ -29,6 +29,24 @@ var migrations = []string{
 	CREATE INDEX items_status ON items(status);
 	CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
 	CREATE TABLE notify_log (key TEXT PRIMARY KEY, fired_at INTEGER NOT NULL);`,
+	// v2: priority, description, attachments
+	`ALTER TABLE items ADD COLUMN priority TEXT NOT NULL DEFAULT '';
+	ALTER TABLE items ADD COLUMN description TEXT NOT NULL DEFAULT '';
+	CREATE TABLE attachments (
+		id TEXT PRIMARY KEY,
+		item_id TEXT NOT NULL,
+		mime TEXT NOT NULL,
+		sha256 TEXT NOT NULL,
+		width INTEGER NOT NULL DEFAULT 0,
+		height INTEGER NOT NULL DEFAULT 0,
+		bytes INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		updated_by TEXT NOT NULL,
+		deleted INTEGER NOT NULL DEFAULT 0,
+		unreferenced_since INTEGER
+	);
+	CREATE INDEX attachments_item ON attachments(item_id);`,
 }
 
 func migrate(db *sql.DB) error {

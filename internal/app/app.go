@@ -59,6 +59,7 @@ func setTrayIcons(tray *application.SystemTray, o Options) {
 // Run opens the store, wires core, scheduler, exporter and hotkey to the
 // Wails application and blocks until the app quits.
 func Run(opts Options) error {
+	setAppUserModelID() // before any window exists (Windows taskbar button)
 	dbPath, err := paths.DBPath()
 	if err != nil {
 		return fmt.Errorf("db path: %w", err)
@@ -70,13 +71,15 @@ func Run(opts Options) error {
 	defer st.Close()
 
 	c := core.New(st, time.Now, time.Local)
+	c.SetAttachmentDir(filepath.Join(filepath.Dir(dbPath), "attachments")) // DBPath lives in DataDir
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var (
-		win  *wailsWindows
-		tray *application.SystemTray
-		svc  *Service
+		win    *wailsWindows
+		tray   *application.SystemTray
+		svc    *Service
+		badges *badgeWiring
 		// Second-instance requests can arrive before win is assigned below;
 		// they are held until ApplicationStarted.
 		launches launchQueue
@@ -85,7 +88,10 @@ func Run(opts Options) error {
 		Name:        appName,
 		Description: "Hotkey quick-capture to-dos and reminders",
 		Logger:      opts.Logger,
-		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(opts.Assets)},
+		Assets: application.AssetOptions{
+			Handler:    application.AssetFileServerFS(opts.Assets),
+			Middleware: attMiddleware(c),
+		},
 		Mac: application.MacOptions{
 			// Tray-only app: keep running with no windows.
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
@@ -155,9 +161,12 @@ func Run(opts Options) error {
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the
 	// export (deferred after exp.Close and st.Close, so it runs before them).
+	// Any other goroutine that reads the store (e.g. a debounced badge
+	// refresh) must be stopped by cancel() and joined here too.
 	defer func() {
 		cancel()
 		sched.Wait()
+		badges.Stop() // joins a refresh in flight, closes the taskbar window
 	}()
 
 	win = newWindows(app)
@@ -176,8 +185,9 @@ func Run(opts Options) error {
 			return autostart.Set(on, exe)
 		},
 		Export:        exp.Trigger,
-		StatusChanged: func() { tray.SetTooltip(tooltip(svc.Status())) },
+		StatusChanged: func() { badges.StatusChanged() },
 		Emit:          func(name string, data any) { emit(name, data) },
+		OpenURL:       app.Browser.OpenURL,
 	})
 	app.RegisterService(application.NewService(svc))
 	// Recurring reminders not marked done move on to their latest occurrence
@@ -193,6 +203,7 @@ func Run(opts Options) error {
 		sched.Kick()
 		exp.Trigger()
 		emit(EventItemsChanged)
+		badges.Changed() // also on a settings save
 	})
 
 	tray = app.SystemTray.New()
@@ -200,6 +211,17 @@ func Run(opts Options) error {
 	tray.SetTooltip(appName)
 	tray.SetMenu(trayMenu(app, win))
 	tray.OnClick(func() { go win.OpenList("") })
+	badges = newBadgeWiring(badgeDeps{
+		Count: c.PendingCount,
+		Show: func() bool {
+			s, err := c.Settings()
+			return err != nil || s.ShowPendingCount
+		},
+		HotkeyErr: func() string { return svc.Status().HotkeyErr },
+		Icons:     trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
+		Tray:      wailsBadgeTray{app, tray},
+		Debounce:  badgeDebounce,
+	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		s, err := c.Settings()
@@ -211,7 +233,13 @@ func Run(opts Options) error {
 			}
 			syncAutostart(s.Autostart)
 		}
-		tray.SetTooltip(tooltip(svc.Status()))
+		badges.Start(newTaskbar(func() {
+			if app.Context().Err() != nil {
+				return // shutting down: the windows are being torn down
+			}
+			launches.Do(win.Activate)
+		}))
+		sweepAttachments(c)
 		sched.Start(ctx)
 		// Bring the export up to date with the database at startup (it may
 		// be missing, or older than changes made by an earlier run).
@@ -237,11 +265,4 @@ func trayMenu(app *application.App, win *wailsWindows) *application.Menu {
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 	return menu
-}
-
-func tooltip(s Status) string {
-	if s.HotkeyErr != "" {
-		return appName + " — hotkey error: " + s.HotkeyErr
-	}
-	return appName
 }

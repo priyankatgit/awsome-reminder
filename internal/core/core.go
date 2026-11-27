@@ -40,6 +40,7 @@ type Core struct {
 
 	mu       sync.Mutex
 	onChange func()
+	attDir   string // guarded by mu
 }
 
 // New creates a Core. loc is the user's local zone, used to parse input and
@@ -115,7 +116,7 @@ func (c *Core) Preview(input string) Preview {
 		return Preview{Kind: model.KindTodo, Text: input, Tags: []string{inboxTag}, Alerts: []string{}, Warnings: []string{err.Error()}}
 	}
 	p := Preview{
-		Kind: kindFor(r.DueAt), Text: r.Text, Tags: withInbox(r.Tags), DueAt: r.DueAt, RRule: r.RRule,
+		Kind: kindFor(r.DueAt), Text: r.Text, Tags: withInbox(r.Tags), DueAt: r.DueAt, RRule: r.RRule, Priority: r.Priority,
 		Alerts: []string{}, Warnings: r.Warnings,
 	}
 	if p.Warnings == nil {
@@ -136,7 +137,7 @@ func (c *Core) WithDue(input string, due time.Time) string {
 		return input
 	}
 	d := due.UTC()
-	return parser.Render(r.Text, r.Tags, &d, r.RRule, c.loc)
+	return parser.Render(r.Text, r.Tags, &d, r.RRule, r.Priority, c.loc)
 }
 
 // Capture parses input and stores a new open item.
@@ -151,7 +152,7 @@ func (c *Core) Capture(input string) (model.Item, error) {
 	now := c.now().UTC()
 	it := model.Item{
 		ID: ulid.Make().String(), Kind: kindFor(r.DueAt), Text: r.Text, Tags: withInbox(r.Tags),
-		DueAt: r.DueAt, TZ: c.loc.String(), RRule: r.RRule, Status: model.StatusOpen,
+		DueAt: r.DueAt, TZ: c.loc.String(), RRule: r.RRule, Priority: r.Priority, Status: model.StatusOpen,
 		CreatedAt: now,
 	}
 	if err := c.write(func() error { return c.save(&it, now) }); err != nil {
@@ -216,7 +217,7 @@ func (c *Core) EditText(id string) (string, error) {
 	if len(tags) == 1 && tags[0] == inboxTag {
 		tags = nil
 	}
-	return parser.Render(it.Text, tags, it.DueAt, it.RRule, c.itemLoc(it)), nil
+	return parser.Render(it.Text, tags, it.DueAt, it.RRule, it.Priority, c.itemLoc(it)), nil
 }
 
 // Update re-parses input for an existing item. ID, CreatedAt, LeadTimes, TZ
@@ -233,6 +234,7 @@ func (c *Core) Update(id, input string) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, _ time.Time) error {
 		it.Kind, it.Text, it.Tags = kindFor(r.DueAt), r.Text, withInbox(r.Tags)
 		it.DueAt, it.RRule, it.SnoozeUntil = r.DueAt, r.RRule, nil
+		it.Priority = r.Priority
 		clearStaleDone(it)
 		return nil
 	})
