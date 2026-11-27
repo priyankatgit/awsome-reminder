@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -1061,5 +1063,58 @@ func TestPushErrorStillPulls(t *testing.T) {
 	}
 	if st := b.e.Status(); st.State != cloudsync.StateOffline {
 		t.Errorf("status %+v, want offline", st)
+	}
+}
+
+// legacySettings saves custom reminder defaults the Phase 1.6 way (no shared
+// stamp) with the migration's outbox seed, then runs the startup step that
+// an upgraded app runs when it opens the store.
+func (d *device) legacySettings(leads ...time.Duration) {
+	d.t.Helper()
+	s := settings.Defaults(runtime.GOOS)
+	s.LeadTimes = leads
+	if err := d.st.SaveSettingsShared(s); err != nil { // row + v3 seed
+		d.t.Fatal(err)
+	}
+	if ok, err := d.st.StampLegacyShared(runtime.GOOS); err != nil || !ok {
+		d.t.Fatalf("stamp legacy settings: %v %v", ok, err)
+	}
+}
+
+func TestRestoreLegacySettings(t *testing.T) {
+	ms, clk := setup()
+	a := newDevice(t, ms, clk)
+	a.legacySettings(30 * time.Minute)
+	a.sync()
+
+	c := newDevice(t, ms, clk)
+	if err := c.c.EnqueueAll(); err != nil { // first connect
+		t.Fatal(err)
+	}
+	c.sync()
+	if got, _ := c.c.Settings(); !reflect.DeepEqual(got.LeadTimes, []time.Duration{30 * time.Minute}) {
+		t.Errorf("fresh device lead times %v, want A's legacy ones", got.LeadTimes)
+	}
+	a.sync()
+	if got, _ := a.c.Settings(); !reflect.DeepEqual(got.LeadTimes, []time.Duration{30 * time.Minute}) {
+		t.Errorf("A's lead times %v after C connected", got.LeadTimes)
+	}
+}
+
+func TestTwoLegacyDevicesConverge(t *testing.T) {
+	ms, clk := setup()
+	a, b := newDevice(t, ms, clk), newDevice(t, ms, clk)
+	a.legacySettings(30 * time.Minute)
+	b.legacySettings(15 * time.Minute)
+	a.sync()
+	b.sync()
+	a.sync()
+	ga, _ := a.c.Settings()
+	gb, _ := b.c.Settings()
+	if !ga.Shared().Equal(gb.Shared()) {
+		t.Errorf("not converged: A %v, B %v", ga.LeadTimes, gb.LeadTimes)
+	}
+	if a.pending() != 0 || b.pending() != 0 {
+		t.Errorf("pending: a=%d b=%d", a.pending(), b.pending())
 	}
 }

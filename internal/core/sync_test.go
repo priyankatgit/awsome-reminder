@@ -539,3 +539,21 @@ func TestAttachmentStampsStrictlyIncrease(t *testing.T) {
 		t.Errorf("attachment restamped at %v, not after %v", got.UpdatedAt, a.UpdatedAt)
 	}
 }
+
+// A legacy row stamped at unix ms 1 (store.StampLegacyShared) must win over
+// a device that never saved settings (zero stamp).
+func TestApplyRemoteSharedLegacyStampBeatsZero(t *testing.T) {
+	e := newEnv(t)
+	if _, at, by, _ := e.c.SharedForSync(); !at.IsZero() || by != "" {
+		t.Fatalf("fixture: fresh stamp %v %q", at, by)
+	}
+	s, _ := e.c.Settings()
+	p := s.Shared()
+	p.LeadTimes = []time.Duration{30 * time.Minute}
+	if ok, err := e.c.ApplyRemoteShared(p, time.UnixMilli(1), "R"); err != nil || !ok {
+		t.Fatalf("legacy stamp not applied: %v %v", ok, err)
+	}
+	if got, _ := e.c.Settings(); len(got.LeadTimes) != 1 || got.LeadTimes[0] != 30*time.Minute {
+		t.Errorf("lead times %v", got.LeadTimes)
+	}
+}

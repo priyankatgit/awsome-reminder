@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
@@ -48,7 +49,54 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if _, err := s.StampLegacyShared(runtime.GOOS); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// legacySharedStamp is the stamp given to reminder defaults saved before
+// sync: later than the zero stamp of a machine that never saved settings,
+// earlier than any real edit.
+var legacySharedStamp = time.UnixMilli(1).UTC()
+
+// StampLegacyShared gives a settings row saved before sync existed (its
+// shared fields carry no stamp) the minimal real stamp legacySharedStamp from
+// this device, and queues it for sync. Without it the row would be pushed
+// with the zero stamp, which never wins over a fresh machine's defaults, so
+// the reminder defaults would never restore. A row whose shared fields are
+// the defaults, or are invalid, is left alone: stamping defaults could beat
+// another device's real choice in the device-id tie. It reports whether it
+// stamped the row.
+func (s *Store) StampLegacyShared(goos string) (bool, error) {
+	stamped := false
+	err := s.inTx(func(tx *sql.Tx) error {
+		var js string
+		err := tx.QueryRow(`SELECT json FROM settings WHERE id=1`).Scan(&js)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var st settings.Settings
+		if err := json.Unmarshal([]byte(js), &st); err != nil {
+			return nil // LoadSettings reports it; it must not stop Open
+		}
+		defaults := settings.Defaults(goos)
+		if !st.SharedUpdatedAt.IsZero() || st.Shared().Equal(defaults.Shared()) ||
+			defaults.WithShared(st.Shared()).Validate() != nil {
+			return nil
+		}
+		st.SharedUpdatedAt, st.SharedUpdatedBy = legacySharedStamp, s.deviceID
+		if err := saveSettings(tx, st); err != nil {
+			return err
+		}
+		stamped = true
+		return enqueue(tx, OutboxSettings, settingsOutboxID)
+	})
+	return stamped, err
 }
 
 func (s *Store) initDeviceID() error {
