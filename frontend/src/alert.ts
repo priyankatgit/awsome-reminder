@@ -1,12 +1,16 @@
 // Alert popup (#alert): the reminder cards of the one alert window, newest
 // first. Layout and behaviour follow the "Alert popup" section of the UI
 // guide. Go owns the queue (internal/app/alerts.go): the page pulls it on
-// load and gets the whole queue again with every alerts:show event.
+// load and gets the whole queue again with every alerts:show event. Besides
+// reminders it shows reply nudges (kind "nudge": Replied instead of Done)
+// and the end-of-day sweep (kind "sweep": Open list and Tomorrow).
 import { api, errorText, events, on, type AlertCard, type SnoozePreset } from "./api";
 import { el, motionMs, tagChip } from "./dom";
 import { icons } from "./icons";
 import { agoLabel, timeLabel } from "./item-row";
 import { canAnimate, easing, glide, measure, stopGlide } from "./motion";
+import { personLabel } from "./reply-mode";
+import { ageLabel } from "./waiting";
 
 /** Cards shown before "+N more". */
 const MAX_VISIBLE = 3;
@@ -23,7 +27,7 @@ const SNOOZES: { preset: SnoozePreset; label: string }[] = [
   { preset: "tomorrow", label: "Tomorrow" },
 ];
 
-export type WhenState = "soon" | "now" | "missed" | "snoozed" | "overdue";
+export type WhenState = "soon" | "now" | "missed" | "snoozed" | "overdue" | "nudge" | "sweep";
 
 /** "10 min", "1 h 30 min", "2 d": a time span rounded to minutes. */
 export function spanLabel(ms: number): string {
@@ -37,13 +41,29 @@ export function spanLabel(ms: number): string {
   return `${Math.round(ms / DAY)} d`;
 }
 
+/** The sweep card's body: "3 people are still waiting on you — Priya, Sam, Ops channel". */
+export function sweepText(people: string[]): string {
+  const n = people.length;
+  return `${n} ${n === 1 ? "person is" : "people are"} still waiting on you — ${people.join(", ")}`;
+}
+
+/** What the card says: the item's text, or for the sweep, who is waiting. */
+function cardText(c: AlertCard): string {
+  return c.kind === "sweep" ? sweepText(c.people) : c.text;
+}
+
 /**
  * The card's time line: "in 10 min · 17:00", "now · 17:00",
  * "missed · was due 14:00", "snoozed · was due 14:00" or
- * "overdue 5m · 14:00". It is recomputed every tick, so it stays true while
- * the card waits.
+ * "overdue 5m · 14:00"; a nudge reads "waiting 2 h · Priya" and the sweep
+ * "end of day". It is recomputed every tick, so it stays true while the card
+ * waits.
  */
 export function whenLabel(c: AlertCard, now: Date): { text: string; state: WhenState } {
+  if (c.kind === "nudge") {
+    return { text: `waiting ${ageLabel(new Date(c.waitingSince), now)} · ${personLabel(c.person)}`, state: "nudge" };
+  }
+  if (c.kind === "sweep") return { text: "end of day", state: "sweep" };
   const due = new Date(c.dueAt);
   const at = timeLabel(due, now);
   const diff = due.getTime() - now.getTime();
@@ -116,25 +136,27 @@ export function mountAlert(root: HTMLElement): void {
 
   function buildCard(card: AlertCard): CardView {
     const id = `alert-${++seq}`;
+    const label = cardText(card);
     const node = el("article", "alert-card");
     node.dataset.key = card.key;
+    if (card.kind) node.dataset.kind = card.kind;
     node.setAttribute("aria-labelledby", `${id}-text`);
     node.setAttribute("aria-describedby", `${id}-when`);
 
     const head = el("div", "alert-head");
     const bell = el("span", "alert-bell");
-    bell.innerHTML = icons.bell;
+    bell.innerHTML = card.kind ? icons.reply : icons.bell;
     const when = el("span", "alert-when");
     when.id = `${id}-when`;
     const close = el("button", "icon-btn alert-close");
     close.type = "button";
-    close.setAttribute("aria-label", `Dismiss: ${card.text}`);
+    close.setAttribute("aria-label", `Dismiss: ${label}`);
     close.innerHTML = icons.close;
     head.append(bell, when, close);
 
-    const text = el("p", "alert-text", card.text);
+    const text = el("p", "alert-text", label);
     text.id = `${id}-text`;
-    text.title = card.text;
+    text.title = label;
 
     const meta = el("div", "alert-meta");
     for (const t of card.tags.filter((t) => t !== "inbox")) meta.append(tagChip(t));
@@ -153,7 +175,7 @@ export function mountAlert(root: HTMLElement): void {
     const done = el("button", "btn btn-primary alert-btn");
     done.type = "button";
     done.innerHTML = icons.check;
-    done.append(el("span", undefined, "Done"));
+    done.append(el("span", undefined, card.kind === "nudge" ? "Replied" : "Done"));
     const snoozeBtn = el("button", "btn btn-ghost alert-btn");
     snoozeBtn.type = "button";
     snoozeBtn.setAttribute("aria-expanded", "false");
@@ -168,7 +190,7 @@ export function mountAlert(root: HTMLElement): void {
     const snoozeRow = el("div", "alert-snooze");
     snoozeRow.id = `${id}-snooze`;
     snoozeRow.setAttribute("role", "group");
-    snoozeRow.setAttribute("aria-label", `Snooze ${card.text}`);
+    snoozeRow.setAttribute("aria-label", `Snooze ${label}`);
     snoozeRow.hidden = true;
     snoozeRow.append(el("span", "alert-snooze-label", "Snooze for"));
     for (const s of SNOOZES) {
@@ -183,6 +205,24 @@ export function mountAlert(root: HTMLElement): void {
     node.append(error, actions, snoozeRow);
 
     const v: CardView = { card, node, when, error, snoozeBtn, snoozeRow, leaving: false };
+    if (card.kind === "sweep") {
+      // Not about one item: Open list shows the Waiting section, Tomorrow
+      // snoozes every reply (Go then drops this card and the nudges).
+      const openList = el("button", "btn btn-primary alert-btn");
+      openList.type = "button";
+      openList.append(el("span", undefined, "Open list"));
+      const tomorrow = el("button", "btn btn-ghost alert-btn");
+      tomorrow.type = "button";
+      tomorrow.innerHTML = icons.snooze;
+      tomorrow.append(el("span", undefined, "Tomorrow"));
+      actions.replaceChildren(openList, tomorrow);
+      snoozeRow.remove();
+      openList.addEventListener("click", () => {
+        void api.openList("").catch(() => undefined);
+        void act(v, () => api.dismissAlert(card.key), false);
+      });
+      tomorrow.addEventListener("click", () => void act(v, () => api.snoozeReplies(), false));
+    }
     done.addEventListener("click", () => void act(v, () => api.done(card.itemId), true));
     snoozeBtn.addEventListener("click", () => toggleSnooze(v));
     open.addEventListener("click", () => {
@@ -343,7 +383,7 @@ export function mountAlert(root: HTMLElement): void {
   }
 
   function setQueue(q: AlertCard[] | null): void {
-    queue = (q ?? []).map((c) => ({ ...c, tags: c.tags ?? [] }));
+    queue = (q ?? []).map((c) => ({ ...c, tags: c.tags ?? [], people: c.people ?? [] }));
     render();
   }
 

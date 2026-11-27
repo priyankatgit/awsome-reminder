@@ -363,6 +363,25 @@ func TestServiceCaptureAndDropReply(t *testing.T) {
 	}
 }
 
+// The details panel's "For" field saves through SetOwedTo.
+func TestServiceSetOwedTo(t *testing.T) {
+	h := newHarness(t)
+	it, err := h.svc.CaptureReply("deploy?", reply.Meta{OwedTo: "Priya", Source: "Teams"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.svc.SetOwedTo(it.ID, "  Sam ")
+	if err != nil || got.OwedTo != "Sam" || !got.Reply {
+		t.Fatalf("SetOwedTo: %+v %v", got, err)
+	}
+	if stored, _ := h.st.Get(it.ID); stored.OwedTo != "Sam" {
+		t.Fatalf("stored OwedTo %q", stored.OwedTo)
+	}
+	if _, err := h.svc.SetOwedTo("missing", "Sam"); err == nil {
+		t.Fatal("SetOwedTo of an unknown item succeeded")
+	}
+}
+
 // A reply hotkey that cannot be registered is reported on its own: the
 // settings stay saved, SaveSettings returns the error, Status carries it in
 // ReplyHotkeyErr, and the capture hotkey is unaffected.

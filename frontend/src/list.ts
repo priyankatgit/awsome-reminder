@@ -1,5 +1,6 @@
-// List window (#list): search, Today / Upcoming, one section per tag and a
-// collapsed Done section. Follows the "List window" section of the UI guide.
+// List window (#list): search, "Waiting on you" (replies owed, by person),
+// Today / Upcoming, one section per tag and a collapsed Done section.
+// Follows the "List window" section of the UI guide.
 //
 // Rendering is a keyed update: section and row elements are kept in maps and
 // reused across refreshes, a row is refilled only when its signature
@@ -9,9 +10,10 @@
 import { api, errorText, events, on, type Item, type SnoozePreset, type View } from "./api";
 import { el, keycaps, motionMs } from "./dom";
 import { icons } from "./icons";
-import { applyMarker, createRow, editRow, effectiveDue, fillRow, isDone, isReminder, rowSignature, type RowModel } from "./item-row";
+import { applyMarker, createRow, editRow, effectiveDue, fillRow, isDone, isOpenReply, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
 import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide } from "./motion";
+import { personLabel } from "./reply-mode";
 import { mountSyncPill } from "./sync-pill";
 import { needsRefetch, showMarkers } from "./sync-status";
 
@@ -26,15 +28,31 @@ const DBLCLICK_MS = 250;
 type PanelModule = typeof import("./panel/panel");
 
 interface SectionModel {
-  key: string; // "upcoming" | `tag:${tag}` | "done"
+  key: string; // "waiting" | "upcoming" | `tag:${tag}` | "done"
   title: string;
   tag?: string;
+  rows: RowModel[];
+  /** Waiting on you: the rows again, under one subheading per person. */
+  groups?: GroupModel[];
+}
+
+/** One person's replies inside the Waiting section. */
+interface GroupModel {
+  key: string; // `person:${lowercased name}`; "person:" is nobody
+  title: string;
   rows: RowModel[];
 }
 
 interface SectionEls {
   root: HTMLElement;
   title: HTMLElement; // text node holder (or the toggle button for Done)
+  /** The rows list; in the Waiting section, the holder of the person groups. */
+  rows: HTMLElement;
+}
+
+interface GroupEls {
+  root: HTMLElement;
+  title: HTMLElement;
   rows: HTMLElement;
 }
 
@@ -74,10 +92,10 @@ function normalize(v: View | null | undefined): View {
   };
 }
 
-/** Whether every whitespace-separated term occurs in the item's text or "#tags". */
+/** Whether every whitespace-separated term occurs in the item's text, "#tags", or a reply's person or source. */
 function matches(it: Item, terms: string[]): boolean {
   if (terms.length === 0) return true;
-  const hay = `${it.text} ${(it.tags ?? []).map((t) => `#${t}`).join(" ")}`.toLowerCase();
+  const hay = `${it.text} ${(it.tags ?? []).map((t) => `#${t}`).join(" ")} ${it.owedTo ?? ""} ${it.source ?? ""}`.toLowerCase();
   return terms.every((t) => hay.includes(t));
 }
 
@@ -152,6 +170,7 @@ export function mountList(root: HTMLElement): void {
   const completing = new Set<string>(); // items whose done animation is running
 
   const sectionEls = new Map<string, SectionEls>();
+  const groupEls = new Map<string, GroupEls>();
   let sectionSeq = 0; // monotonic: section ids never repeat, even after a section is dropped
   const rowEls = new Map<string, HTMLElement>();
   const rowSigs = new Map<string, string>();
@@ -169,11 +188,23 @@ export function mountList(root: HTMLElement): void {
         .map((item) => ({ key: `${key}|${item.id}`, item, sectionTag: tag, markers: markersOn, unsynced: markersOn && pendingIds.has(item.id) }))
         .filter((r) => r.key === edit?.key || matches(r.item, terms));
     const out: SectionModel[] = [];
-    const up = rows("upcoming", view.upcoming ?? []);
+    // Replies owed are listed once, under Waiting on you, even if a group
+    // below also carries them. Taken from the view, not the filtered rows, so
+    // a reply the search hides doesn't surface in its tag instead.
+    const waitingIds = new Set((view.waiting ?? []).flatMap((g) => (g.items ?? []).map((it) => it.id)));
+    const open = (items: Item[] | null | undefined) => (items ?? []).filter((it) => !waitingIds.has(it.id));
+    const groups: GroupModel[] = [];
+    for (const g of view.waiting ?? []) {
+      const r = rows("waiting", g.items ?? []);
+      if (r.length) groups.push({ key: `person:${g.person.trim().toLowerCase()}`, title: personLabel(g.person), rows: r });
+    }
+    const waiting = groups.flatMap((g) => g.rows);
+    if (waiting.length) out.push({ key: "waiting", title: `Waiting on you (${waiting.length})`, rows: waiting, groups });
+    const up = rows("upcoming", open(view.upcoming));
     if (up.length) out.push({ key: "upcoming", title: "Today / Upcoming", rows: up });
     for (const g of view.tags ?? []) {
       const key = `tag:${g.tag}`;
-      const r = rows(key, g.items ?? [], g.tag);
+      const r = rows(key, open(g.items), g.tag);
       if (r.length) out.push({ key, title: `#${g.tag} (${r.length})`, tag: g.tag, rows: r });
     }
     const done = rows("done", view.done ?? []);
@@ -182,7 +213,8 @@ export function mountList(root: HTMLElement): void {
   }
 
   function hasOpenItems(): boolean {
-    return !!view && ((view.upcoming?.length ?? 0) > 0 || (view.tags ?? []).some((g) => (g.items?.length ?? 0) > 0));
+    const any = (groups: { items: Item[] | null }[] | null) => (groups ?? []).some((g) => (g.items?.length ?? 0) > 0);
+    return !!view && ((view.upcoming?.length ?? 0) > 0 || any(view.tags) || any(view.waiting));
   }
 
   // ---------- rendering ----------
@@ -196,8 +228,12 @@ export function mountList(root: HTMLElement): void {
     const head = el("h2", "sec-head");
     head.id = `sec-${n}-head`;
     const rowsEl = el("div", "sec-rows");
-    rowsEl.setAttribute("role", "list");
-    rowsEl.setAttribute("aria-labelledby", head.id);
+    if (m.groups) {
+      rowsEl.classList.add("sec-groups"); // each person group holds its own list
+    } else {
+      rowsEl.setAttribute("role", "list");
+      rowsEl.setAttribute("aria-labelledby", head.id);
+    }
     rowsEl.id = `sec-${n}-rows`;
     let title: HTMLElement;
     if (m.key === "done") {
@@ -221,6 +257,23 @@ export function mountList(root: HTMLElement): void {
     s = { root: rootEl, title, rows: rowsEl };
     sectionEls.set(m.key, s);
     return s;
+  }
+
+  /** A person group of the Waiting section: a subheading over its own list. */
+  function groupFor(g: GroupModel): GroupEls {
+    let ge = groupEls.get(g.key);
+    if (ge) return ge;
+    const n = ++sectionSeq;
+    const rootEl = el("div", "sec-group");
+    const title = el("h3", "sec-sub");
+    title.id = `sec-${n}-head`;
+    const rowsEl = el("div", "sec-rows");
+    rowsEl.setAttribute("role", "list");
+    rowsEl.setAttribute("aria-labelledby", title.id);
+    rootEl.append(title, rowsEl);
+    ge = { root: rootEl, title, rows: rowsEl };
+    groupEls.set(g.key, ge);
+    return ge;
   }
 
   /** Makes parent's children exactly wanted, moving only what is out of place. */
@@ -261,7 +314,7 @@ export function mountList(root: HTMLElement): void {
   }
 
   function reflowEls(): HTMLElement[] {
-    return Array.from(sectionsBox.querySelectorAll<HTMLElement>(".sec-head, .sec-rows:not([hidden]) > .row"));
+    return Array.from(sectionsBox.querySelectorAll<HTMLElement>(".sec-head, .sec-sub, .sec-rows:not([hidden]) > .row"));
   }
 
   interface Gone {
@@ -325,6 +378,27 @@ export function mountList(root: HTMLElement): void {
     const models = buildSections();
     const wantedSections: HTMLElement[] = [];
     const liveKeys = new Set<string>();
+    const liveGroups = new Set<string>();
+
+    const rowFor = (r: RowModel): HTMLElement => {
+      liveKeys.add(r.key);
+      rowModels.set(r.key, r);
+      let rowEl = rowEls.get(r.key);
+      if (!rowEl) {
+        rowEl = createRow(r);
+        rowEls.set(r.key, rowEl);
+      }
+      if (edit?.key !== r.key) {
+        const sig = rowSignature(r, now);
+        if (rowSigs.get(r.key) !== sig) {
+          fillRow(rowEl, r, now);
+          rowSigs.set(r.key, sig);
+        } else {
+          applyMarker(rowEl, r);
+        }
+      }
+      return rowEl;
+    };
 
     for (const m of models) {
       const s = sectionFor(m);
@@ -333,27 +407,19 @@ export function mountList(root: HTMLElement): void {
       s.root.classList.toggle("is-collapsed", collapsed);
       s.root.querySelector(".sec-toggle")?.setAttribute("aria-expanded", String(!collapsed));
       s.rows.hidden = collapsed;
-      const wantedRows: HTMLElement[] = [];
-      for (const r of m.rows) {
-        liveKeys.add(r.key);
-        rowModels.set(r.key, r);
-        let rowEl = rowEls.get(r.key);
-        if (!rowEl) {
-          rowEl = createRow(r);
-          rowEls.set(r.key, rowEl);
-        }
-        if (edit?.key !== r.key) {
-          const sig = rowSignature(r, now);
-          if (rowSigs.get(r.key) !== sig) {
-            fillRow(rowEl, r, now);
-            rowSigs.set(r.key, sig);
-          } else {
-            applyMarker(rowEl, r);
-          }
-        }
-        wantedRows.push(rowEl);
+      if (m.groups) {
+        // A row whose person changed keeps its element and glides to its new group.
+        const wantedGroups = m.groups.map((g) => {
+          liveGroups.add(g.key);
+          const ge = groupFor(g);
+          if (ge.title.textContent !== g.title) ge.title.textContent = g.title;
+          reconcile(ge.rows, g.rows.map(rowFor));
+          return ge.root;
+        });
+        reconcile(s.rows, wantedGroups);
+      } else {
+        reconcile(s.rows, m.rows.map(rowFor));
       }
-      reconcile(s.rows, wantedRows);
       wantedSections.push(s.root);
     }
     reconcile(sectionsBox, wantedSections);
@@ -367,6 +433,7 @@ export function mountList(root: HTMLElement): void {
     }
     const liveSections = new Set(models.map((m) => m.key));
     for (const k of Array.from(sectionEls.keys())) if (!liveSections.has(k)) sectionEls.delete(k);
+    for (const k of Array.from(groupEls.keys())) if (!liveGroups.has(k)) groupEls.delete(k);
 
     // The edited item was deleted or moved elsewhere: its row is gone.
     if (edit && !liveKeys.has(edit.key)) {
@@ -638,7 +705,8 @@ export function mountList(root: HTMLElement): void {
   /**
    * Whether completing it leaves nothing due today: it is due by the end of
    * today (overdue counts) and no other open reminder is, apart from ones
-   * whose done animation is already running.
+   * whose done animation is already running. A reply counts only when it has
+   * a due time today, like any reminder.
    */
   function clearsToday(it: Item): boolean {
     if (!view) return false;
@@ -648,7 +716,8 @@ export function mountList(root: HTMLElement): void {
       const d = effectiveDue(i, now);
       return isReminder(i) && !isDone(i) && d !== null && d.getTime() < end;
     };
-    return dueToday(it) && !(view.upcoming ?? []).some((i) => i.id !== it.id && !completing.has(i.id) && dueToday(i));
+    const others = [...(view.upcoming ?? []), ...(view.waiting ?? []).flatMap((g) => g.items ?? [])];
+    return dueToday(it) && !others.some((i) => i.id !== it.id && !completing.has(i.id) && dueToday(i));
   }
 
   async function remove(row: HTMLElement): Promise<void> {
@@ -694,6 +763,9 @@ export function mountList(root: HTMLElement): void {
       );
     }
     if (snoozeOnly) return items;
+    if (isOpenReply(it)) {
+      items.push({ label: "No reply needed", icon: "replyOff", run: () => void api.dropReply(it.id).catch(fail) });
+    }
     items.push({ label: "Edit", icon: "edit", run: () => void startEdit(row) });
     if (it.rrule && !isDone(it)) {
       items.push({ label: "Stop repeating", icon: "repeatOff", run: () => void api.stopRepeating(it.id).catch(fail) });

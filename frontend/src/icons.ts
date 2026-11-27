@@ -25,6 +25,7 @@ import {
   Link,
   List,
   ListTodo,
+  MessageSquareOff,
   Mic,
   Pencil,
   Plus,
@@ -105,6 +106,7 @@ export const icons = {
   refresh: render(RefreshCw as IconNode),
   // Replies owed
   reply: render(Reply as IconNode),
+  replyOff: render(MessageSquareOff as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

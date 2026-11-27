@@ -9,7 +9,7 @@ vi.hoisted(() => {
 });
 
 import type { Item } from "../api";
-import { dueField, fromLocalInput, repeatOf, toLocalInput } from "./fields";
+import { dueField, fromLocalInput, personField, repeatOf, sourceField, toLocalInput } from "./fields";
 
 describe("datetime-local helpers", () => {
   it("runs in a zone with an offset", () => {
@@ -60,5 +60,51 @@ describe("dueField snooze note (C1)", () => {
     expect(note(5 * hour, -hour)).toBe("");
     expect(note(hour, 5 * hour)).toBe("");
     expect(note(hour, null)).toBe("");
+  });
+});
+
+describe("reply fields", () => {
+  const reply = (p: Partial<Item>) => ({ reply: true, owedTo: "Priya", source: "Teams", ...p }) as Item;
+
+  it("For saves a changed person on Enter or blur, trimmed, once", () => {
+    const saved: string[] = [];
+    const f = personField((p) => saved.push(p));
+    document.body.append(f.root);
+    f.fill(reply({}), true);
+    const input = f.root.querySelector("input")!;
+    expect(input.value).toBe("Priya");
+    expect(f.root.querySelector("label")!.textContent).toBe("For");
+    input.focus();
+    input.value = "  Sam ";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(saved).toEqual(["Sam"]);
+    input.blur(); // nothing new since Enter
+    expect(saved).toEqual(["Sam"]);
+    input.value = "";
+    f.commit(); // the panel's flush on close or switch
+    expect(saved).toEqual(["Sam", ""]);
+    f.root.remove();
+  });
+
+  it("For leaves a person being typed alone on refresh", () => {
+    const f = personField(() => {});
+    document.body.append(f.root);
+    const input = f.root.querySelector("input")!;
+    f.fill(reply({}), true);
+    input.focus();
+    input.value = "Sa";
+    f.fill(reply({ owedTo: "Priya" }), false);
+    expect(input.value).toBe("Sa");
+    f.root.remove();
+  });
+
+  it("From shows the source read-only", () => {
+    const f = sourceField();
+    f.fill(reply({ source: "Outlook" }));
+    expect(f.root.querySelector(".pf-label")!.textContent).toBe("From");
+    expect(f.root.querySelector(".pf-static")!.textContent).toBe("Outlook");
+    expect(f.root.querySelector("input")).toBeNull();
+    f.fill(reply({ source: "" }));
+    expect(f.root.querySelector(".pf-static")!.textContent).toBe("Unknown");
   });
 });

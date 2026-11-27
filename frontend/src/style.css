@@ -2495,3 +2495,61 @@ legend.field-label {
 .confetti i:nth-child(5n + 3) { background: var(--prio-low); }
 .confetti i:nth-child(5n + 4) { background: var(--remind); }
 .confetti i:nth-child(5n + 5) { background: var(--tag-2-fg); }
+
+/* ---------- List: Waiting on you (Replies owed) ---------- */
+
+/* One subheading per person inside the Waiting section, over its own list. */
+.sec-sub {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--fg);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sec-group:first-child .sec-sub {
+  margin-top: 0;
+}
+
+/* Source and age: mono --fg-muted; an age over 24 h reads in --time-text. */
+.row-reply {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  max-width: 40%; /* a narrow list (panel open) keeps room for the text */
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  white-space: pre;
+}
+
+.row-src {
+  min-width: 0;
+  max-width: var(--reply-source-max);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-age.is-stale {
+  color: var(--time-text);
+}
+
+/* Done: a reply closed with "No reply needed" says so, not struck through. */
+.row-dropped {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  white-space: nowrap;
+}
+
+.row.is-completing .row-reply,
+.row.is-completing .row-dropped {
+  opacity: var(--completing-opacity);
+  transition: opacity var(--dur-done) var(--ease-exit) var(--done-stagger);
+}

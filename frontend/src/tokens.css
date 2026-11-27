@@ -401,3 +401,15 @@
   --dur-confetti: 700ms;
   --ease-burst: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
+
+/* ---- Replies owed: Waiting on you, reply fields ----
+   Kept in its own block so it merges cleanly with other token changes.
+   No new colours: Waiting rows reuse existing pairs (WCAG ratio, dark / light):
+     source and age --fg-muted on --bg 6.96 / 7.24, on --muted (hover,
+     selected) 5.21 / 6.74; a stale age --time-text on --bg 8.31 / 6.78, on
+     --muted 6.22 / 6.31; person subheading --fg on --bg 17.06 / 17.06.
+   Panel "From" --fg on --surface, "Unknown" --fg-muted on --surface 6.11 / 7.58. */
+:root {
+  --reply-source-max: 14ch; /* a long app name ("Microsoft Teams (work or school)") truncates */
+  --person-field-max: 28ch; /* the panel's For input */
+}

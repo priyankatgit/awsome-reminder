@@ -141,6 +141,8 @@ export const api = {
   setDue: (id: string, due: Date | null): Promise<Item> => Service.SetDue(id, due ? due.toISOString() : null),
   setRepeat: (id: string, repeat: string): Promise<Item> => Service.SetRepeat(id, repeat),
   setTags: (id: string, tags: string[]): Promise<Item> => Service.SetTags(id, tags),
+  /** Who a reply is owed to; "" is nobody. */
+  setOwedTo: (id: string, person: string): Promise<Item> => Service.SetOwedTo(id, person),
   setDescription: (id: string, md: string): Promise<Item> => Service.SetDescription(id, md),
   /** Stores a compressed WebP image for an item (Go accepts WebP up to 2 MB). */
   addAttachment: async (itemId: string, webp: Blob): Promise<Attachment> => Service.AddAttachment(itemId, await blobBase64(webp)),

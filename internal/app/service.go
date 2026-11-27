@@ -395,6 +395,11 @@ func (s *Service) SetTags(id string, tags []string) (model.Item, error) {
 	return s.d.Core.SetTags(id, tags)
 }
 
+// SetOwedTo sets who a reply is owed to (trimmed; empty is nobody).
+func (s *Service) SetOwedTo(id, person string) (model.Item, error) {
+	return s.d.Core.SetOwedTo(id, person)
+}
+
 // SetDescription saves an item's Markdown description.
 func (s *Service) SetDescription(id, md string) (model.Item, error) {
 	return s.d.Core.SetDescription(id, md)

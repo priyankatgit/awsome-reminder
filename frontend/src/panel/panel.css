@@ -697,3 +697,29 @@ html[data-vt] .panel {
   margin-left: auto;
   color: var(--danger-text);
 }
+
+/* ---------- Replies owed: For (editable) and From (read-only) ---------- */
+
+.pf[hidden] {
+  display: none;
+}
+
+.pf-person {
+  flex: 1;
+  min-width: 0;
+  max-width: var(--person-field-max);
+  font-size: var(--text-body);
+}
+
+.pf-static {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+  user-select: text;
+}
+
+.pf-static.is-empty {
+  color: var(--fg-muted);
+}

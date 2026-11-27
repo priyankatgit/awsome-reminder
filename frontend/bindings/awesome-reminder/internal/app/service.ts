@@ -221,6 +221,13 @@ export function SetHotkeyRecording(on: boolean): $CancellablePromise<void> {
 }
 
 /**
+ * SetOwedTo sets who a reply is owed to (trimmed; empty is nobody).
+ */
+export function SetOwedTo(id: string, person: string): $CancellablePromise<model$0.Item> {
+    return $Call.ByID(4237449326, id, person);
+}
+
+/**
  * SetPriority sets an item's priority: "", "low", "medium" or "high".
  */
 export function SetPriority(id: string, p: string): $CancellablePromise<model$0.Item> {

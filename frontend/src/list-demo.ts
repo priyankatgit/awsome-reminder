@@ -1,14 +1,17 @@
 // Dev-only sample data for previewing the views in a plain browser
 // (`npx vite --config frontend/vite.config.ts frontend`, then open
 // http://127.0.0.1:9245/?demo#list, or ?demo=empty, or ?demo&focus=4;
-// ?demo#alert, ?demo=one#alert; ?demo#settings, where saving the hotkey
+// ?demo#alert, ?demo=one#alert, ?demo=replies#alert (nudge and sweep cards
+// only); ?demo#settings, where saving the hotkey
 // Ctrl+Alt+K fails as "already used"; ?demo#capture, with a toy parser that
 // knows "tomorrow", "5pm", #tags and !priority tokens, and a bottom-left
 // select that opens it normally or in reply mode; ?demo&reply#capture opens
 // it in reply mode at once). Click a row in
 // ?demo#list to try the detail panel; its saves take a moment, like the real
 // ones. Item 2's description has a checklist, links and a demo image; item 4
-// carries hostile Markdown, to check that the preview stays inert. There is no
+// carries hostile Markdown, to check that the preview stays inert. Replies
+// owed (r1-r5) fill "Waiting on you": Priya twice (one over 24 h), Sam with a
+// due time today, one owed to nobody; r6 sits in Done as "no reply needed". There is no
 // Go /att/ route here, so attachments live in memory as data:/blob: URLs.
 // Loaded only when import.meta.env.DEV and ?demo are both set, so production
 // bundles never include it.
@@ -49,8 +52,18 @@ function item(id: string, text: string, tags: string[], dueInMin: number | null,
     updatedBy: "demo",
     priority: "",
     description: "",
+    reply: false,
+    owedTo: "",
+    source: "",
+    replyOutcome: "",
     ...extra,
   } as Item;
+}
+
+/** A reply owed, captured ageMin ago. */
+function replyItem(id: string, text: string, owedTo: string, source: string, ageMin: number, dueInMin: number | null = null, extra: Partial<Item> = {}): Item {
+  const created = new Date(Date.now() - ageMin * 60_000).toISOString();
+  return item(id, text, ["inbox"], dueInMin, { reply: true, owedTo, source, createdAt: created, updatedAt: created, ...extra });
 }
 
 export function installDemo(): void {
@@ -88,6 +101,17 @@ export function installDemo(): void {
     item("6", "call the dentist", ["inbox"], 60 * 26),
     item("7", "renew passport", ["home"], 60 * 24 * 4),
     item("8", "write release notes", ["inbox"], null, { status: "done" as Item["status"], doneAt: new Date().toISOString() }),
+    replyItem("r2", 'Reply to Priya: "budget numbers for Q1?"', "Priya", "Outlook", 60 * 30, null, {
+      description: "> Hi, could you send the budget numbers for Q1 before the review?",
+    }),
+    replyItem("r1", 'Reply to Priya: "can you check the deploy before 5?"', "Priya", "Microsoft Teams (work or school)", 125),
+    replyItem("r4", "Reply to Sam: confirm the venue", "Sam", "Slack", 50, 240),
+    replyItem("r3", 'Reply: "is the staging DB back?"', "", "Chrome", 12),
+    replyItem("r6", "Reply to Ops channel: rota swap", "Ops channel", "Slack", 60 * 5, null, {
+      status: "done" as Item["status"],
+      doneAt: new Date().toISOString(),
+      replyOutcome: "dropped",
+    }),
   ];
   if (new URLSearchParams(location.search).get("demo") === "empty") items = [];
   const tagOf = (it: Item) => (it.tags && it.tags.length ? it.tags : ["inbox"]);
@@ -96,8 +120,21 @@ export function installDemo(): void {
   const eff = (it: Item) => effectiveDue(it, new Date())?.getTime() ?? 0;
 
   let pendingIds: string[] = [];
+  // Like Go's groupReplies: by person (case-insensitive), oldest first, nobody last.
+  const created = (it: Item) => new Date(it.createdAt).getTime();
+  const waiting = (open: Item[]) => {
+    const by = new Map<string, Item[]>();
+    for (const it of [...open].filter((i) => i.reply).sort((a, b) => created(a) - created(b))) {
+      const k = it.owedTo.trim().toLowerCase();
+      by.set(k, [...(by.get(k) ?? []), it]);
+    }
+    return [...by.entries()]
+      .sort(([a, x], [b, y]) => (a === "") !== (b === "") ? (a === "" ? 1 : -1) : created(x[0]) - created(y[0]))
+      .map(([, list]) => ({ person: list[0].owedTo.trim(), items: list }));
+  };
   const view = (): View => {
-    const open = items.filter((i) => i.status === "open");
+    const all = items.filter((i) => i.status === "open");
+    const open = all.filter((i) => !i.reply);
     const horizon = Date.now() + 7 * 24 * 3_600_000;
     const upcoming = open.filter((i) => i.kind === "reminder" && eff(i) < horizon).sort((a, b) => eff(a) - eff(b));
     const groups = new Map<string, Item[]>();
@@ -105,7 +142,7 @@ export function installDemo(): void {
     const names = [...groups.keys()].sort((a, b) => (a === "inbox" ? -1 : b === "inbox" ? 1 : a.localeCompare(b)));
     // Like Go's View: tag groups sort by priority (stable), Upcoming keeps time order.
     const tags = names.map((tag) => ({ tag, items: [...groups.get(tag)!].sort(byPriority) }));
-    return { upcoming, tags, done: items.filter((i) => i.status === "done"), waiting: [], pending: [...pendingIds] };
+    return { upcoming, tags, done: items.filter((i) => i.status === "done"), waiting: waiting(all), pending: [...pendingIds] };
   };
   const patch = (id: string, p: Partial<Item>) => {
     items = items.map((i) => (i.id === id ? { ...i, ...p, updatedAt: new Date().toISOString() } : i));
@@ -115,8 +152,16 @@ export function installDemo(): void {
 
   Object.assign(api, {
     view: async () => view(),
-    done: async (id: string) => patch(id, { status: "done" as Item["status"], doneAt: new Date().toISOString() }),
-    reopen: async (id: string) => patch(id, { status: "open" as Item["status"], doneAt: null }),
+    done: async (id: string) => {
+      const reply = items.find((i) => i.id === id)?.reply;
+      patch(id, { status: "done" as Item["status"], doneAt: new Date().toISOString(), replyOutcome: reply ? "replied" : "" });
+    },
+    reopen: async (id: string) => patch(id, { status: "open" as Item["status"], doneAt: null, replyOutcome: "" }),
+    dropReply: async (id: string) => patch(id, { status: "done" as Item["status"], doneAt: new Date().toISOString(), replyOutcome: "dropped" }),
+    snoozeReplies: async () => {
+      const until = new Date(Date.now() + 16 * 3_600_000).toISOString();
+      for (const it of items.filter((i) => i.reply && i.status === "open")) patch(it.id, { snoozeUntil: until });
+    },
     deleteItem: async (id: string) => patch(id, { status: "deleted" as Item["status"] }),
     undelete: async (id: string) => {
       const it = items.find((i) => i.id === id);
@@ -276,6 +321,10 @@ function installPanelDemo(all: () => Item[], patch: (id: string, p: Partial<Item
       if (!rules[r]) throw new Error("unknown repeat");
       return set(id, { rrule: rules[r] });
     },
+    setOwedTo: async (id: string, person: string) => {
+      await slow();
+      return set(id, { owedTo: person.trim() });
+    },
     setTags: async (id: string, tags: string[]) => {
       const out = [...new Set(tags.map((t) => t.trim().replace(/^#/, "").toLowerCase()).filter(Boolean))];
       if (out.some((t) => !/^[a-z][a-z0-9_-]*$/.test(t))) throw new Error("tags start with a letter and use a-z, 0-9, - or _");
@@ -404,7 +453,16 @@ function installAlertDemo(): void {
     card("a2", "standup notes", ["team"], 0, { recurring: true }),
     card("a1", "check deploy", ["backend", "ops"], 10, { lead: 10 * 60e9 }),
   ];
-  if (new URLSearchParams(location.search).get("demo") === "one") queue = queue.slice(-1);
+  const ago = (min: number) => new Date(now - min * 60_000).toISOString();
+  const nudges: AlertCard[] = [
+    card("r3|nudge", 'Reply: "is the staging DB back?"', [], 0, { itemId: "r3", kind: "nudge", source: "Chrome", waitingSince: ago(12) }),
+    card("r1|nudge", 'Reply to Priya: "can you check the deploy before 5?"', [], 0, { itemId: "r1", kind: "nudge", person: "Priya", source: "Teams", waitingSince: ago(125) }),
+    card("sweep|today", "", [], 0, { itemId: "", kind: "sweep", people: ["Priya", "Sam", "Someone"] }),
+  ];
+  const mode = new URLSearchParams(location.search).get("demo");
+  if (mode === "one") queue = queue.slice(-1);
+  else if (mode === "replies") queue = nudges;
+  else queue = [...queue, ...nudges.slice(1)]; // newest first: the sweep, then Priya's nudge
   const send = () => window.setTimeout(() => emitLocal(events.alertsShow, [...queue]), 0);
   const drop = (pred: (c: AlertCard) => boolean) => {
     queue = queue.filter((c) => !pred(c));
@@ -413,6 +471,7 @@ function installAlertDemo(): void {
   const list = api as unknown as Record<string, (...a: never[]) => Promise<unknown>>;
   const done = list.done;
   const snooze = list.snooze;
+  const snoozeReplies = list.snoozeReplies;
   Object.assign(api, {
     pendingAlerts: async () => [...queue],
     dismissAlert: async (key: string) => drop((c) => c.key === key),
@@ -427,6 +486,10 @@ function installAlertDemo(): void {
     snooze: async (id: string, preset: string) => {
       await (snooze as (id: string, p: string) => Promise<void>)(id, preset);
       drop((c) => c.itemId === id);
+    },
+    snoozeReplies: async () => {
+      await (snoozeReplies as () => Promise<void>)();
+      drop((c) => c.kind !== "");
     },
   });
 }
