@@ -47,6 +47,27 @@ func TestFallbackQuote(t *testing.T) {
 	}
 }
 
+// A selection tool's output is text only when it is valid UTF-8: image bytes
+// (wl-paste without a text type) or other binary data are dropped.
+func TestTextOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+		want string
+	}{
+		{"plain text", []byte("can you check?"), "can you check?"},
+		{"non-ASCII text", []byte("café — ok"), "café — ok"},
+		{"empty", nil, ""},
+		{"PNG header", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), ""},
+		{"truncated rune", []byte("caf\xc3"), ""},
+	}
+	for _, c := range cases {
+		if got := textOutput(c.in); got != c.want {
+			t.Errorf("%s: textOutput = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // Review Focus 1: the hotkey's own modifiers must be up before Ctrl+C is
 // injected, or the source app sees Ctrl+Shift+C.
 func TestWaitForReleaseSendsKeyUps(t *testing.T) {

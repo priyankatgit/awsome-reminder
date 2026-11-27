@@ -50,9 +50,11 @@ func AccessibilityTrusted() bool { return true }
 // primaryCommands are the commands that print the primary selection, in
 // the order to try them, keeping only installed tools: wl-paste first on
 // Wayland (WAYLAND_DISPLAY set), then xclip, then xsel (X11 or XWayland).
+// wl-paste asks for text/plain: without a type it prints whatever the source
+// offers first, which can be image bytes.
 func primaryCommands(env func(string) string, look func(string) (string, error)) [][]string {
 	return installedCommands(env, look,
-		[]string{"wl-paste", "--primary", "--no-newline"},
+		[]string{"wl-paste", "--primary", "--no-newline", "--type", "text/plain"},
 		[]string{"xclip", "-o", "-selection", "primary"},
 		[]string{"xsel", "-o", "-p"})
 }
@@ -61,7 +63,7 @@ func primaryCommands(env func(string) string, look func(string) (string, error))
 // fallback.
 func clipboardCommands(env func(string) string, look func(string) (string, error)) [][]string {
 	return installedCommands(env, look,
-		[]string{"wl-paste", "--no-newline"},
+		[]string{"wl-paste", "--no-newline", "--type", "text/plain"},
 		[]string{"xclip", "-o", "-selection", "clipboard"},
 		[]string{"xsel", "-o", "-b"})
 }
@@ -98,8 +100,9 @@ func firstOutput(ctx context.Context, cmds [][]string) string {
 }
 
 // run runs a command with a 150 ms timeout and returns its standard
-// output, or "" on failure. An empty selection makes these tools exit
-// non-zero, so failures are not logged unless they are timeouts.
+// output, or "" on failure or when the output is not valid UTF-8 text. An
+// empty selection makes these tools exit non-zero, so failures are not
+// logged unless they are timeouts.
 func run(ctx context.Context, argv []string) string {
 	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
@@ -112,7 +115,7 @@ func run(ctx context.Context, argv []string) string {
 		}
 		return ""
 	}
-	return out.String()
+	return textOutput(out.Bytes())
 }
 
 // activeWindow is the active window's WM_CLASS class and _NET_WM_NAME,

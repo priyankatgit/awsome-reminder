@@ -106,6 +106,15 @@ func fallbackQuote(text string) (string, bool) {
 	return text, true
 }
 
+// textOutput is a selection tool's output as text, or "" when it is not
+// valid UTF-8 (image or other binary data the tool printed instead).
+func textOutput(out []byte) string {
+	if !utf8.Valid(out) {
+		return ""
+	}
+	return string(out)
+}
+
 // isModifier reports whether k is a modifier key: Shift, Ctrl, Alt or Win,
 // generic or sided.
 func isModifier(k Key) bool {
