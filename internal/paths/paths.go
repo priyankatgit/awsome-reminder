@@ -8,13 +8,21 @@ import (
 
 const appDirName = "awesome-reminder"
 
-// DataDir returns <UserConfigDir>/awesome-reminder, creating it if missing.
-func DataDir() (string, error) {
+// Dir returns <UserConfigDir>/awesome-reminder without creating it.
+func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, appDirName)
+	return filepath.Join(base, appDirName), nil
+}
+
+// DataDir returns <UserConfigDir>/awesome-reminder, creating it if missing.
+func DataDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
