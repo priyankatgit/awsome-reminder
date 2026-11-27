@@ -310,6 +310,7 @@ function installSettingsDemo(): void {
     nextWeekTime: "09:00",
     exportPath: "",
     autostart: true,
+    showPendingCount: true,
   };
   let hotkeyErr = "";
   Object.assign(api, {

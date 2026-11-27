@@ -59,6 +59,7 @@ func setTrayIcons(tray *application.SystemTray, o Options) {
 // Run opens the store, wires core, scheduler, exporter and hotkey to the
 // Wails application and blocks until the app quits.
 func Run(opts Options) error {
+	setAppUserModelID() // before any window exists (Windows taskbar button)
 	dbPath, err := paths.DBPath()
 	if err != nil {
 		return fmt.Errorf("db path: %w", err)
@@ -75,9 +76,10 @@ func Run(opts Options) error {
 	defer cancel()
 
 	var (
-		win  *wailsWindows
-		tray *application.SystemTray
-		svc  *Service
+		win    *wailsWindows
+		tray   *application.SystemTray
+		svc    *Service
+		badges *badgeWiring
 		// Second-instance requests can arrive before win is assigned below;
 		// they are held until ApplicationStarted.
 		launches launchQueue
@@ -164,6 +166,7 @@ func Run(opts Options) error {
 	defer func() {
 		cancel()
 		sched.Wait()
+		badges.Stop() // joins a refresh in flight, closes the taskbar window
 	}()
 
 	win = newWindows(app)
@@ -182,7 +185,7 @@ func Run(opts Options) error {
 			return autostart.Set(on, exe)
 		},
 		Export:        exp.Trigger,
-		StatusChanged: func() { tray.SetTooltip(tooltip(svc.Status())) },
+		StatusChanged: func() { badges.StatusChanged() },
 		Emit:          func(name string, data any) { emit(name, data) },
 		OpenURL:       app.Browser.OpenURL,
 	})
@@ -200,6 +203,7 @@ func Run(opts Options) error {
 		sched.Kick()
 		exp.Trigger()
 		emit(EventItemsChanged)
+		badges.Changed() // also on a settings save
 	})
 
 	tray = app.SystemTray.New()
@@ -207,6 +211,17 @@ func Run(opts Options) error {
 	tray.SetTooltip(appName)
 	tray.SetMenu(trayMenu(app, win))
 	tray.OnClick(func() { go win.OpenList("") })
+	badges = newBadgeWiring(badgeDeps{
+		Count: c.PendingCount,
+		Show: func() bool {
+			s, err := c.Settings()
+			return err != nil || s.ShowPendingCount
+		},
+		HotkeyErr: func() string { return svc.Status().HotkeyErr },
+		Icons:     trayIcons{opts.TrayIconLight, opts.TrayIconDark, opts.TrayIconTemplate},
+		Tray:      wailsBadgeTray{app, tray},
+		Debounce:  badgeDebounce,
+	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		s, err := c.Settings()
@@ -218,7 +233,7 @@ func Run(opts Options) error {
 			}
 			syncAutostart(s.Autostart)
 		}
-		tray.SetTooltip(tooltip(svc.Status()))
+		badges.Start(newTaskbar(func() { launches.Do(func() { win.OpenList("") }) }))
 		sweepAttachments(c)
 		sched.Start(ctx)
 		// Bring the export up to date with the database at startup (it may
@@ -245,11 +260,4 @@ func trayMenu(app *application.App, win *wailsWindows) *application.Menu {
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 	return menu
-}
-
-func tooltip(s Status) string {
-	if s.HotkeyErr != "" {
-		return appName + " — hotkey error: " + s.HotkeyErr
-	}
-	return appName
 }

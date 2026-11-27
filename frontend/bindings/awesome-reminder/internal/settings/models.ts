@@ -9,6 +9,6 @@
  * 
  * 	{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s","10m0s"],
  * 	 "defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00",
- * 	 "exportPath":"","autostart":true}
+ * 	 "exportPath":"","autostart":true,"showPendingCount":true}
  */
 export type Settings = any;

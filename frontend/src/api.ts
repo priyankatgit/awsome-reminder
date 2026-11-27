@@ -49,6 +49,7 @@ export interface Settings {
   nextWeekTime: string;
   exportPath: string;
   autostart: boolean;
+  showPendingCount: boolean;
 }
 
 export const api = {

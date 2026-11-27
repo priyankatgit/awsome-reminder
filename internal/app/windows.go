@@ -371,6 +371,8 @@ func (w *wailsWindows) newList() *application.WebviewWindow {
 		URL:              "/#list",
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: w.pageBackground(),
+		// The native taskbar window owns the app's one button.
+		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
 	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.list.Drop(win)
@@ -393,6 +395,8 @@ func (w *wailsWindows) newSettings() *application.WebviewWindow {
 		URL:              "/#settings",
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: w.pageBackground(),
+		// The native taskbar window owns the app's one button.
+		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
 	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.settings.Drop(win)

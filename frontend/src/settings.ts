@@ -122,6 +122,7 @@ interface Draft {
   nextWeekTime: string;
   exportPath: string;
   autostart: boolean;
+  showPendingCount: boolean;
 }
 
 function toDraft(s: Settings): Draft {
@@ -133,6 +134,7 @@ function toDraft(s: Settings): Draft {
     nextWeekTime: s.nextWeekTime,
     exportPath: s.exportPath,
     autostart: s.autostart,
+    showPendingCount: s.showPendingCount,
   };
 }
 
@@ -145,6 +147,7 @@ function toSettings(d: Draft): Settings {
     nextWeekTime: d.nextWeekTime,
     exportPath: d.exportPath.trim(),
     autostart: d.autostart,
+    showPendingCount: d.showPendingCount,
   };
 }
 
@@ -258,6 +261,14 @@ const TEMPLATE = `
         <p class="field-help" id="autostart-help">Opens Awesome Reminder in the tray when you sign in.</p>
         <p class="field-error" id="autostart-error" role="alert" hidden></p>
       </div>
+
+      <div class="field">
+        <div class="field-row field-switch">
+          <label class="field-label" for="pending-count">Show pending count</label>
+          <input class="switch" id="pending-count" type="checkbox" role="switch" aria-describedby="pending-count-help" />
+        </div>
+        <p class="field-help" id="pending-count-help">Shows how many items are open on the tray icon and the taskbar.</p>
+      </div>
     </form>
   </main>
   <footer class="settings-foot">
@@ -282,6 +293,7 @@ export function mountSettings(root: HTMLElement): void {
   const exportPath = $<HTMLInputElement>("export-path");
   const exportChoose = $<HTMLButtonElement>("export-choose");
   const autostart = $<HTMLInputElement>("autostart");
+  const pendingCount = $<HTMLInputElement>("pending-count");
   const save = $<HTMLButtonElement>("settings-save");
   const status = $("settings-status");
   const errors: Record<FieldKey, HTMLElement | null> = {
@@ -304,6 +316,9 @@ export function mountSettings(root: HTMLElement): void {
 
   const mac = isMac();
   const windows = isWindows();
+  $("pending-count-help").textContent = `Shows how many items are open on the tray icon${
+    mac ? " and the Dock" : windows ? " and the taskbar" : ""
+  }.`;
   for (const d of WEEKDAYS) {
     const o = el("option", undefined, d.charAt(0).toUpperCase() + d.slice(1));
     o.value = d;
@@ -384,6 +399,7 @@ export function mountSettings(root: HTMLElement): void {
     nwTime.value = draft.nextWeekTime;
     exportPath.value = draft.exportPath;
     autostart.checked = draft.autostart;
+    pendingCount.checked = draft.showPendingCount;
   }
 
   function dirty(): boolean {
@@ -524,6 +540,7 @@ export function mountSettings(root: HTMLElement): void {
   bind(nwTime, "nextWeek", (d) => (d.nextWeekTime = nwTime.value));
   bind(exportPath, "exportPath", (d) => (d.exportPath = exportPath.value));
   bind(autostart, "autostart", (d) => (d.autostart = autostart.checked));
+  bind(pendingCount, "form", (d) => (d.showPendingCount = pendingCount.checked));
 
   exportChoose.addEventListener("click", async () => {
     if (!draft) return;
