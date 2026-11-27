@@ -60,16 +60,19 @@ Earlier, the user also chose **A over B/C**: one keystroke and offline-only, rat
   - else empty, with the cursor on the person field.
 - **Source:** the app it came from (Outlook, Teams, Slack, Chrome, …), shown and stored.
 - **Quote:** the grabbed text, trimmed to its first ~200 characters for the line and kept in full in the description (Markdown blockquote), so the details panel shows the whole message.
-- **Line:** `Reply to <person>: <first words of the quote>`. The user can edit everything before Enter. The normal parser still runs on the line, so `!high`, `#tags` and times work (`… by 5pm` gives a due time).
+- **Line:** `Reply to <person>: "<first words of the quote>"`. The user can edit everything before Enter. The normal parser still runs on the line, so `!high`, `#tags` and times the user adds work (`… by 5pm` gives a due time); the quote is in double quotes, which the parser keeps literal, so the other person's times and tags are not read as settings (a `"` inside it becomes `”`).
+- **Quote row:** the quote that will be saved shows on its own row under the input with a **Remove quote** button (`Alt+Q`); only a quote still shown is saved. A clipboard fallback quote also goes once the line no longer holds its start. The quote is capped at 64 KB.
 
 ### The capture box in reply mode
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ ↩  Reply to Priya: "can you check the deploy before 5?"  │
 ├──────────────────────────────────────────────────────────┤
+│  ▍ can you check the deploy before 5?                 ×  │
+├──────────────────────────────────────────────────────────┤
 │  (reply) for Priya · from Teams · nudge in 2h, then 9:00 │
 └──────────────────────────────────────────────────────────┘
-   ↵ save    Alt+P person    Tab time    Esc cancel
+   ↵ save    Alt+P person    Alt+Q remove quote    Tab time    Esc cancel
 ```
 - The same window as the capture box, in a mode: the lead icon is the Lucide `reply` icon, and the preview row shows a "Reply owed" chip, the person, the source and the nudge schedule.
 - `Alt+P`, or a click on the person chip, edits the person (a small inline input) *[my call]*. `Tab` keeps opening the time picker, as in normal mode.
