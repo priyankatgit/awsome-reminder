@@ -90,8 +90,9 @@ type popup interface {
 // queue and reported its height (ResizeAlerts), so it never appears empty or
 // with stale cards; a timer shows it anyway if the page stays silent. Calls
 // arrive on binding and scheduler goroutines; mu orders them. Nothing on the
-// main thread takes mu, except the close hook after the user closed the
-// window (Alt+F4).
+// main thread takes mu. The window's close hook runs on a Wails event
+// goroutine (Wails handles each window event on a new goroutine) and takes mu
+// only when the user closed the window (Alt+F4).
 type alertPopup struct {
 	mu     sync.Mutex
 	create func() popup
@@ -195,8 +196,8 @@ type wailsPopup struct {
 	win  *application.WebviewWindow
 	prev uintptr // the foreground window when it was last shown
 	// destroying is set before destroy closes the window, so the close hook
-	// (on the main thread, while destroy waits) knows it was not the user and
-	// takes no lock.
+	// (on a Wails event goroutine, usually after destroy has returned) knows
+	// it was not the user and takes no lock.
 	destroying atomic.Bool
 }
 
