@@ -564,6 +564,7 @@ func TestUndeleteNotDeletedIsNoOp(t *testing.T) {
 	it := mustCapture(t, e, "tomorrow 5pm deploy")
 	changes := 0
 	e.c.OnChange(func() { changes++ })
+	e.now = e.now.Add(time.Minute) // a save would move UpdatedAt
 	if err := e.c.Undelete(it.ID); err != nil {
 		t.Fatal(err)
 	}
