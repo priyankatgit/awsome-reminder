@@ -291,6 +291,56 @@ func TestApplyRemoteAttachment(t *testing.T) {
 	}
 }
 
+func TestApplyRemoteAttachmentInvalidIsErrInvalidRemote(t *testing.T) {
+	e, dir := attEnv(t)
+	data := tinyWebP(t)
+	at := e.now.UTC()
+
+	sha := remoteAtt(data, at, "R")
+	sha.SHA256 = "00"
+	badID := remoteAtt(data, at, "R")
+	badID.ID = "nope"
+	badItem := remoteAtt(data, at, "R")
+	badItem.ItemID = "nope"
+	mime := remoteAtt(data, at, "R")
+	mime.Mime = "image/png"
+	png := []byte("\x89PNG\r\n\x1a\n0000")
+	notWebP := remoteAtt(png, at, "R")
+	big := append(append([]byte(nil), data...), make([]byte, 2<<20)...)
+	tooBig := remoteAtt(big, at, "R")
+
+	cases := []struct {
+		name string
+		a    model.Attachment
+		data []byte
+	}{
+		{"sha mismatch", sha, data},
+		{"bad id", badID, data},
+		{"bad item id", badItem, data},
+		{"bad mime", mime, data},
+		{"not webp", notWebP, png},
+		{"too big", tooBig, big},
+	}
+	for _, tc := range cases {
+		ok, err := e.c.ApplyRemoteAttachment(tc.a, tc.data)
+		if ok || !errors.Is(err, ErrInvalidRemote) {
+			t.Errorf("%s: want ErrInvalidRemote, got %v %v", tc.name, ok, err)
+		}
+	}
+	if _, err := e.c.ApplyRemoteAttachment(badID, data); !errors.Is(err, ErrBadAttachmentID) {
+		t.Errorf("bad id should still match ErrBadAttachmentID: %v", err)
+	}
+	if fileExists(dir, sha.ID) {
+		t.Error("invalid attachment written")
+	}
+
+	// A store-side failure is not an invalid document.
+	e.c.SetAttachmentDir("")
+	if _, err := e.c.ApplyRemoteAttachment(remoteAtt(data, at, "R"), data); err == nil || errors.Is(err, ErrInvalidRemote) {
+		t.Errorf("missing dir must fail without ErrInvalidRemote: %v", err)
+	}
+}
+
 func TestApplyRemoteShared(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()

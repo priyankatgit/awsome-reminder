@@ -22,6 +22,11 @@ import (
 // whose image file is not on disk.
 var ErrAttachmentFileMissing = errors.New("attachment file missing")
 
+// ErrInvalidRemote is wrapped by every validation failure of a remote
+// document, so the sync engine can skip that document and move on instead of
+// retrying it forever. Other errors are local failures (disk, database).
+var ErrInvalidRemote = errors.New("invalid remote document")
+
 // staleAlertAge is how old an alert must be before restoring an item marks it
 // as fired. It matches the scheduler's missed threshold; younger alerts still
 // show, so a reminder that came due during the pull lag is not lost.
@@ -129,21 +134,22 @@ func (c *Core) applyRemoteItemsLocked(items []model.Item) ([]Applied, error) {
 
 // ApplyRemoteAttachment stores a remote attachment (and its image bytes, for a
 // live row) when it wins last-writer-wins. It reports whether anything was
-// applied. The local UnreferencedSince is kept.
+// applied. The local UnreferencedSince is kept. A document that fails
+// validation gives an error wrapping ErrInvalidRemote.
 func (c *Core) ApplyRemoteAttachment(a model.Attachment, data []byte) (bool, error) {
 	if !attachmentIDRe.MatchString(a.ID) || !attachmentIDRe.MatchString(a.ItemID) {
-		return false, ErrBadAttachmentID
+		return false, fmt.Errorf("attachment %q (item %q): %w: %w", a.ID, a.ItemID, ErrBadAttachmentID, ErrInvalidRemote)
 	}
 	if a.Mime != "image/webp" {
-		return false, fmt.Errorf("attachment %s: bad mime %q", a.ID, a.Mime)
+		return false, fmt.Errorf("attachment %s: bad mime %q: %w", a.ID, a.Mime, ErrInvalidRemote)
 	}
 	if !a.Deleted {
 		if _, err := checkWebP(data); err != nil {
-			return false, fmt.Errorf("attachment %s: %w", a.ID, err)
+			return false, fmt.Errorf("attachment %s: %w: %w", a.ID, err, ErrInvalidRemote)
 		}
 		sum := sha256.Sum256(data)
 		if hex.EncodeToString(sum[:]) != a.SHA256 {
-			return false, fmt.Errorf("attachment %s: sha256 mismatch", a.ID)
+			return false, fmt.Errorf("attachment %s: sha256 mismatch: %w", a.ID, ErrInvalidRemote)
 		}
 	}
 	applied, err := func() (bool, error) {
