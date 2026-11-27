@@ -55,3 +55,58 @@ func TestHeightKeeperClampsAndSkipsSame(t *testing.T) {
 		t.Fatalf("set calls %v, want %v", got, want)
 	}
 }
+
+type fakeWin struct{ n int }
+
+func TestOnDemandCreatesOnceAndRecreatesAfterDrop(t *testing.T) {
+	made := 0
+	o := &onDemand[*fakeWin]{create: func() *fakeWin { made++; return &fakeWin{n: made} }}
+	a, created := o.Get()
+	if !created || a.n != 1 {
+		t.Fatalf("first Get: %+v created=%v", a, created)
+	}
+	if b, created := o.Get(); created || b != a {
+		t.Fatalf("second Get should reuse: %+v created=%v", b, created)
+	}
+	o.Drop(a)
+	c, created := o.Get()
+	if !created || c == a || c.n != 2 {
+		t.Fatalf("after Drop: %+v created=%v", c, created)
+	}
+	o.Drop(a) // stale close of the old window must not forget the new one
+	if d, created := o.Get(); created || d != c {
+		t.Fatalf("stale Drop cleared current: %+v created=%v", d, created)
+	}
+}
+
+func TestOnDemandConcurrentGetCreatesOne(t *testing.T) {
+	var made int
+	o := &onDemand[*fakeWin]{create: func() *fakeWin {
+		time.Sleep(time.Millisecond)
+		made++
+		return &fakeWin{n: made}
+	}}
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() { o.Get() })
+	}
+	wg.Wait()
+	if made != 1 {
+		t.Fatalf("created %d windows, want 1", made)
+	}
+}
+
+func TestFocusSlotTakeClears(t *testing.T) {
+	var f focusSlot
+	if got := f.Take(); got != "" {
+		t.Fatalf("empty slot: %q", got)
+	}
+	f.Set("a")
+	f.Set("b")
+	if got := f.Take(); got != "b" {
+		t.Fatalf("take: %q", got)
+	}
+	if got := f.Take(); got != "" {
+		t.Fatalf("second take: %q", got)
+	}
+}

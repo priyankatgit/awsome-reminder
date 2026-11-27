@@ -30,14 +30,23 @@ func (f *fakeReg) reg(c hotkey.Combo, _ func()) (func(), error) {
 	return func() {}, nil
 }
 
-type fakeWindows struct{ shown, hidden int }
+type fakeWindows struct {
+	shown, hidden int
+	opened        []string
+	pending       string
+}
 
-func (w *fakeWindows) ShowCapture()      { w.shown++ }
-func (w *fakeWindows) HideCapture()      { w.hidden++ }
-func (w *fakeWindows) ResizeCapture(int) {}
-func (w *fakeWindows) OpenList(string)   {}
-func (w *fakeWindows) OpenSettings()     {}
-func (w *fakeWindows) DismissAlerts()    {}
+func (w *fakeWindows) ShowCapture()       { w.shown++ }
+func (w *fakeWindows) HideCapture()       { w.hidden++ }
+func (w *fakeWindows) ResizeCapture(int)  {}
+func (w *fakeWindows) OpenList(id string) { w.opened = append(w.opened, id) }
+func (w *fakeWindows) TakePendingFocus() string {
+	id := w.pending
+	w.pending = ""
+	return id
+}
+func (w *fakeWindows) OpenSettings()  {}
+func (w *fakeWindows) DismissAlerts() {}
 
 type harness struct {
 	svc       *Service
@@ -161,5 +170,20 @@ func TestServiceCaptureAndDone(t *testing.T) {
 	v, err := h.svc.View()
 	if err != nil || len(v.Done) != 1 {
 		t.Fatalf("view %+v %v", v, err)
+	}
+}
+
+func TestServiceOpenListAndTakePendingFocus(t *testing.T) {
+	w := &fakeWindows{pending: "01ABC"}
+	svc := NewService(Deps{Windows: w})
+	svc.OpenList("01ABC")
+	if len(w.opened) != 1 || w.opened[0] != "01ABC" {
+		t.Fatalf("opened %v", w.opened)
+	}
+	if got := svc.TakePendingFocus(); got != "01ABC" {
+		t.Fatalf("take %q", got)
+	}
+	if got := svc.TakePendingFocus(); got != "" {
+		t.Fatalf("second take %q", got)
 	}
 }

@@ -19,6 +19,7 @@ type Windows interface {
 	HideCapture()
 	ResizeCapture(height int)
 	OpenList(focusItemID string)
+	TakePendingFocus() string
 	OpenSettings()
 	DismissAlerts()
 }
@@ -146,6 +147,11 @@ func (s *Service) ResizeCapture(height int) { s.d.Windows.ResizeCapture(height) 
 
 // OpenList shows the list window, focusing focusItemID if not "".
 func (s *Service) OpenList(focusItemID string) { s.d.Windows.OpenList(focusItemID) }
+
+// TakePendingFocus returns the item ID the list window should scroll to
+// ("" if none) and clears it. The list page calls it when it has loaded and
+// whenever it receives EventListFocus.
+func (s *Service) TakePendingFocus() string { return s.d.Windows.TakePendingFocus() }
 
 // OpenSettings shows the settings window.
 func (s *Service) OpenSettings() { s.d.Windows.OpenSettings() }

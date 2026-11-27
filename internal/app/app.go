@@ -25,6 +25,7 @@ import (
 const (
 	appName        = "Awesome Reminder"
 	captureFlag    = "--capture"
+	listFlag       = "--list"
 	exportDebounce = time.Second
 )
 
@@ -76,6 +77,8 @@ func Run(opts Options) error {
 					go win.ShowCapture()
 					return
 				}
+				// --list, or a plain second launch (e.g. the Start menu entry).
+				log.Printf("second instance: open list")
 				go win.OpenList("")
 			},
 		},
@@ -136,6 +139,7 @@ func Run(opts Options) error {
 	tray.SetIcon(opts.TrayIcon)
 	tray.SetTooltip(appName)
 	tray.SetMenu(trayMenu(app, win))
+	tray.OnClick(func() { go win.OpenList("") })
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		s, err := c.Settings()
@@ -149,8 +153,11 @@ func Run(opts Options) error {
 		}
 		tray.SetTooltip(tooltip(svc.Status()))
 		sched.Start(ctx)
-		if slices.Contains(os.Args[1:], captureFlag) {
+		switch args := os.Args[1:]; {
+		case slices.Contains(args, captureFlag):
 			go win.ShowCapture()
+		case slices.Contains(args, listFlag):
+			go win.OpenList("")
 		}
 	})
 

@@ -18,11 +18,88 @@ const (
 	captureWindowName = "capture"
 )
 
+// List window geometry in DIPs.
+const (
+	listWidth      = 900
+	listHeight     = 640
+	listMinWidth   = 480
+	listMinHeight  = 360
+	listWindowName = "list"
+)
+
+// List window background before the page paints, matching --bg in
+// frontend/src/tokens.css so opening it doesn't flash white.
+var (
+	listBgDark  = application.NewRGB(0x0F, 0x17, 0x2A)
+	listBgLight = application.NewRGB(0xF8, 0xFA, 0xFC)
+)
+
 // wailsWindows implements Windows on top of a running Wails application.
 type wailsWindows struct {
-	app     *application.App
-	capture *application.WebviewWindow
-	size    *heightKeeper
+	app       *application.App
+	capture   *application.WebviewWindow
+	size      *heightKeeper
+	list      *onDemand[*application.WebviewWindow]
+	listFocus focusSlot
+}
+
+// onDemand holds a window that is created when first needed and forgotten
+// when it closes, so the next Get creates a fresh one. Wails destroys a
+// normal window on close (its default WindowClosing listener), so a stale
+// pointer must never be reused. create runs under mu; it may wait for the
+// main thread, which never takes mu.
+type onDemand[W comparable] struct {
+	mu     sync.Mutex
+	cur    W
+	create func() W
+}
+
+// Get returns the current window, creating one if there is none; created
+// reports whether it is new.
+func (o *onDemand[W]) Get() (w W, created bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var zero W
+	if o.cur != zero {
+		return o.cur, false
+	}
+	o.cur = o.create()
+	return o.cur, true
+}
+
+// Drop forgets w if it is still the current window.
+func (o *onDemand[W]) Drop(w W) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.cur == w {
+		var zero W
+		o.cur = zero
+	}
+}
+
+// focusSlot holds the item the list window should scroll to. A freshly
+// created list window takes it once its page has loaded (an event emitted
+// before then would be lost); an open one is nudged with EventListFocus and
+// takes it too.
+type focusSlot struct {
+	mu sync.Mutex
+	id string
+}
+
+// Set records id as the item to focus.
+func (f *focusSlot) Set(id string) {
+	f.mu.Lock()
+	f.id = id
+	f.mu.Unlock()
+}
+
+// Take returns the pending item ID ("" if none) and clears it.
+func (f *focusSlot) Take() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := f.id
+	f.id = ""
+	return id
 }
 
 // heightKeeper applies capture-window heights in order. Each binding call
@@ -77,7 +154,34 @@ func newWindows(app *application.App) *wailsWindows {
 	w.capture.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		w.HideCapture()
 	})
+	w.list = &onDemand[*application.WebviewWindow]{create: w.newList}
 	return w
+}
+
+// newList creates and shows the list window. It is destroyed when closed;
+// a hook (run synchronously, before Wails' own destroy listener) drops our
+// reference so the next OpenList builds a new one.
+func (w *wailsWindows) newList() *application.WebviewWindow {
+	bg := listBgLight
+	if w.app.Env.IsDarkMode() {
+		bg = listBgDark
+	}
+	win := w.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             listWindowName,
+		Title:            appName,
+		Width:            listWidth,
+		Height:           listHeight,
+		MinWidth:         listMinWidth,
+		MinHeight:        listMinHeight,
+		URL:              "/#list",
+		InitialPosition:  application.WindowCentered,
+		BackgroundColour: bg,
+	})
+	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
+		w.list.Drop(win)
+		log.Printf("list: closed")
+	})
+	return win
 }
 
 // ShowCapture centers the capture box on the screen under the mouse cursor
@@ -105,10 +209,31 @@ func (w *wailsWindows) ResizeCapture(height int) {
 	w.size.Resize(height)
 }
 
-// OpenList shows the list window.
+// OpenList shows the list window, creating it if needed, and asks it to
+// scroll to focusItemID when that is not "".
 func (w *wailsWindows) OpenList(focusItemID string) {
-	// TODO(task-10): build the list window and emit EventListFocus.
-	log.Printf("open list (focus %q): not implemented yet", focusItemID)
+	if focusItemID != "" {
+		w.listFocus.Set(focusItemID)
+	}
+	win, created := w.list.Get()
+	if created {
+		win.Focus()
+		log.Printf("list: created (focus %q)", focusItemID)
+		return
+	}
+	win.UnMinimise()
+	win.Show()
+	win.Focus()
+	if focusItemID != "" {
+		w.app.Event.Emit(EventListFocus, focusItemID)
+	}
+	log.Printf("list: focused (focus %q)", focusItemID)
+}
+
+// TakePendingFocus returns the item the list window should scroll to and
+// clears it.
+func (w *wailsWindows) TakePendingFocus() string {
+	return w.listFocus.Take()
 }
 
 // OpenSettings shows the settings window.

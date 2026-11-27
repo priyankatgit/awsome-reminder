@@ -142,6 +142,15 @@ export function StopRepeating(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * TakePendingFocus returns the item ID the list window should scroll to
+ * ("" if none) and clears it. The list page calls it when it has loaded and
+ * whenever it receives EventListFocus.
+ */
+export function TakePendingFocus(): $CancellablePromise<string> {
+    return $Call.ByID(2589158370);
+}
+
+/**
  * Update re-parses input for an existing item.
  */
 export function Update(id: string, input: string): $CancellablePromise<model$0.Item> {
