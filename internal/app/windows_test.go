@@ -165,9 +165,32 @@ func TestAlertPopupShowsAfterPageReady(t *testing.T) {
 	if p.shows != 1 {
 		t.Fatal("shown after dismiss")
 	}
+	// Reuse: the hidden page still shows its old content, so the window
+	// waits for the page to report again after rendering the new queue.
 	a.Show()
-	if len(*made) != 1 || p.shows != 2 || p.placed[len(p.placed)-1] != 200 {
-		t.Fatalf("reuse: made %d shows %d placed %v", len(*made), p.shows, p.placed)
+	if len(*made) != 1 || p.shows != 1 {
+		t.Fatalf("reuse shown before the page re-rendered: made %d shows %d", len(*made), p.shows)
+	}
+	a.Resize(200) // same height as last reported: still counts
+	if p.shows != 2 || p.placed[len(p.placed)-1] != 200 {
+		t.Fatalf("reuse: shows %d placed %v", p.shows, p.placed)
+	}
+}
+
+// A fallback timer from an earlier show does not show a later one early.
+func TestAlertPopupStaleFallbackIgnored(t *testing.T) {
+	a, made, timers := newTestPopup()
+	a.Show()
+	a.Resize(150)
+	a.Dismiss()
+	a.Show() // second wait: timers[1]
+	(*timers)[0]()
+	if p := (*made)[0]; p.shows != 1 {
+		t.Fatalf("stale fallback showed: shows %d", p.shows)
+	}
+	(*timers)[1]()
+	if p := (*made)[0]; p.shows != 2 {
+		t.Fatalf("current fallback: shows %d", p.shows)
 	}
 }
 

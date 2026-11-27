@@ -37,9 +37,9 @@ const (
 	alertMaxHeight     = 420
 	alertInset         = 16
 	alertWindowName    = "alert"
-	// alertReadyFallback shows a new alert window even if its page never
+	// alertReadyFallback shows the alert window even if its page never
 	// reports a height.
-	alertReadyFallback = 3 * time.Second
+	alertReadyFallback = 2 * time.Second
 )
 
 // Settings window geometry in DIPs.
@@ -81,34 +81,41 @@ type popup interface {
 }
 
 // alertPopup keeps at most one alert window. It is created on the first
-// alert and shown once its page has rendered and reported its height (so
-// it never appears empty), then hidden, not destroyed, when the queue
-// empties, and reused for the next alert. Calls arrive on binding and
-// scheduler goroutines; mu orders them. Nothing on the main thread takes mu.
+// alert, hidden (not destroyed) when the queue empties, and reused for the
+// next alert. Every time it goes from hidden to shown it waits until the page
+// has rendered the new queue and reported its height (ResizeAlerts), so it
+// never appears empty or with stale cards; a timer shows it anyway if the
+// page stays silent. Calls arrive on binding and scheduler goroutines; mu
+// orders them. Nothing on the main thread takes mu.
 type alertPopup struct {
 	mu     sync.Mutex
 	create func() popup
 	after  func(time.Duration, func()) // time.AfterFunc
 
 	cur     popup
-	ready   bool // the page reported its height (or the fallback fired)
+	ready   bool // the page reported its height since Show (or the fallback fired)
 	want    bool // there are alerts to show
 	visible bool
 	height  int
+	wait    int // counts waits for the page, so a stale fallback is ignored
 }
 
-// Show asks for the window to be visible, creating it if needed.
+// Show asks for the window to be visible, creating it if needed. The page
+// is told about the new queue right after this call.
 func (a *alertPopup) Show() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.want = true
 	if a.cur == nil {
-		p := a.create()
-		a.cur, a.ready, a.visible, a.height = p, false, false, alertInitialHeight
-		a.after(alertReadyFallback, func() { a.fallback(p) })
+		a.cur, a.visible, a.height = a.create(), false, alertInitialHeight
+	}
+	if a.visible {
 		return
 	}
-	a.showLocked()
+	a.ready = false
+	a.wait++
+	p, wait := a.cur, a.wait
+	a.after(alertReadyFallback, func() { a.fallback(p, wait) })
 }
 
 // showLocked places and shows the window if it is wanted, ready and hidden.
@@ -122,8 +129,9 @@ func (a *alertPopup) showLocked() {
 	a.visible = true
 }
 
-// Resize records the page's content height; the first call marks the page
-// ready.
+// Resize records the page's content height and shows the window if it is
+// waiting for the page. The page reports after every render, even when the
+// height is unchanged.
 func (a *alertPopup) Resize(height int) {
 	height = min(max(height, alertMinHeight), alertMaxHeight)
 	a.mu.Lock()
@@ -141,10 +149,10 @@ func (a *alertPopup) Resize(height int) {
 	a.showLocked()
 }
 
-func (a *alertPopup) fallback(p popup) {
+func (a *alertPopup) fallback(p popup, wait int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.cur != p || a.ready {
+	if a.cur != p || a.wait != wait || a.ready {
 		return
 	}
 	a.ready = true
@@ -171,10 +179,12 @@ func (a *alertPopup) Closed(p popup) {
 	}
 }
 
-// wailsPopup is the real alert window.
+// wailsPopup is the real alert window. Its methods are called under
+// alertPopup.mu.
 type wailsPopup struct {
-	app *application.App
-	win *application.WebviewWindow
+	app  *application.App
+	win  *application.WebviewWindow
+	prev uintptr // the foreground window when it was last shown
 }
 
 func (p *wailsPopup) place(height int) {
@@ -191,8 +201,8 @@ func (p *wailsPopup) place(height int) {
 	})
 }
 
-func (p *wailsPopup) show() { showNoActivate(p.win) }
-func (p *wailsPopup) hide() { p.win.Hide() }
+func (p *wailsPopup) show() { p.prev = showNoActivate(p.win) }
+func (p *wailsPopup) hide() { hideRestoringFocus(p.win, p.prev) }
 
 // onDemand holds a window that is created when first needed and forgotten
 // when it closes, so the next Get creates a fresh one. Wails destroys a
