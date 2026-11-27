@@ -96,3 +96,26 @@ func TestTokenizeQuoted(t *testing.T) {
 		t.Errorf("tokenize = %#v, want %#v", got, want)
 	}
 }
+
+// Dictation (Phase 1.5) puts the time before the task: "remind me tomorrow
+// at 5 pm to call Sam". The "to" that joined them is not part of the task.
+func TestParseRemindMeWhenTo(t *testing.T) {
+	now, cfg := testNow(t)
+	cases := []struct{ in, text string }{
+		{"Remind me tomorrow at 5 pm to call Sam", "call Sam"},
+		{"remind me tomorrow to check the deploy #backend", "check the deploy"},
+		{"set a reminder for friday 3pm to demo", "demo"},
+		{"tomorrow to-do list review", "to-do list review"},
+		{"tomorrow to Paris trip prep", "to Paris trip prep"},
+		{`remind me tomorrow "to" x`, "to x"},
+	}
+	for _, c := range cases {
+		r := Parse(c.in, now, cfg)
+		if r.Text != c.text {
+			t.Errorf("Parse(%q).Text = %q, want %q", c.in, r.Text, c.text)
+		}
+		if r.DueAt == nil {
+			t.Errorf("Parse(%q): want a due time", c.in)
+		}
+	}
+}

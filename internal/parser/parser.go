@@ -51,13 +51,19 @@ var colonPrefixes = []string{"reminder:", "todo:"}
 
 // Parse extracts text, tags, a due time and an optional RRULE from input.
 func Parse(input string, now time.Time, cfg Config) Result {
-	toks := tokenize(input)
-	toks = stripPrefix(toks)
+	all := tokenize(input)
+	toks := stripPrefix(all)
+	prefixed := len(toks) < len(all)
 	toks, tags := extractTags(toks)
 
 	due, rrule, rest := parseWhen(toks, now, cfg)
 	if rest == nil && due == nil && rrule == "" {
 		rest = toks
+	}
+	// "remind me tomorrow at 5 pm to call Sam" (the way people say it):
+	// the "to" joining the time and the task is not part of the task.
+	if prefixed && (due != nil || rrule != "") && len(rest) > 1 && !rest[0].Quoted && strings.EqualFold(rest[0].Text, "to") {
+		rest = rest[1:]
 	}
 
 	words := make([]string, 0, len(rest))
