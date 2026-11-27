@@ -32,21 +32,29 @@ export function Capture(input: string): $CancellablePromise<model$0.Item> {
 }
 
 /**
- * Delete tombstones an item.
+ * Delete tombstones an item and removes its alert cards.
  */
 export function Delete(id: string): $CancellablePromise<void> {
     return $Call.ByID(2789692999, id);
 }
 
 /**
- * DismissAlerts hides the alert window.
+ * DismissAlert removes one card; the window hides when none are left.
+ */
+export function DismissAlert(key: string): $CancellablePromise<void> {
+    return $Call.ByID(364701302, key);
+}
+
+/**
+ * DismissAlerts removes every card and hides the alert window.
  */
 export function DismissAlerts(): $CancellablePromise<void> {
     return $Call.ByID(1029577183);
 }
 
 /**
- * Done completes an item (a recurring one advances instead).
+ * Done completes an item (a recurring one advances instead) and removes its
+ * alert cards.
  */
 export function Done(id: string): $CancellablePromise<void> {
     return $Call.ByID(3388264204, id);
@@ -88,6 +96,14 @@ export function OpenSettings(): $CancellablePromise<void> {
 }
 
 /**
+ * PendingAlerts returns the alert window's cards, oldest first. The alert
+ * page calls it when it loads, so alerts fired before it was ready show.
+ */
+export function PendingAlerts(): $CancellablePromise<$models.AlertCard[] | null> {
+    return $Call.ByID(2728130696);
+}
+
+/**
  * Preview parses input without saving.
  */
 export function Preview(input: string): $CancellablePromise<core$0.Preview> {
@@ -99,6 +115,13 @@ export function Preview(input: string): $CancellablePromise<core$0.Preview> {
  */
 export function Reopen(id: string): $CancellablePromise<void> {
     return $Call.ByID(3116003153, id);
+}
+
+/**
+ * ResizeAlerts sets the alert window's height (CSS pixels) to fit its cards.
+ */
+export function ResizeAlerts(height: number): $CancellablePromise<void> {
+    return $Call.ByID(4244680291, height);
 }
 
 /**
@@ -121,7 +144,17 @@ export function SaveSettings(st: settings$0.Settings): $CancellablePromise<void>
 }
 
 /**
- * Snooze postpones a reminder: "10m", "1h" or "tomorrow".
+ * SetHotkeyRecording releases the global hotkey while the settings window
+ * records a new combo (so pressing the current combo reaches the recorder
+ * instead of opening the capture box) and registers it again afterwards.
+ */
+export function SetHotkeyRecording(on: boolean): $CancellablePromise<void> {
+    return $Call.ByID(4270168469, on);
+}
+
+/**
+ * Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
+ * are removed.
  */
 export function Snooze(id: string, preset: string): $CancellablePromise<void> {
     return $Call.ByID(1387438710, id, preset);

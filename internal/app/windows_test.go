@@ -110,3 +110,112 @@ func TestFocusSlotTakeClears(t *testing.T) {
 		t.Fatalf("second take: %q", got)
 	}
 }
+
+type fakePopup struct {
+	n      int
+	placed []int
+	shows  int
+	hides  int
+}
+
+func (p *fakePopup) place(h int) { p.placed = append(p.placed, h) }
+func (p *fakePopup) show()       { p.shows++ }
+func (p *fakePopup) hide()       { p.hides++ }
+
+func newTestPopup() (*alertPopup, *[]*fakePopup, *[]func()) {
+	var made []*fakePopup
+	var timers []func()
+	a := &alertPopup{
+		create: func() popup { p := &fakePopup{n: len(made) + 1}; made = append(made, p); return p },
+		after:  func(_ time.Duration, f func()) { timers = append(timers, f) },
+	}
+	return a, &made, &timers
+}
+
+// A new window is shown only once its page has reported its height, placed
+// at that height; later shows reuse it.
+func TestAlertPopupShowsAfterPageReady(t *testing.T) {
+	a, made, _ := newTestPopup()
+	a.Show()
+	if len(*made) != 1 {
+		t.Fatalf("created %d windows", len(*made))
+	}
+	p := (*made)[0]
+	if p.shows != 0 {
+		t.Fatal("shown before the page was ready")
+	}
+	a.Resize(150)
+	if p.shows != 1 || len(p.placed) != 1 || p.placed[0] != 150 {
+		t.Fatalf("after ready: shows %d placed %v", p.shows, p.placed)
+	}
+	a.Show() // already visible: nothing
+	if p.shows != 1 {
+		t.Fatalf("shows %d", p.shows)
+	}
+	a.Resize(150) // same height: nothing
+	a.Resize(10_000)
+	if got := p.placed[len(p.placed)-1]; got != alertMaxHeight || len(p.placed) != 2 {
+		t.Fatalf("placed %v, want clamp to %d once", p.placed, alertMaxHeight)
+	}
+	a.Dismiss()
+	if p.hides != 1 {
+		t.Fatalf("hides %d", p.hides)
+	}
+	a.Resize(200) // page re-renders while hidden: no show
+	if p.shows != 1 {
+		t.Fatal("shown after dismiss")
+	}
+	a.Show()
+	if len(*made) != 1 || p.shows != 2 || p.placed[len(p.placed)-1] != 200 {
+		t.Fatalf("reuse: made %d shows %d placed %v", len(*made), p.shows, p.placed)
+	}
+}
+
+func TestAlertPopupDismissBeforeReadyNeverShows(t *testing.T) {
+	a, made, _ := newTestPopup()
+	a.Show()
+	a.Dismiss()
+	a.Resize(150)
+	if p := (*made)[0]; p.shows != 0 || p.hides != 0 {
+		t.Fatalf("shows %d hides %d", p.shows, p.hides)
+	}
+}
+
+// If the page never reports a height the window is shown anyway.
+func TestAlertPopupReadyFallback(t *testing.T) {
+	a, made, timers := newTestPopup()
+	a.Show()
+	(*timers)[0]()
+	p := (*made)[0]
+	if p.shows != 1 || p.placed[0] != alertInitialHeight {
+		t.Fatalf("fallback: shows %d placed %v", p.shows, p.placed)
+	}
+	a.Resize(150)
+	if p.shows != 1 || p.placed[len(p.placed)-1] != 150 {
+		t.Fatalf("resize after fallback: shows %d placed %v", p.shows, p.placed)
+	}
+}
+
+// After the window closes, the next Show creates a new one; a stale fallback
+// timer or close of the old window does nothing.
+func TestAlertPopupClosedRecreates(t *testing.T) {
+	a, made, timers := newTestPopup()
+	a.Show()
+	a.Resize(150)
+	old := (*made)[0]
+	a.Closed(old)
+	a.Show()
+	if len(*made) != 2 {
+		t.Fatalf("made %d", len(*made))
+	}
+	(*timers)[0]() // stale timer of the old window
+	a.Closed(old)  // stale close
+	cur := (*made)[1]
+	if cur.shows != 0 {
+		t.Fatal("stale timer showed the new window")
+	}
+	a.Resize(160)
+	if cur.shows != 1 {
+		t.Fatalf("new window shows %d", cur.shows)
+	}
+}

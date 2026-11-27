@@ -16,6 +16,9 @@ type Manager struct {
 	cur   string // canonical form of the registered combo, "" if none
 	unreg func()
 	err   error
+	// suspended: cur is released for now (the settings window is recording
+	// a new combo) and Resume registers it again.
+	suspended bool
 }
 
 func NewManager(reg Registrar, onPress func()) *Manager {
@@ -49,7 +52,43 @@ func (m *Manager) Set(combo string) error {
 	if m.unreg != nil {
 		m.unreg()
 	}
-	m.cur, m.unreg, m.err = c.String(), unreg, nil
+	m.cur, m.unreg, m.err, m.suspended = c.String(), unreg, nil, false
+	return nil
+}
+
+// Suspend releases the registered hotkey until Resume, so its keys reach the
+// focused window (the settings hotkey recorder). It does nothing if no hotkey
+// is registered or it is already suspended.
+func (m *Manager) Suspend() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.unreg == nil {
+		return
+	}
+	m.unreg()
+	m.unreg, m.suspended = nil, true
+}
+
+// Resume registers the suspended hotkey again. It does nothing unless
+// suspended. If registering fails the error is returned and recorded in
+// Err(), and the hotkey stays suspended so a later Resume can retry.
+func (m *Manager) Resume() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.suspended {
+		return nil
+	}
+	c, err := ParseCombo(m.cur)
+	if err != nil {
+		m.err = err
+		return err
+	}
+	unreg, err := m.reg(c, m.onPress)
+	if err != nil {
+		m.err = err
+		return err
+	}
+	m.unreg, m.err, m.suspended = unreg, nil, false
 	return nil
 }
 
@@ -67,5 +106,5 @@ func (m *Manager) Close() {
 	if m.unreg != nil {
 		m.unreg()
 	}
-	m.cur, m.unreg, m.err = "", nil, nil
+	m.cur, m.unreg, m.err, m.suspended = "", nil, nil, false
 }

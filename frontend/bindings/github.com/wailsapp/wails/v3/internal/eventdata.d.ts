@@ -7,12 +7,12 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as scheduler$0 from "../../../../../awesome-reminder/internal/scheduler/models.js";
+import type * as app$0 from "../../../../../awesome-reminder/internal/app/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "alerts:show": scheduler$0.Alert[] | null;
+            "alerts:show": app$0.AlertCard[] | null;
             "capture:open": void;
             "items:changed": void;
             "list:focus": string;

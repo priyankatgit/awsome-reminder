@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -27,7 +28,30 @@ const (
 	listWindowName = "list"
 )
 
-// List window background before the page paints, matching --bg in
+// Alert window geometry in DIPs. It sits at the bottom-right of the primary
+// screen's work area and its height follows its cards (ResizeAlerts).
+const (
+	alertWidth         = 380
+	alertInitialHeight = 160
+	alertMinHeight     = 64
+	alertMaxHeight     = 420
+	alertInset         = 16
+	alertWindowName    = "alert"
+	// alertReadyFallback shows a new alert window even if its page never
+	// reports a height.
+	alertReadyFallback = 3 * time.Second
+)
+
+// Settings window geometry in DIPs.
+const (
+	settingsWidth      = 520
+	settingsHeight     = 560
+	settingsMinWidth   = 440
+	settingsMinHeight  = 400
+	settingsWindowName = "settings"
+)
+
+// Framed window background before the page paints, matching --bg in
 // frontend/src/tokens.css so opening it doesn't flash white.
 var (
 	listBgDark  = application.NewRGB(0x0F, 0x17, 0x2A)
@@ -41,7 +65,134 @@ type wailsWindows struct {
 	size      *heightKeeper
 	list      *onDemand[*application.WebviewWindow]
 	listFocus focusSlot
+	settings  *onDemand[*application.WebviewWindow]
+	alert     *alertPopup
+
+	// Set by Run before the app starts.
+	onAlertsClosed   func() // the user closed the alert window (Alt+F4)
+	onSettingsClosed func() // the settings window closed
 }
+
+// popup is the alert window as alertPopup drives it.
+type popup interface {
+	place(height int) // size it and move it to the bottom-right corner
+	show()            // show without taking keyboard focus
+	hide()
+}
+
+// alertPopup keeps at most one alert window. It is created on the first
+// alert and shown once its page has rendered and reported its height (so
+// it never appears empty), then hidden, not destroyed, when the queue
+// empties, and reused for the next alert. Calls arrive on binding and
+// scheduler goroutines; mu orders them. Nothing on the main thread takes mu.
+type alertPopup struct {
+	mu     sync.Mutex
+	create func() popup
+	after  func(time.Duration, func()) // time.AfterFunc
+
+	cur     popup
+	ready   bool // the page reported its height (or the fallback fired)
+	want    bool // there are alerts to show
+	visible bool
+	height  int
+}
+
+// Show asks for the window to be visible, creating it if needed.
+func (a *alertPopup) Show() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.want = true
+	if a.cur == nil {
+		p := a.create()
+		a.cur, a.ready, a.visible, a.height = p, false, false, alertInitialHeight
+		a.after(alertReadyFallback, func() { a.fallback(p) })
+		return
+	}
+	a.showLocked()
+}
+
+// showLocked places and shows the window if it is wanted, ready and hidden.
+// It re-places on every show: the work area may have changed meanwhile.
+func (a *alertPopup) showLocked() {
+	if a.cur == nil || !a.ready || !a.want || a.visible {
+		return
+	}
+	a.cur.place(a.height)
+	a.cur.show()
+	a.visible = true
+}
+
+// Resize records the page's content height; the first call marks the page
+// ready.
+func (a *alertPopup) Resize(height int) {
+	height = min(max(height, alertMinHeight), alertMaxHeight)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cur == nil {
+		return
+	}
+	a.ready = true
+	if height != a.height {
+		a.height = height
+		if a.visible {
+			a.cur.place(height)
+		}
+	}
+	a.showLocked()
+}
+
+func (a *alertPopup) fallback(p popup) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cur != p || a.ready {
+		return
+	}
+	a.ready = true
+	a.showLocked()
+}
+
+// Dismiss hides the window.
+func (a *alertPopup) Dismiss() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.want = false
+	if a.cur != nil && a.visible {
+		a.cur.hide()
+		a.visible = false
+	}
+}
+
+// Closed forgets p after its window was destroyed.
+func (a *alertPopup) Closed(p popup) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cur == p {
+		a.cur, a.ready, a.visible = nil, false, false
+	}
+}
+
+// wailsPopup is the real alert window.
+type wailsPopup struct {
+	app *application.App
+	win *application.WebviewWindow
+}
+
+func (p *wailsPopup) place(height int) {
+	s := p.app.Screen.GetPrimary()
+	if s == nil {
+		return
+	}
+	wa := s.WorkArea
+	p.win.SetBounds(application.Rect{
+		X:      wa.X + wa.Width - alertWidth - alertInset,
+		Y:      wa.Y + wa.Height - height - alertInset,
+		Width:  alertWidth,
+		Height: height,
+	})
+}
+
+func (p *wailsPopup) show() { showNoActivate(p.win) }
+func (p *wailsPopup) hide() { p.win.Hide() }
 
 // onDemand holds a window that is created when first needed and forgotten
 // when it closes, so the next Get creates a fresh one. Wails destroys a
@@ -155,17 +306,26 @@ func newWindows(app *application.App) *wailsWindows {
 		w.HideCapture()
 	})
 	w.list = &onDemand[*application.WebviewWindow]{create: w.newList}
+	w.settings = &onDemand[*application.WebviewWindow]{create: w.newSettings}
+	w.alert = &alertPopup{
+		create: w.newAlert,
+		after:  func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+	}
 	return w
+}
+
+// pageBackground is the framed windows' background colour for the OS theme.
+func (w *wailsWindows) pageBackground() application.RGBA {
+	if w.app.Env.IsDarkMode() {
+		return listBgDark
+	}
+	return listBgLight
 }
 
 // newList creates and shows the list window. It is destroyed when closed;
 // a hook (run synchronously, before Wails' own destroy listener) drops our
 // reference so the next OpenList builds a new one.
 func (w *wailsWindows) newList() *application.WebviewWindow {
-	bg := listBgLight
-	if w.app.Env.IsDarkMode() {
-		bg = listBgDark
-	}
 	win := w.app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             listWindowName,
 		Title:            appName,
@@ -175,13 +335,73 @@ func (w *wailsWindows) newList() *application.WebviewWindow {
 		MinHeight:        listMinHeight,
 		URL:              "/#list",
 		InitialPosition:  application.WindowCentered,
-		BackgroundColour: bg,
+		BackgroundColour: w.pageBackground(),
 	})
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		w.list.Drop(win)
 		log.Printf("list: closed")
 	})
 	return win
+}
+
+// newSettings creates and shows the settings window; like the list window it
+// is destroyed when closed.
+func (w *wailsWindows) newSettings() *application.WebviewWindow {
+	win := w.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             settingsWindowName,
+		Title:            appName + " Settings",
+		Width:            settingsWidth,
+		Height:           settingsHeight,
+		MinWidth:         settingsMinWidth,
+		MinHeight:        settingsMinHeight,
+		URL:              "/#settings",
+		InitialPosition:  application.WindowCentered,
+		BackgroundColour: w.pageBackground(),
+	})
+	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
+		w.settings.Drop(win)
+		log.Printf("settings: closed")
+		if w.onSettingsClosed != nil {
+			w.onSettingsClosed()
+		}
+	})
+	return win
+}
+
+// newAlert creates the hidden alert window: frameless, always on top, off
+// the taskbar, translucent like the capture box.
+func (w *wailsWindows) newAlert() popup {
+	win := w.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             alertWindowName,
+		Title:            appName,
+		Width:            alertWidth,
+		Height:           alertInitialHeight,
+		URL:              "/#alert",
+		Hidden:           true,
+		Frameless:        true,
+		AlwaysOnTop:      true,
+		DisableResize:    true,
+		BackgroundType:   application.BackgroundTypeTranslucent,
+		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
+		Windows: application.WindowsWindow{
+			BackdropType:    application.Acrylic,
+			HiddenOnTaskbar: true,
+		},
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropTranslucent,
+		},
+		DefaultContextMenuDisabled: true,
+	})
+	p := &wailsPopup{app: w.app, win: win}
+	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
+		w.alert.Closed(p)
+		log.Printf("alert: closed")
+		if w.onAlertsClosed != nil {
+			w.onAlertsClosed()
+		}
+	})
+	log.Printf("alert: created")
+	return p
 }
 
 // ShowCapture centers the capture box on the screen under the mouse cursor
@@ -236,14 +456,31 @@ func (w *wailsWindows) TakePendingFocus() string {
 	return w.listFocus.Take()
 }
 
-// OpenSettings shows the settings window.
+// OpenSettings shows and focuses the settings window, creating it if needed.
 func (w *wailsWindows) OpenSettings() {
-	// TODO(task-11): build the settings window.
-	log.Printf("open settings: not implemented yet")
+	win, created := w.settings.Get()
+	if !created {
+		win.UnMinimise()
+		win.Show()
+	}
+	win.Focus()
+	log.Printf("settings: opened (created=%v)", created)
+}
+
+// ShowAlerts shows the alert window without taking focus, creating it on
+// the first alert.
+func (w *wailsWindows) ShowAlerts() {
+	w.alert.Show()
+}
+
+// ResizeAlerts fits the alert window to its cards (clamped to 420 DIP; the
+// page scrolls beyond that), keeping it in the bottom-right corner.
+func (w *wailsWindows) ResizeAlerts(height int) {
+	w.alert.Resize(height)
 }
 
 // DismissAlerts hides the alert window.
 func (w *wailsWindows) DismissAlerts() {
-	// TODO(task-11): build the alert window.
-	log.Printf("dismiss alerts: not implemented yet")
+	w.alert.Dismiss()
+	log.Printf("alert: hidden")
 }

@@ -31,9 +31,14 @@ func (f *fakeReg) reg(c hotkey.Combo, _ func()) (func(), error) {
 }
 
 type fakeWindows struct {
+	mu            sync.Mutex
 	shown, hidden int
 	opened        []string
 	pending       string
+	alertsShown   int // ShowAlerts calls
+	alertsHidden  int // DismissAlerts calls
+	alertHeights  []int
+	settings      int
 }
 
 func (w *fakeWindows) ShowCapture()       { w.shown++ }
@@ -45,16 +50,33 @@ func (w *fakeWindows) TakePendingFocus() string {
 	w.pending = ""
 	return id
 }
-func (w *fakeWindows) OpenSettings()  {}
-func (w *fakeWindows) DismissAlerts() {}
+func (w *fakeWindows) OpenSettings() { w.settings++ }
+func (w *fakeWindows) ShowAlerts() {
+	w.mu.Lock()
+	w.alertsShown++
+	w.mu.Unlock()
+}
+func (w *fakeWindows) ResizeAlerts(h int) { w.alertHeights = append(w.alertHeights, h) }
+func (w *fakeWindows) DismissAlerts() {
+	w.mu.Lock()
+	w.alertsHidden++
+	w.mu.Unlock()
+}
 
 type harness struct {
 	svc       *Service
 	st        *store.Store
 	reg       *fakeReg
+	win       *fakeWindows
 	autostart []bool
 	exports   int
 	statuses  int
+	emitted   []emitted
+}
+
+type emitted struct {
+	name string
+	data any
 }
 
 func newHarness(t *testing.T) *harness {
@@ -64,7 +86,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	h := &harness{st: st, reg: &fakeReg{fail: map[string]error{}}}
+	h := &harness{st: st, reg: &fakeReg{fail: map[string]error{}}, win: &fakeWindows{}}
 	c := core.New(st, time.Now, time.UTC)
 	hk := hotkey.NewManager(h.reg.reg, func() {})
 	if err := hk.Set(settings.Defaults(runtime.GOOS).Hotkey); err != nil {
@@ -72,11 +94,12 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.svc = NewService(Deps{
 		Core:          c,
-		Windows:       &fakeWindows{},
+		Windows:       h.win,
 		Hotkey:        hk,
 		Autostart:     func(on bool) error { h.autostart = append(h.autostart, on); return nil },
 		Export:        func() { h.exports++ },
 		StatusChanged: func() { h.statuses++ },
+		Emit:          func(name string, data any) { h.emitted = append(h.emitted, emitted{name, data}) },
 	})
 	return h
 }

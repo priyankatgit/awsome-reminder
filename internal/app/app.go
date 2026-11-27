@@ -26,6 +26,7 @@ const (
 	appName        = "Awesome Reminder"
 	captureFlag    = "--capture"
 	listFlag       = "--list"
+	settingsFlag   = "--settings"
 	exportDebounce = time.Second
 )
 
@@ -77,6 +78,11 @@ func Run(opts Options) error {
 					go win.ShowCapture()
 					return
 				}
+				if slices.Contains(d.Args, settingsFlag) {
+					log.Printf("second instance: %s", settingsFlag)
+					go win.OpenSettings()
+					return
+				}
 				// --list, or a plain second launch (e.g. the Start menu entry).
 				log.Printf("second instance: open list")
 				go win.OpenList("")
@@ -93,12 +99,12 @@ func Run(opts Options) error {
 		}
 		return s.LeadTimes
 	}, func(alerts []scheduler.Alert) {
-		// Runs inline in the scheduler loop: never block it.
+		// Runs inline in the scheduler loop: never block it. The scheduler
+		// only fires after Start (ApplicationStarted), when svc is set.
 		for _, a := range alerts {
 			log.Printf("alert: %s %q due %s missed=%v", a.Key, a.Text, a.DueAt.Local().Format(time.DateTime), a.Missed)
 		}
-		// TODO(task-11): show the alert window.
-		go emit(EventAlertsShow, alerts)
+		go svc.showAlerts(alerts)
 	}, time.Now)
 	exp := export.NewExporter(func() string {
 		s, err := c.Settings()
@@ -126,8 +132,13 @@ func Run(opts Options) error {
 		},
 		Export:        exp.Trigger,
 		StatusChanged: func() { tray.SetTooltip(tooltip(svc.Status())) },
+		Emit:          func(name string, data any) { emit(name, data) },
 	})
 	app.RegisterService(application.NewService(svc))
+	win.onAlertsClosed = svc.alertsClosed
+	// A settings window closed while recording a hotkey must not leave the
+	// global hotkey released.
+	win.onSettingsClosed = func() { svc.SetHotkeyRecording(false) }
 
 	c.OnChange(func() {
 		sched.Kick()
@@ -158,6 +169,8 @@ func Run(opts Options) error {
 			go win.ShowCapture()
 		case slices.Contains(args, listFlag):
 			go win.OpenList("")
+		case slices.Contains(args, settingsFlag):
+			go win.OpenSettings()
 		}
 	})
 

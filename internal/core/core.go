@@ -322,6 +322,9 @@ func (c *Core) View() (View, error) {
 	return buildView(open, done, c.now()), nil
 }
 
+// Item returns the stored item with the given ID.
+func (c *Core) Item(id string) (model.Item, error) { return c.st.Get(id) }
+
 // Settings returns the saved settings (defaults if none saved).
 func (c *Core) Settings() (settings.Settings, error) {
 	return c.st.LoadSettings(runtime.GOOS)

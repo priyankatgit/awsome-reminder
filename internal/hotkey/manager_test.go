@@ -199,3 +199,64 @@ func TestPumpPressesCoalescesWhileBusy(t *testing.T) {
 		t.Fatalf("handler ran %d times, want 2", n.Load())
 	}
 }
+
+func TestHotkeyManagerSuspendResume(t *testing.T) {
+	f := newFakeReg()
+	m := NewManager(f.reg, func() {})
+	if err := m.Set("Ctrl+Shift+Space"); err != nil {
+		t.Fatal(err)
+	}
+	m.Suspend()
+	if f.unregCount["Ctrl+Shift+Space"] != 1 {
+		t.Fatalf("Suspend did not release the hotkey: %v", f.unregCount)
+	}
+	m.Suspend() // idempotent
+	if f.unregCount["Ctrl+Shift+Space"] != 1 {
+		t.Fatalf("second Suspend released again: %v", f.unregCount)
+	}
+	if err := m.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.registered) != 2 || f.registered[1] != "Ctrl+Shift+Space" {
+		t.Fatalf("Resume did not re-register: %v", f.registered)
+	}
+	if err := m.Resume(); err != nil || len(f.registered) != 2 { // not suspended: no-op
+		t.Fatalf("Resume when not suspended: err=%v registered=%v", err, f.registered)
+	}
+}
+
+func TestHotkeyManagerSetWhileSuspended(t *testing.T) {
+	f := newFakeReg()
+	m := NewManager(f.reg, func() {})
+	_ = m.Set("Ctrl+Shift+Space")
+	m.Suspend()
+	if err := m.Set("Ctrl+Alt+K"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Ctrl+Shift+Space", "Ctrl+Alt+K"}; len(f.registered) != 2 || f.registered[1] != want[1] {
+		t.Fatalf("registered %v, want %v (Set ends the suspension)", f.registered, want)
+	}
+	if f.unregCount["Ctrl+Shift+Space"] != 1 {
+		t.Fatalf("old released %d times, want 1", f.unregCount["Ctrl+Shift+Space"])
+	}
+}
+
+func TestHotkeyManagerResumeFailureReported(t *testing.T) {
+	f := newFakeReg()
+	m := NewManager(f.reg, func() {})
+	_ = m.Set("Ctrl+Shift+Space")
+	m.Suspend()
+	boom := errors.New("taken meanwhile")
+	f.fail["Ctrl+Shift+Space"] = boom
+	if err := m.Resume(); !errors.Is(err, boom) || !errors.Is(m.Err(), boom) {
+		t.Fatalf("Resume err=%v Err()=%v", err, m.Err())
+	}
+	delete(f.fail, "Ctrl+Shift+Space")
+	// still suspended after the failure: a retry registers it
+	if err := m.Resume(); err != nil || m.Err() != nil {
+		t.Fatalf("retry: err=%v Err()=%v", err, m.Err())
+	}
+}

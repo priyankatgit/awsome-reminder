@@ -21,6 +21,11 @@ type Windows interface {
 	OpenList(focusItemID string)
 	TakePendingFocus() string
 	OpenSettings()
+	// ShowAlerts creates or reuses the alert window and shows it without
+	// taking keyboard focus.
+	ShowAlerts()
+	ResizeAlerts(height int)
+	// DismissAlerts hides the alert window.
 	DismissAlerts()
 }
 
@@ -28,9 +33,12 @@ type Windows interface {
 type Hotkey interface {
 	Set(combo string) error
 	Err() error
+	Suspend()
+	Resume() error
 }
 
-// Deps are the Service's collaborators. Export and StatusChanged may be nil.
+// Deps are the Service's collaborators. Export, StatusChanged and Emit may
+// be nil.
 type Deps struct {
 	Core      *core.Core
 	Windows   Windows
@@ -40,6 +48,8 @@ type Deps struct {
 	// StatusChanged is called after Status() may have changed (e.g. the
 	// hotkey registration failed or recovered).
 	StatusChanged func()
+	// Emit sends an event to the frontend (EventAlertsShow).
+	Emit func(name string, data any)
 }
 
 // Status is app health shown in the tray tooltip and the settings window.
@@ -49,7 +59,8 @@ type Status struct {
 
 // Service is bound to the frontend; its exported methods become bindings.
 type Service struct {
-	d Deps
+	d      Deps
+	alerts alertQueue
 }
 
 // NewService creates a Service.
@@ -74,10 +85,14 @@ func (s *Service) EditText(id string) (string, error) { return s.d.Core.EditText
 // Update re-parses input for an existing item.
 func (s *Service) Update(id, input string) (model.Item, error) { return s.d.Core.Update(id, input) }
 
-// Done completes an item (a recurring one advances instead).
+// Done completes an item (a recurring one advances instead) and removes its
+// alert cards.
 func (s *Service) Done(id string) error {
-	_, err := s.d.Core.Done(id)
-	return err
+	if _, err := s.d.Core.Done(id); err != nil {
+		return err
+	}
+	s.dropItemAlerts(id)
+	return nil
 }
 
 // Reopen marks a done item open again.
@@ -86,11 +101,24 @@ func (s *Service) Reopen(id string) error { return s.d.Core.Reopen(id) }
 // StopRepeating clears an item's recurrence.
 func (s *Service) StopRepeating(id string) error { return s.d.Core.StopRepeating(id) }
 
-// Snooze postpones a reminder: "10m", "1h" or "tomorrow".
-func (s *Service) Snooze(id, preset string) error { return s.d.Core.Snooze(id, preset) }
+// Snooze postpones a reminder: "10m", "1h" or "tomorrow". Its alert cards
+// are removed.
+func (s *Service) Snooze(id, preset string) error {
+	if err := s.d.Core.Snooze(id, preset); err != nil {
+		return err
+	}
+	s.dropItemAlerts(id)
+	return nil
+}
 
-// Delete tombstones an item.
-func (s *Service) Delete(id string) error { return s.d.Core.Delete(id) }
+// Delete tombstones an item and removes its alert cards.
+func (s *Service) Delete(id string) error {
+	if err := s.d.Core.Delete(id); err != nil {
+		return err
+	}
+	s.dropItemAlerts(id)
+	return nil
+}
 
 // View returns the list-window data.
 func (s *Service) View() (core.View, error) { return s.d.Core.View() }
@@ -156,5 +184,18 @@ func (s *Service) TakePendingFocus() string { return s.d.Windows.TakePendingFocu
 // OpenSettings shows the settings window.
 func (s *Service) OpenSettings() { s.d.Windows.OpenSettings() }
 
-// DismissAlerts hides the alert window.
-func (s *Service) DismissAlerts() { s.d.Windows.DismissAlerts() }
+// SetHotkeyRecording releases the global hotkey while the settings window
+// records a new combo (so pressing the current combo reaches the recorder
+// instead of opening the capture box) and registers it again afterwards.
+func (s *Service) SetHotkeyRecording(on bool) {
+	if on {
+		s.d.Hotkey.Suspend()
+		return
+	}
+	if err := s.d.Hotkey.Resume(); err != nil {
+		log.Printf("hotkey resume: %v", err)
+	}
+	if s.d.StatusChanged != nil {
+		s.d.StatusChanged()
+	}
+}
