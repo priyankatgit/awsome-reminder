@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A awesome-reminder application
+Name=Awesome Reminder
+Comment=Hotkey quick-capture for to-dos and reminders
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/awesome-reminder.exe %u
+Exec=/usr/local/bin/awesome-reminder %u
 Terminal=false
 Type=Application
-Icon=awesome-reminder.exe
+Icon=awesome-reminder
 Categories=Utility;
-StartupWMClass=awesome-reminder.exe
+StartupWMClass=awesome-reminder
 
  

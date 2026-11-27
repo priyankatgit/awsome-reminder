@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "awesome-reminder.exe"
+name: "awesome-reminder"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A awesome-reminder application"
+description: "Hotkey quick-capture for to-dos and reminders"
 vendor: "My Company"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/awesome-reminder.exe"
-    dst: "/usr/local/bin/awesome-reminder.exe"
+  - src: "./bin/awesome-reminder"
+    dst: "/usr/local/bin/awesome-reminder"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/awesome-reminder.exe.png"
-  - src: "./build/linux/awesome-reminder.exe.desktop"
-    dst: "/usr/share/applications/awesome-reminder.exe.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/awesome-reminder.png"
+  - src: "./build/linux/awesome-reminder.desktop"
+    dst: "/usr/share/applications/awesome-reminder.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

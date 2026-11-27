@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"runtime"
 	"slices"
 	"time"
 
@@ -32,9 +33,26 @@ const (
 
 // Options configure Run.
 type Options struct {
-	Assets   fs.FS  // built frontend (frontend/dist)
-	TrayIcon []byte // PNG
-	Logger   *slog.Logger
+	Assets fs.FS // built frontend (frontend/dist)
+	// Tray icons (PNG). Light is the dark glyph for light taskbars, Dark is
+	// the white glyph for dark ones, Template the black-on-transparent macOS
+	// template image.
+	TrayIconLight, TrayIconDark, TrayIconTemplate []byte
+	Logger                                        *slog.Logger
+}
+
+// setTrayIcons picks the tray image for the platform: a template image on
+// macOS, a light/dark pair on Windows, and the white glyph on Linux (panels
+// are dark there and the status-notifier API has no dark-mode variant).
+func setTrayIcons(tray *application.SystemTray, o Options) {
+	switch runtime.GOOS {
+	case "darwin":
+		tray.SetTemplateIcon(o.TrayIconTemplate)
+	case "windows":
+		tray.SetIcon(o.TrayIconLight).SetDarkModeIcon(o.TrayIconDark)
+	default:
+		tray.SetIcon(o.TrayIconDark)
+	}
 }
 
 // Run opens the store, wires core, scheduler, exporter and hotkey to the
@@ -147,7 +165,7 @@ func Run(opts Options) error {
 	})
 
 	tray = app.SystemTray.New()
-	tray.SetIcon(opts.TrayIcon)
+	setTrayIcons(tray, opts)
 	tray.SetTooltip(appName)
 	tray.SetMenu(trayMenu(app, win))
 	tray.OnClick(func() { go win.OpenList("") })

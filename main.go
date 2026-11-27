@@ -18,14 +18,19 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// Tray icon: reuse the template's app icon for now.
-//
-//go:embed build/appicon.png
-var trayIcon []byte
+// Tray icons (rasterized from build/tray/*.svg).
+var (
+	//go:embed build/tray/tray-light.png
+	trayIconLight []byte
+	//go:embed build/tray/tray-dark.png
+	trayIconDark []byte
+	//go:embed build/tray/tray-template.png
+	trayIconTemplate []byte
+)
 
 func main() {
 	logger := setupLogging()
-	if err := app.Run(app.Options{Assets: assets, TrayIcon: trayIcon, Logger: logger}); err != nil {
+	if err := app.Run(app.Options{Assets: assets, TrayIconLight: trayIconLight, TrayIconDark: trayIconDark, TrayIconTemplate: trayIconTemplate, Logger: logger}); err != nil {
 		log.Fatal(err)
 	}
 }
