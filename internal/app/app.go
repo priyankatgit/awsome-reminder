@@ -86,8 +86,18 @@ func Run(opts Options) error {
 			// Tray-only app: keep running with no windows.
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
-		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true},
-		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
+		Windows: application.WindowsOptions{
+			DisableQuitOnLastWindowClosed: true,
+			// WebView2 memory (Task 12b, measured on the idle app with the
+			// capture window pre-created): --disable-gpu replaces the GPU
+			// process's hardware compositor with software compositing
+			// (64 -> 12 MB private), and --in-process-gpu folds what is left
+			// into the browser process (one process fewer, about 8 MB less).
+			// The windows are small and mostly static, rendering looked the
+			// same, and the Acrylic backdrop is drawn by DWM, not Chromium.
+			AdditionalBrowserArgs: []string{"--disable-gpu", "--in-process-gpu"},
+		},
+		Linux: application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "dev.awesome-reminder.app",
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
