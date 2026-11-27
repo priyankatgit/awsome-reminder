@@ -83,10 +83,19 @@ func (s *store) Set(v string) error {
 }
 
 func (s *store) Delete() error {
-	// A failing or absent keychain holds nothing we can reach, so its errors
-	// (including not-found) are not fatal here.
-	_ = s.kc.Delete(service, account)
-	return s.fileDelete()
+	kcErr := s.kc.Delete(service, account)
+	if errors.Is(kcErr, keyring.ErrNotFound) {
+		kcErr = nil
+	}
+	fileErr := s.fileDelete() // always runs
+	if kcErr != nil {
+		// With no usable keychain every call errors; only report when the
+		// entry demonstrably survives.
+		if v, err := s.kc.Get(service, account); err == nil && v != "" {
+			return errors.Join(errors.New("couldn't remove the connection string from the system keychain"), fileErr)
+		}
+	}
+	return fileErr
 }
 
 func (s *store) Kind() string {

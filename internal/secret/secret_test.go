@@ -146,7 +146,9 @@ func TestDeleteClearsEverything(t *testing.T) {
 	// keychain path
 	meta, kc := fakeMeta{}, &fakeKeychain{}
 	s := newStore(t.TempDir(), meta, kc)
-	_ = s.Set(testURI)
+	if err := s.Set(testURI); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Delete(); err != nil {
 		t.Fatal(err)
 	}
@@ -204,3 +206,46 @@ func TestSetClearsStaleKeychainEntry(t *testing.T) {
 type failSet struct{ *fakeKeychain }
 
 func (f *failSet) Set(string, string, string) error { return dbusErr }
+
+type failDelete struct{ *fakeKeychain }
+
+func (f *failDelete) Delete(string, string) error { return errors.New("keychain is locked") }
+
+func TestDeleteReportsSurvivingKeychainEntry(t *testing.T) {
+	kc := &fakeKeychain{val: testURI, set: true}
+	dir, meta := t.TempDir(), fakeMeta{}
+	s := &store{dataDir: dir, meta: meta, kc: &failDelete{kc}}
+	if err := s.fileSet(testURI); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Delete()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "s3cretPassw0rd") {
+		t.Fatal("error leaks URI")
+	}
+	if _, ok := meta["sync_uri_enc"]; ok {
+		t.Fatal("ciphertext remains")
+	}
+	if _, e := os.Stat(filepath.Join(dir, "sync.key")); !os.IsNotExist(e) {
+		t.Fatal("key file remains")
+	}
+}
+
+func TestDeleteOnUnavailableKeychainSucceeds(t *testing.T) {
+	dir, meta := t.TempDir(), fakeMeta{}
+	s := &store{dataDir: dir, meta: meta, kc: &fakeKeychain{err: dbusErr}}
+	if err := s.fileSet(testURI); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := meta["sync_uri_enc"]; ok {
+		t.Fatal("ciphertext remains")
+	}
+	if _, e := os.Stat(filepath.Join(dir, "sync.key")); !os.IsNotExist(e) {
+		t.Fatal("key file remains")
+	}
+}
