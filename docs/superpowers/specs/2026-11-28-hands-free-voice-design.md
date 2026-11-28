@@ -148,7 +148,7 @@ Every dictation becomes a session that can hold several tasks: wake word, mic bu
 | Mode | Ends after | Also ends on |
 |---|---|---|
 | Focused (hotkey box, mic button, `Ctrl+M`) | 2 s of silence after speech (Phase 1.5 used 1.5 s; segments are already transcribed by then, so the result arrives sooner overall). After a boundary phrase it waits up to 8 s for the next task. No speech at all for 8 s: "Didn't catch that", as today. | `Ctrl+M` or the stop button; Enter; Esc (cancel); "save all" / "cancel"; window blur (cancel, as today); 5 min total (stops and keeps the tasks, note "Stopped after 5 minutes") |
-| Wake (box not focused) | 15 s of silence after speech. No speech for 6 s after the wake: hides quietly. | "save all" / "cancel"; 5 min total; the user focuses the box (switches to focused rules) |
+| Wake (box not focused) | 15 s after the last speech that produced text. No text for 6 s after the wake: hides quietly. 60 s unengaged: hides quietly, draft kept (see "Left to the builder"). | "save all" / "cancel"; the user focuses the box (switches to focused rules) |
 
 **Esc and blur never silently discard finished tasks:**
 - **Esc while listening:** stops listening. Only the audio not yet cut into a segment is dropped. Queued segments are still transcribed, and the rows and input stay for review.
@@ -170,7 +170,7 @@ Matching: case-insensitive, ignoring `.,!?;:"'` and repeated spaces, whole words
 |---|---|---|
 | boundary | "new task", "create new task", "create a new task", "next task", "add another task" | Anywhere in a segment. Text before it goes to the current task and text after it starts the next one. Several per segment are fine. Leftover punctuation or "and"/"okay" at the edges of a piece is trimmed. |
 | scratch | "scratch that", "delete that" | The whole segment, or its last sentence (after whisper's `.`, `?` or `!`) |
-| save | "save all", "save them", "save them all", "save tasks", "that's all", "that's it" | The whole segment, or its last sentence |
+| save | "save all", "save them", "save them all", "save tasks", "that's all", "that's it" (an unengaged wake box: only "save all", "save tasks", "save them all") | The whole segment, or its last sentence |
 | cancel | "cancel", "cancel all", "never mind" | The whole segment, or its last sentence |
 
 Restricting the last three to a whole segment or a final sentence means a task such as "remind me to save all the logs" or "cancel the dentist appointment" stays text. A boundary phrase inside a task ("new task template") is the accepted cost. The README tells the user to type such a task.
@@ -272,6 +272,8 @@ The spike also confirms: the program's name and arguments, its stdout format, wh
 
 - Exact pixel layout of the review list and the moved listening indicators, within the design guide and the sketch above.
 - The tuning constants (700 ms segment pause, 2 s / 8 s / 15 s / 6 s end rules, 3 s wake cooldown, thresholds), if testing shows better values. Record the changes in this document.
+  - **Builder calls (final review):** while a wake session is unengaged (key guard armed, before `focusGained()`): (a) the 6 s quiet rule and the 15 s silence rule count only segments that produced text after transcription, not raw mic level (the 6 s rule from the session start, the 15 s rule from the last segment with text; both wait for a segment still in flight); (b) an **unengaged cap of 60 s** (`WAKE_UNENGAGED_MS`, end reason `wake-limit`) ends the session quietly, drops the open audio, keeps the draft and hides; commands in segments still landing are ignored; (c) only "save all", "save tasks" and "save them all" save ("that's it", "that's all", "save them" stay text; the cancel phrases stay). Once engaged, the rules and phrases above apply unchanged. Matching also ignores curly quotes (’ ‘ “ ”) and the ellipsis character (…).
+  - **Windows helper:** after **10 s of only exact-zero audio** (`ZeroWatch`, `internal/wakehelper/gate.go`) it prints `wake helper: microphone: the microphone delivers no sound (blocked in Settings › Privacy & security › Microphone, or muted)` and exits 3, so the supervisor's three-exits rule reaches `error`; on Windows a microphone error in that state carries dictation's mic hint ("Microphone access is blocked. On Windows: Settings › Privacy & security › Microphone › let desktop apps use it."). At every helper start `wake_keywords.txt` is rewritten when it differs from the embedded line, so a retune reaches existing installs.
 - How the helper's stdout is parsed, and how its stderr is turned into a user-facing error.
 - The macOS "show without focus" mechanism.
 - Whether the session controller lives in `voice.ts` or a new `voice-session.ts`.

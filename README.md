@@ -113,6 +113,8 @@ Dictation in the capture box (hands-free or from the mic button) can hold severa
 
 - **Review list.** `Enter` saves all tasks (the one in the input too). `Esc` with finished tasks asks first; `Esc` again discards them. After a spoken save or cancel the box shows "Saved 3 tasks" or "Discarded 3 tasks" with **Undo** for 5 seconds. After a save, Undo deletes what was saved and puts the tasks back in the list; after a cancel, Undo brings back the discarded tasks and the text that was in the input. In the list, `Enter` on a row edits it, and `Delete` or the **×** removes it.
 - **Silence keeps your words.** When the box hides because nothing more was said, the tasks stay as a draft and the next time you open the box it says "2 unsaved tasks from voice". A box opened by the wake word closes after about 15 seconds of silence once you have said something, or when you say "save all".
+- **Before you click the box or press the hotkey, only an explicit save saves.** In a box the wake word opened, "save all", "save tasks" and "save them all" save; "that's it", "that's all" and "save them" stay text (people end ordinary sentences that way), and "cancel" still cancels. The silence rules count only speech that turned into words, and a wake-opened box you never touch stops listening after a minute, keeping what it heard as the draft, so a false wake during a call ends by itself without saving anything. Once you click or press the hotkey, every command in the table works.
+- **Switching the wake word off** while a wake-opened box is listening (and untouched) closes it and releases the microphone; what it heard stays as the draft.
 - **"Hey Awesome" while the box is open is ignored.**
 
 **Privacy.** The wake word is off by default and nothing is downloaded until you agree. While it is on, the microphone stays open and the OS shows its microphone indicator the whole time; switching it off, or quitting the app, releases the microphone. The listener works on audio in memory only: nothing is stored and nothing is sent anywhere. Only after it hears "Hey Awesome" does the box start the normal local dictation (whisper.cpp) described above.
@@ -134,6 +136,7 @@ Dictation in the capture box (hands-free or from the mic button) can hold severa
 **Known limits.**
 
 - Words said in the same breath as "Hey Awesome" may be cut off. Pause for the chime.
+- On Windows, a microphone blocked in privacy settings (or muted) delivers silence rather than an error. The listener notices after 10 seconds of exact silence and, after three tries, Settings › Voice shows the error with where to allow the microphone and **Try again**.
 - After you plug or unplug a headset or change the default microphone, switch the wake word off and on again. (Sleep and resume are handled: the listener restarts by itself.)
 - The wake word is English only and has been tuned with synthetic speech so far. Missed and false wakes with real voices are not measured yet; see the [checklist](docs/manual-test-checklist.md).
 - Where the system gives the wake-opened box keyboard focus anyway (Wayland), typing is ignored until you click the box or press the hotkey, so stray keys cannot land in it.
