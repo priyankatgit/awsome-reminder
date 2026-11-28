@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"awesome-reminder/internal/paths"
 )
@@ -61,5 +62,7 @@ func RunSetup(o SetupOptions) error {
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: bg,
 	})
+	// Closing the window mid-move rolls the copy back before the app exits.
+	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) { svc.stopMove() })
 	return app.Run()
 }

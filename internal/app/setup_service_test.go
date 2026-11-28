@@ -331,3 +331,76 @@ func TestRetryStillUnavailableStays(t *testing.T) {
 		t.Fatalf("restart=%v quits=%d info=%+v", RestartRequested(), fx.quits, info)
 	}
 }
+
+func TestAbandonMoveRefusedWhileMoving(t *testing.T) {
+	fx := newSetupFx(t, paths.StateMovePending)
+	fx.svc.res.Loc = paths.Location{DataDir: fx.svc.res.Root, PendingMove: t.TempDir()}
+	fx.svc.move = func(ctx context.Context, _, _ paths.Layout, _ func(datamove.Progress)) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if err := fx.svc.RunPendingMove(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.svc.AbandonMove(); err == nil || err.Error() != errMoveRunning {
+		t.Fatalf("err = %v", err)
+	}
+	if RestartRequested() || fx.quits != 0 {
+		t.Fatalf("restart=%v quits=%d", RestartRequested(), fx.quits)
+	}
+	fx.svc.CancelMove()
+	fx.waitDone(t)
+}
+
+func TestAbandonMoveRefusedOutsideMoveState(t *testing.T) {
+	fx := newSetupFx(t, paths.StateUnavailable)
+	std, _ := paths.StandardRoot()
+	if err := paths.SaveLocation(paths.Location{DataDir: std, PendingMove: "keep"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.svc.AbandonMove(); err == nil {
+		t.Fatal("want error")
+	}
+	loc, _, _ := paths.LoadLocation()
+	if loc.PendingMove != "keep" || RestartRequested() || fx.quits != 0 {
+		t.Fatalf("loc=%+v restart=%v quits=%d", loc, RestartRequested(), fx.quits)
+	}
+}
+
+func TestQuitWaitsForMoveRollback(t *testing.T) {
+	fx := newSetupFx(t, paths.StateFirstRunExisting)
+	rolledBack := false
+	fx.svc.move = func(ctx context.Context, _, _ paths.Layout, _ func(datamove.Progress)) error {
+		<-ctx.Done()
+		time.Sleep(100 * time.Millisecond) // rollback
+		rolledBack = true
+		return ctx.Err()
+	}
+	fx.svc.quit = func() {
+		if !rolledBack {
+			t.Error("quit before the move rolled back")
+		}
+		fx.quits++
+	}
+	if err := fx.svc.Choose("other", t.TempDir(), false); err != nil {
+		t.Fatal(err)
+	}
+	fx.svc.Quit()
+	if fx.quits != 1 || RestartRequested() {
+		t.Fatalf("quits=%d restart=%v", fx.quits, RestartRequested())
+	}
+}
+
+func TestSetupConcurrentRetryAndInfo(t *testing.T) {
+	fx := newSetupFx(t, paths.StateUnavailable)
+	fx.svc.resolve = func() paths.Resolution {
+		return paths.Resolution{State: paths.StateUnavailable, Reason: "x"}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); fx.svc.Retry() }()
+		go func() { defer wg.Done(); fx.svc.Info(); _ = fx.svc.Choose("other", "", false) }()
+	}
+	wg.Wait()
+}

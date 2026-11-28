@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"awesome-reminder/internal/datamove"
 	"awesome-reminder/internal/paths"
@@ -63,10 +64,10 @@ type SetupService struct {
 	quit       func()
 	emit       func(string, any)
 
-	res paths.Resolution
-
-	mu     sync.Mutex
-	cancel context.CancelFunc // non-nil while a move runs
+	mu       sync.Mutex // guards res, cancel and moveDone
+	res      paths.Resolution
+	cancel   context.CancelFunc // non-nil while a move runs
+	moveDone chan struct{}      // closed when the running move has returned
 }
 
 // newSetupService wires the real datamove functions.
@@ -84,7 +85,12 @@ func newSetupService(res paths.Resolution, quit func(), emit func(string, any)) 
 	}
 }
 
-func (s *SetupService) state() paths.State { return s.res.State }
+// snap is the current resolution; bound calls run on separate goroutines.
+func (s *SetupService) snap() paths.Resolution {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.res
+}
 
 // exeDataDir is the "next to the app" folder, or "" when it would not suit:
 // not writable, under Program Files, or inside a macOS app bundle.
@@ -121,13 +127,13 @@ func freeOf(dir string) (uint64, string) {
 }
 
 // fromLayout is the data folder being left, nil when there is none.
-func (s *SetupService) fromLayout() *paths.Layout {
+func (s *SetupService) fromLayout(res paths.Resolution) *paths.Layout {
 	var root string
-	switch s.state() {
+	switch res.State {
 	case paths.StateFirstRunExisting:
 		root, _ = paths.StandardRoot()
 	case paths.StateMovePending:
-		root = s.res.Root
+		root = res.Root
 	default:
 		return nil
 	}
@@ -143,18 +149,19 @@ func (s *SetupService) fromLayout() *paths.Layout {
 
 // Info describes the situation and the places to offer.
 func (s *SetupService) Info() SetupInfo {
-	info := SetupInfo{State: string(s.state()), Root: s.res.Root, Reason: s.res.Reason}
+	res := s.snap()
+	info := SetupInfo{State: string(res.State), Root: res.Root, Reason: res.Reason}
 	std, _ := paths.StandardRoot()
 	label := "Standard location"
-	if s.state() == paths.StateFirstRunExisting {
+	if res.State == paths.StateFirstRunExisting {
 		label = "Keep it where it is"
 		info.ExistingDir = std
 	}
-	if s.state() == paths.StateMovePending {
-		info.MoveFrom = s.res.Root
-		info.MoveTo = s.res.Loc.PendingMove
+	if res.State == paths.StateMovePending {
+		info.MoveFrom = res.Root
+		info.MoveTo = res.Loc.PendingMove
 	}
-	if from := s.fromLayout(); from != nil {
+	if from := s.fromLayout(res); from != nil {
 		if sz, err := datamove.Measure(*from); err == nil {
 			info.NeedText = datamove.FormatBytes(sz.Total())
 		}
@@ -170,7 +177,7 @@ func (s *SetupService) Info() SetupInfo {
 
 // Check inspects a folder the user picked.
 func (s *SetupService) Check(picked string) datamove.Check {
-	return datamove.CheckTarget(picked, s.fromLayout())
+	return datamove.CheckTarget(picked, s.fromLayout(s.snap()))
 }
 
 // resolveTarget turns a choice into the checked data folder.
@@ -215,9 +222,10 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 	if s.moving() {
 		return errors.New(errMoveRunning)
 	}
-	prev := &s.res.Loc
+	res := s.snap()
+	prev := &res.Loc
 	if kind == "standard" {
-		switch s.state() {
+		switch res.State {
 		case paths.StateFirstRunFresh:
 			std, err := paths.StandardRoot()
 			if err != nil {
@@ -240,7 +248,7 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 	if err != nil {
 		return err
 	}
-	switch s.state() {
+	switch res.State {
 	case paths.StateFirstRunFresh:
 		if c.HasData {
 			if !confirm {
@@ -252,7 +260,11 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 		}
 	case paths.StateFirstRunExisting:
 		if !c.HasData {
-			return s.startMove(*s.fromLayout(), c.Path)
+			from := s.fromLayout(res)
+			if from == nil {
+				return errors.New("Can't find the current data folder.")
+			}
+			return s.startMove(*from, c.Path)
 		}
 		if !confirm {
 			return errors.New(errConfirmAdopt)
@@ -287,14 +299,15 @@ func (s *SetupService) moving() bool {
 
 // RunPendingMove runs the move the pointer asks for.
 func (s *SetupService) RunPendingMove() error {
-	if s.state() != paths.StateMovePending {
+	res := s.snap()
+	if res.State != paths.StateMovePending {
 		return errors.New("No move is waiting.")
 	}
-	from, err := paths.NewLayout(s.res.Root)
+	from, err := paths.NewLayout(res.Root)
 	if err != nil {
 		return err
 	}
-	return s.startMove(from, s.res.Loc.PendingMove)
+	return s.startMove(from, res.Loc.PendingMove)
 }
 
 // startMove copies from into the target folder in the background.
@@ -311,6 +324,8 @@ func (s *SetupService) startMove(from paths.Layout, target string) error {
 		return errors.New(errMoveRunning)
 	}
 	s.cancel = cancel
+	done := make(chan struct{})
+	s.moveDone = done
 	s.mu.Unlock()
 	go func() {
 		err := s.move(ctx, from, to, func(p datamove.Progress) { s.emit(EventSetupProgress, p) })
@@ -318,6 +333,7 @@ func (s *SetupService) startMove(from paths.Layout, target string) error {
 		s.mu.Lock()
 		s.cancel = nil
 		s.mu.Unlock()
+		close(done)
 		if err != nil {
 			s.emit(EventSetupDone, SetupDone{Error: err.Error()})
 			return
@@ -340,6 +356,12 @@ func (s *SetupService) CancelMove() {
 // AbandonMove drops a pending move that cannot run and goes back to the
 // current data folder.
 func (s *SetupService) AbandonMove() error {
+	if s.moving() {
+		return errors.New(errMoveRunning)
+	}
+	if s.snap().State != paths.StateMovePending {
+		return errors.New("No move is waiting.")
+	}
 	loc, found, err := paths.LoadLocation()
 	if err != nil {
 		return err
@@ -357,12 +379,34 @@ func (s *SetupService) AbandonMove() error {
 
 // Retry looks again; a folder that is back starts the app.
 func (s *SetupService) Retry() SetupInfo {
-	s.res = s.resolve()
-	if s.res.State == paths.StateReady {
+	res := s.resolve()
+	s.mu.Lock()
+	s.res = res
+	s.mu.Unlock()
+	if res.State == paths.StateReady {
 		s.finish()
 	}
 	return s.Info()
 }
 
 // Quit closes setup without starting the app.
-func (s *SetupService) Quit() { s.quit() }
+func (s *SetupService) Quit() {
+	s.stopMove()
+	s.quit()
+}
+
+// stopMove cancels a running move and waits briefly for it to roll back, so
+// closing the window never leaves a half-written copy behind.
+func (s *SetupService) stopMove() {
+	s.mu.Lock()
+	cancel, done := s.cancel, s.moveDone
+	s.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
+}
