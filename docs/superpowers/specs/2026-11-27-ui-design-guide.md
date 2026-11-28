@@ -9,7 +9,7 @@ Binding for every frontend task (capture, list, alert, settings, and the later v
 4. **Native feel.** The floating windows use the OS translucent backdrop (Windows 11 Acrylic/Mica, macOS vibrancy) and fall back to a solid surface on Linux.
 
 ## Tokens (`frontend/src/tokens.css`, the only place raw values live)
-Dark is the default; light follows `prefers-color-scheme: light`.
+**Updated 28 Nov 2026 (black glossy theme, `specs/2026-11-28-black-glossy-theme-design.md`):** the dark palette is now near-black "Obsidian" (`--bg #07070A`, `--surface #111116`, `--muted #1C1C23`, `--border #2A2A33`, `--fg-muted #A1A1AA`). The dark values in the table below are the old slate ones; `tokens.css` is authoritative. Black is the default on every window whatever the OS theme. The light palette applies under `html[data-theme="light"]`, which `theme.ts` sets only when Settings › Appearance › "Match Windows light mode" is on and Windows is light. New tokens: `--gloss`, `--gloss-edge`, `--sheen` for glossy surfaces, and the decorative `--aurora` gradient (never text, never the focus ring).
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
@@ -71,7 +71,7 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - Animate only `opacity` and `transform`. The one place the browser would animate size, the View Transition title morph, is overridden with a translate (see below). Keyframe shapes (offsets, the ring's damping steps) live in `motion.ts`/`capture.ts`; every duration, distance, scale and curve is a token.
 - Exits run at about 60–70% of their entrance.
 - `prefers-reduced-motion`: CSS animations and transitions are off (global rule in `style.css`), and every `motion.ts` helper is a no-op, so springs, glides, the fly, the ring, confetti, the toast bar and the morph don't run. State changes stay instant.
-- Nothing loops or runs on a timer while idle. Each effect is started by a user action or a data change and ends on its own; the list's 60 s re-render measures rows but starts no animation when nothing moved.
+- Nothing loops or runs on a timer while idle. Each effect is started by a user action or a data change and ends on its own; the list's 60 s re-render measures rows but starts no animation when nothing moved. **Two exceptions (black glossy theme, R6):** the capture box's aurora strip and input glow drift while the box is visible, and the dot on an open High-priority row blinks with a ripple. Both are static under reduced motion.
 - Interruptible: animations are visual only, so a key or click acts at once. A new glide starts from where the row is on screen; any key or click skips the panel morph; reopening the capture box mid-flight shows a clean box.
 
 **Curves**
@@ -94,6 +94,9 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 | Alert entrance | alert | spring slide/fade, several new cards cascade `--stagger-alert` apart; a card revealed while others close a gap waits `--alert-gap-wait` | `--dur-alert-enter` 260 ms / `--dur-alert-exit` 170 ms |
 | Alert gap close | alert, a card leaves | the other cards glide into the gap (FLIP); cards sit at the bottom of the window and the window shrink waits for the glide, since Go pins it bottom-right | `--dur-glide` |
 | Undo bar | list toast with an action | a `--toast-bar` line along the toast's bottom edge scales down over the 5 s undo window; it rests full while pointer or focus is on the toast and restarts after, and stays empty through the toast's fade-out | `--toast-bar`, `--toast-bar-opacity` |
+| Capture open (gloss) | capture, every open | springs up from `--capture-enter-scale` with a `--enter-blur` blur clearing; a `--sheen` band sweeps across once | `--dur-capture-enter` 320 ms, `--dur-sheen` 900 ms |
+| List cascade | list, first view after the window opens | headers slide in and rows fade up from `--cascade-offset`, `--stagger-row` apart (capped at `--stagger-max`) | `--dur-cascade` 360 ms |
+| High dot blink | list, open High-priority rows | opacity blink to `--blink-dim` plus a ring rippling to `--ripple-scale` | `--dur-blink` 1.6 s, loops |
 | Today is clear | list, completing the last open item due by the end of today (overdue counts) | `--confetti-count` (12) dots burst from the checkbox, drift down and fade; the layer leaves the DOM afterwards | `--dur-confetti` 700 ms, `--ease-burst`, `--confetti-*` |
 
 ## Capture box (Spotlight)
@@ -106,12 +109,13 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 └────────────────────────────────────────────────────────────┘
    ↵ save    Tab time    Esc close                ← 12px hint row, mono keycaps
 ```
-- 640 px wide, height grows with preview (no jump: preview row reserves 1 line min). Glass surface + shadow, radius 14.
+- 880 px wide (was 640, widened for long tasks), height grows with preview (no jump: preview row reserves 1 line min). Glass surface + shadow, radius 14.
 - Leading icon: `search` muted → swaps to `bell` (`--time`) when a time is detected, `check-square` when it's a to-do.
 - Preview pieces are chips: time chip `--time` tinted, tag chips hashed, warnings amber text with `triangle-alert`.
 - **Right action slot (48×48 hit area)** is reserved in Phase 1 and holds the mic button in the voice phase. Phase 1 renders nothing there.
 - Save feedback: input flashes an `--accent` underline for 120 ms, then the window hides.
 - Errors are shown inline under the input in `--danger`, never as alerts.
+- **Several tasks by typing:** Shift+Enter moves the line into the review list (the one dictation fills) and keeps the box open; Enter saves the list and the input together. A paste of several lines stages every line but the last, dropping list markers (`-`, `*`, `1.`, `[ ]`). The hint row shows `Shift+↵ add another`. Not in reply mode.
 - **Priority chips (Phase 1.6):** a row of `High` `Med` `Low` chips under the input (`--prio-chip-height` 24 px, an 8 px `--prio-*` dot plus the word, so it never relies on colour alone). Chips are buttons with `aria-pressed` and `aria-keyshortcuts`, and come after the input and the time picker in Tab order. `Alt+1/2/3` set the priority and `Alt+0` clears it. A chip edits the typed token (`!high` / `!med` / `!low`) in the input, which stays the single source of truth; the active chip follows the parse. The hint row adds `Alt+1–3 priority` and `Alt+0 clear`.
 - **Live reminder indicator (Phase 1.6):** when the preview has a due time, the lead icon becomes a `--remind` bell with a spring pop (`--dur-pop` 280 ms on `--ease-spring-pop`, `scale(--pop-scale → 1)` + opacity) and then rings once (see **Motion**; neither under reduced motion), and a `chip-remind` badge "Reminder · Thu 26 Nov, 17:00" (`--remind-text` on `--remind-tint`) leads the preview row. Removing the time words fades both out (`--dur-pop-exit`, 180 ms). `role="status"` announces "Reminder detected for …" and "Reminder removed". The mic keeps the right action slot.
 

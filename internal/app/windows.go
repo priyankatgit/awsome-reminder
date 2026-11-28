@@ -13,7 +13,9 @@ import (
 // Capture window geometry in DIPs. The frontend reports its content height
 // through ResizeCapture; the window keeps its top edge when it grows.
 const (
-	captureWidth      = 640
+	captureWidth      = 880 // wide enough for a long task line (~64 mono chars)
+	captureMinWidth   = 480 // a tiny work area still gets a usable box
+	captureMargin     = 24  // kept free on each side when the work area is narrow
 	captureHeight     = 138 // input row + one preview line + hint row (style.css)
 	captureMinHeight  = 96
 	captureMaxHeight  = 480
@@ -52,18 +54,18 @@ const (
 	settingsWindowName = "settings"
 )
 
-// Framed window background before the page paints, matching --bg in
-// frontend/src/tokens.css so opening it doesn't flash white.
-var (
-	listBgDark  = application.NewRGB(0x0F, 0x17, 0x2A)
-	listBgLight = application.NewRGB(0xF8, 0xFA, 0xFC)
-)
+// Framed window background before the page paints, matching the default
+// (black) --bg in frontend/src/tokens.css so opening it doesn't flash. The
+// theme is black by default whatever the OS theme; "Match Windows" is a
+// page-side choice, so a light page paints over this after load.
+var pageBg = application.NewRGB(0x07, 0x07, 0x0A)
 
 // wailsWindows implements Windows on top of a running Wails application.
 type wailsWindows struct {
 	app       *application.App
 	capture   *application.WebviewWindow
 	size      *heightKeeper
+	capWidth  atomic.Int32 // the capture box width for the screen it last opened on
 	list      *onDemand[*application.WebviewWindow]
 	listFocus focusSlot
 	widen     listWidener
@@ -325,6 +327,23 @@ func (k *heightKeeper) Resize(height int) {
 	k.height = height
 }
 
+// Reapply sets the current height again (after the width changed).
+func (k *heightKeeper) Reapply() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.set(k.height)
+}
+
+// captureWidthFor is the capture box width on a screen whose work area is
+// workArea DIPs wide: captureWidth, narrowed to leave captureMargin on each
+// side (a 1280 px screen at 150% is only 853 DIPs), never below captureMinWidth.
+func captureWidthFor(workArea int) int {
+	if workArea <= 0 {
+		return captureWidth
+	}
+	return max(min(captureWidth, workArea-2*captureMargin), captureMinWidth)
+}
+
 // newWindows pre-creates the hidden capture window.
 func newWindows(app *application.App) *wailsWindows {
 	w := &wailsWindows{app: app}
@@ -355,7 +374,8 @@ func newWindows(app *application.App) *wailsWindows {
 		},
 		DefaultContextMenuDisabled: true,
 	})
-	w.size = &heightKeeper{height: captureHeight, set: func(h int) { w.capture.SetSize(captureWidth, h) }}
+	w.capWidth.Store(captureWidth)
+	w.size = &heightKeeper{height: captureHeight, set: func(h int) { w.capture.SetSize(int(w.capWidth.Load()), h) }}
 	w.capture.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		w.HideCapture()
 	})
@@ -368,13 +388,8 @@ func newWindows(app *application.App) *wailsWindows {
 	return w
 }
 
-// pageBackground is the framed windows' background colour for the OS theme.
-func (w *wailsWindows) pageBackground() application.RGBA {
-	if w.app.Env.IsDarkMode() {
-		return listBgDark
-	}
-	return listBgLight
-}
+// pageBackground is the framed windows' background colour (see pageBg).
+func (w *wailsWindows) pageBackground() application.RGBA { return pageBg }
 
 // newList creates and shows the list window. It is destroyed when closed;
 // a hook (run synchronously, before Wails' own destroy listener) drops our
@@ -391,7 +406,8 @@ func (w *wailsWindows) newList() *application.WebviewWindow {
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: w.pageBackground(),
 		// The native taskbar window owns the app's one button.
-		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
+		// Dark title bar to match the default black page (Match Windows is page-side).
+		Windows: application.WindowsWindow{HiddenOnTaskbar: true, Theme: application.Dark},
 	})
 	win.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
 		w.lastSettings.Store(false)
@@ -418,7 +434,8 @@ func (w *wailsWindows) newSettings() *application.WebviewWindow {
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: w.pageBackground(),
 		// The native taskbar window owns the app's one button.
-		Windows: application.WindowsWindow{HiddenOnTaskbar: true},
+		// Dark title bar to match the default black page (Match Windows is page-side).
+		Windows: application.WindowsWindow{HiddenOnTaskbar: true, Theme: application.Dark},
 	})
 	win.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
 		w.lastSettings.Store(true)
@@ -555,6 +572,9 @@ func (w *wailsWindows) showCapture() {
 // falling back to the window's current screen.
 func (w *wailsWindows) placeCapture() {
 	if s := cursorScreen(w.app); s != nil {
+		if nw := int32(captureWidthFor(s.WorkArea.Width)); w.capWidth.Swap(nw) != nw {
+			w.size.Reapply()
+		}
 		w.capture.SetScreen(s)
 	} else {
 		w.capture.Center()

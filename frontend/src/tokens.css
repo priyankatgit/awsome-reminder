@@ -1,21 +1,23 @@
 /*
  * Design tokens: the only place raw colours and sizes live.
  * See docs/superpowers/specs/2026-11-27-ui-design-guide.md.
- * Dark is the default; light follows prefers-color-scheme.
+ * Black ("Obsidian") is the default; the light palette applies under
+ * html[data-theme="light"], set by theme.ts for Settings > Appearance >
+ * Match Windows on a light OS. See specs/2026-11-28-black-glossy-theme-design.md.
  */
 :root {
   color-scheme: dark;
 
   /* Colour */
-  --bg: #0F172A;
-  --surface: #1B2336;
-  --surface-glass: rgba(15, 23, 42, 0.72);
-  --muted: #272F42;
-  --fg: #F8FAFC;
-  --fg-muted: #94A3B8;
-  --border: #334155;
+  --bg: #07070A;
+  --surface: #111116;
+  --surface-glass: rgba(9, 9, 12, 0.86);
+  --muted: #1C1C23;
+  --fg: #F5F5F7;
+  --fg-muted: #A1A1AA; /* 7.9:1 on --bg, 7.3:1 on --surface, 6.6:1 on --muted */
+  --border: #2A2A33;
   --accent: #22C55E;
-  --on-accent: #0F172A;
+  --on-accent: #07070A;
   --time: #F59E0B;
   --danger: #EF4444;
   --ring: #22C55E;
@@ -39,11 +41,11 @@
      --fg-muted 6.4 / 6.0:1, --remind-text 8.7 / 8.1:1, --danger-text
      6.0 / 5.5:1, --remind 6.0 / 5.5:1. */
   --remind: #F87171;
-  --remind-tint: #2A1A24;
+  --remind-tint: #1F1014;
   --remind-text: #FCA5A5;
   /* Missed/overdue cards: a deeper tint and a wider bar. */
   --remind-bar: 4px;
-  --remind-tint-strong: #3A1C26;
+  --remind-tint-strong: #2C1218;
   --remind-bar-strong: 6px;
   /* Ghost-button borders on the tint (light --border vanishes there). */
   --remind-border: var(--border);
@@ -55,14 +57,14 @@
   --time-chip-bg: rgba(245, 158, 11, 0.14);
 
   /* Tag chips: hash(tag) % 8; every pair keeps >= 4.5:1 (dark >= 7.4:1). */
-  --tag-0-fg: #A5B4FC; --tag-0-bg: #1E2547; /* slate-blue */
-  --tag-1-fg: #5EEAD4; --tag-1-bg: #0F2E2E; /* teal */
-  --tag-2-fg: #C4B5FD; --tag-2-bg: #2A2045; /* violet */
-  --tag-3-fg: #FDA4AF; --tag-3-bg: #3A1C26; /* rose */
-  --tag-4-fg: #FCD34D; --tag-4-bg: #33270F; /* amber */
-  --tag-5-fg: #67E8F9; --tag-5-bg: #0E2A35; /* cyan */
-  --tag-6-fg: #BEF264; --tag-6-bg: #1F2C10; /* lime */
-  --tag-7-fg: #FDBA74; --tag-7-bg: #36230F; /* orange */
+  --tag-0-fg: #A5B4FC; --tag-0-bg: #171A33; /* slate-blue */
+  --tag-1-fg: #5EEAD4; --tag-1-bg: #0B2222; /* teal */
+  --tag-2-fg: #C4B5FD; --tag-2-bg: #1E1733; /* violet */
+  --tag-3-fg: #FDA4AF; --tag-3-bg: #2C1218; /* rose */
+  --tag-4-fg: #FCD34D; --tag-4-bg: #261C0A; /* amber */
+  --tag-5-fg: #67E8F9; --tag-5-bg: #0A1F27; /* cyan */
+  --tag-6-fg: #BEF264; --tag-6-bg: #16200B; /* lime */
+  --tag-7-fg: #FDBA74; --tag-7-bg: #28190A; /* orange */
   --tag-inbox-fg: var(--fg-muted);
   --tag-inbox-bg: var(--muted);
 
@@ -125,7 +127,7 @@
   --menu-min-width: 208px;
   --toast-offset: 16px;
   --empty-icon: 40px;
-  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--border);
+  --shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
 
   /* Alert popup */
   --alert-width: 380px; /* the native window's width (internal/app/windows.go) */
@@ -144,7 +146,7 @@
   --switch-inset: 3px;
 
   /* Shadow (floating windows only) */
-  --shadow-float: 0 20px 50px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border);
+  --shadow-float: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border);
 
   /* Motion */
   --dur-enter: 140ms;
@@ -162,53 +164,51 @@
   --completing-opacity: 0.4;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
+:root[data-theme="light"] {
+  color-scheme: light;
 
-    --bg: #F8FAFC;
-    --surface: #FFFFFF;
-    --surface-glass: rgba(255, 255, 255, 0.78);
-    --muted: #EEF2F7;
-    --fg: #0F172A;
-    --fg-muted: #475569;
-    --border: #E2E8F0;
-    --accent: #16A34A;
-    --on-accent: #FFFFFF;
-    --time: #B45309;
-    --danger: #DC2626;
-    --ring: #16A34A;
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-glass: rgba(255, 255, 255, 0.78);
+  --muted: #EEF2F7;
+  --fg: #0F172A;
+  --fg-muted: #475569;
+  --border: #E2E8F0;
+  --accent: #16A34A;
+  --on-accent: #FFFFFF;
+  --time: #B45309;
+  --danger: #DC2626;
+  --ring: #16A34A;
 
-    --danger-text: #B91C1C;
-    --time-text: #92400E;
-    --accent-text: #15803D; /* 5.0:1 on white */
-    --accent-fill: #15803D; /* white text 5.0:1 (--accent #16A34A gives 3.3:1) */
-    --highlight: rgba(22, 163, 74, 0.16);
+  --danger-text: #B91C1C;
+  --time-text: #92400E;
+  --accent-text: #15803D; /* 5.0:1 on white */
+  --accent-fill: #15803D; /* white text 5.0:1 (--accent #16A34A gives 3.3:1) */
+  --highlight: rgba(22, 163, 74, 0.16);
 
-    /* On --remind-tint / --remind-tint-strong: --fg 16.3 / 14.6:1,
-       --fg-muted 6.9 / 6.2:1, --remind-text and --danger-text 5.9 / 5.3:1,
-       --remind 4.4 / 4.0:1. */
-    --remind: #DC2626;
-    --remind-tint: #FEF2F2;
-    --remind-text: #B91C1C;
-    --remind-tint-strong: #FEE2E2;
-    --remind-border: #FCA5A5;
-    --remind-glow: 0 0 12px 2px rgba(220, 38, 38, 0.4);
+  /* On --remind-tint / --remind-tint-strong: --fg 16.3 / 14.6:1,
+     --fg-muted 6.9 / 6.2:1, --remind-text and --danger-text 5.9 / 5.3:1,
+     --remind 4.4 / 4.0:1. */
+  --remind: #DC2626;
+  --remind-tint: #FEF2F2;
+  --remind-text: #B91C1C;
+  --remind-tint-strong: #FEE2E2;
+  --remind-border: #FCA5A5;
+  --remind-glow: 0 0 12px 2px rgba(220, 38, 38, 0.4);
 
-    --shadow-menu: 0 8px 24px rgba(15, 23, 42, 0.12), 0 0 0 1px var(--border);
+  --shadow-menu: 0 8px 24px rgba(15, 23, 42, 0.12), 0 0 0 1px var(--border);
 
-    --time-chip-fg: #92400E;
-    --time-chip-bg: #FEF3C7;
+  --time-chip-fg: #92400E;
+  --time-chip-bg: #FEF3C7;
 
-    --tag-0-fg: #3730A3; --tag-0-bg: #E0E7FF;
-    --tag-1-fg: #115E59; --tag-1-bg: #CCFBF1;
-    --tag-2-fg: #5B21B6; --tag-2-bg: #EDE9FE;
-    --tag-3-fg: #9F1239; --tag-3-bg: #FFE4E6;
-    --tag-4-fg: #92400E; --tag-4-bg: #FEF3C7;
-    --tag-5-fg: #155E75; --tag-5-bg: #CFFAFE;
-    --tag-6-fg: #3F6212; --tag-6-bg: #ECFCCB;
-    --tag-7-fg: #9A3412; --tag-7-bg: #FFEDD5;
-  }
+  --tag-0-fg: #3730A3; --tag-0-bg: #E0E7FF;
+  --tag-1-fg: #115E59; --tag-1-bg: #CCFBF1;
+  --tag-2-fg: #5B21B6; --tag-2-bg: #EDE9FE;
+  --tag-3-fg: #9F1239; --tag-3-bg: #FFE4E6;
+  --tag-4-fg: #92400E; --tag-4-bg: #FEF3C7;
+  --tag-5-fg: #155E75; --tag-5-bg: #CFFAFE;
+  --tag-6-fg: #3F6212; --tag-6-bg: #ECFCCB;
+  --tag-7-fg: #9A3412; --tag-7-bg: #FFEDD5;
 }
 
 /* Voice dictation in the capture box (Phase 1.5). Kept in its own block so
@@ -258,12 +258,10 @@
   --pop-scale: 0.6;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --prio-high: #B91C1C;
-    --prio-med: #92400E;
-    --prio-low: #1D4ED8;
-  }
+:root[data-theme="light"] {
+  --prio-high: #B91C1C;
+  --prio-med: #92400E;
+  --prio-low: #1D4ED8;
 }
 
 /* ---- Phase 1.6: detail panel ----
@@ -290,13 +288,11 @@
   --md-h2: 16px;
   --md-quote-bar: 3px;
   --md-image-max: 320px;
-  --lightbox-backdrop: rgba(2, 6, 23, 0.86);
+  --lightbox-backdrop: rgba(0, 0, 0, 0.88);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --lightbox-backdrop: rgba(15, 23, 42, 0.72);
-  }
+:root[data-theme="light"] {
+  --lightbox-backdrop: rgba(15, 23, 42, 0.72);
 }
 
 /* ---- Phase 2: sync status pill, details popover, row markers ----
@@ -310,11 +306,11 @@
    --time-text 7.30 / 7.09. Row marker --fg-muted (graphic) on --bg 6.96 / 7.24. */
 :root {
   --sync-ok-fg: #4ADE80;
-  --sync-ok-bg: #12301F;
+  --sync-ok-bg: #0D2416;
   --sync-muted-fg: #A8B3C7;
-  --sync-muted-bg: #272F42;
+  --sync-muted-bg: #1C1C23;
   --sync-danger-fg: #FCA5A5;
-  --sync-danger-bg: #3A1C26;
+  --sync-danger-bg: #2C1218;
   --sync-glow: 0 0 10px 2px rgba(74, 222, 128, 0.6);
 
   --sync-pill-height: 24px;
@@ -324,16 +320,14 @@
   --dur-sync-spin: 1000ms;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --sync-ok-fg: #166534;
-    --sync-ok-bg: #DCFCE7;
-    --sync-muted-fg: #475569;
-    --sync-muted-bg: #EEF2F7;
-    --sync-danger-fg: #B91C1C;
-    --sync-danger-bg: #FEE2E2;
-    --sync-glow: 0 0 10px 2px rgba(22, 163, 74, 0.45);
-  }
+:root[data-theme="light"] {
+  --sync-ok-fg: #166534;
+  --sync-ok-bg: #DCFCE7;
+  --sync-muted-fg: #475569;
+  --sync-muted-bg: #EEF2F7;
+  --sync-danger-fg: #B91C1C;
+  --sync-danger-bg: #FEE2E2;
+  --sync-glow: 0 0 10px 2px rgba(22, 163, 74, 0.45);
 }
 
 /* ---- Motion: springs, reflow and celebration ----
@@ -426,4 +420,61 @@
 :root {
   --radio-size: 16px; /* native radio in an option row */
   --setup-max: 520px; /* the single column (same as --settings-max) */
+}
+
+/* ---- Obsidian gloss: black glossy surfaces, aurora accent, ambient motion ----
+   Own block, so it merges cleanly. specs/2026-11-28-black-glossy-theme-design.md.
+   --aurora is decorative only (strips, glows, the save line): it never carries
+   text and never replaces the solid --ring focus outline. */
+:root {
+  --aurora-1: #8B5CF6; /* violet */
+  --aurora-2: #22D3EE; /* cyan */
+  --aurora-3: #22C55E; /* emerald (the accent) */
+  --aurora: linear-gradient(90deg, var(--aurora-1), var(--aurora-2), var(--aurora-3), var(--aurora-2), var(--aurora-1));
+  --aurora-size: 300% 100%;
+  --aurora-strip: 3px; /* capture box top light strip */
+  --aurora-haze: radial-gradient(70% 56px at 50% 0, rgba(139, 92, 246, 0.16), rgba(34, 211, 238, 0.06) 60%, transparent);
+  --aurora-glow-idle: 0.3; /* input under-glow, empty input */
+  --aurora-glow-live: 0.85; /* input under-glow, text present */
+
+  /* Gloss: a top specular highlight and a 1px inner top edge. */
+  --gloss: linear-gradient(180deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.02) 45%, rgba(255, 255, 255, 0) 100%);
+  --gloss-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0) 100%);
+  --gloss-edge: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --sheen: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.11) 50%, transparent 62%);
+  --glow-accent: 0 4px 16px rgba(34, 197, 94, 0.28);
+  --glow-remind: drop-shadow(0 0 6px rgba(248, 113, 113, 0.65));
+  --glow-prio-high: 0 0 8px 1px rgba(248, 113, 113, 0.6);
+  --overdue-bar: 2px;
+
+  /* Capture box entrance and ambient motion. */
+  --dur-capture-enter: 320ms; /* spring (--ease-spring) */
+  --capture-enter-scale: 0.96;
+  --enter-blur: 6px;
+  --dur-sheen: 900ms;
+  --dur-aurora: 6s; /* one drift of the strip; loops only while the box shows */
+
+  /* List: rows cascade in when the window opens; the High dot blinks. */
+  --dur-cascade: 360ms;
+  --stagger-row: 28ms;
+  --stagger-max: 14; /* rows past this start with the 14th */
+  --cascade-offset: 8px;
+  --cascade-blur: 4px;
+  --dur-blink: 1600ms;
+  --blink-dim: 0.35;
+  --ripple-scale: 2.6;
+  --ripple-ring: 1.5px;
+}
+
+:root[data-theme="light"] {
+  --aurora-haze: radial-gradient(70% 56px at 50% 0, rgba(139, 92, 246, 0.1), rgba(34, 211, 238, 0.04) 60%, transparent);
+  --gloss: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 100%);
+  --gloss-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --sheen: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.55) 50%, transparent 62%);
+  /* No highlight on the light primary button: white text on --accent-fill
+     is 5.0:1 and any white gloss would drop the label under 4.5:1. */
+  --gloss-strong: none;
+  --glow-accent: 0 4px 14px rgba(21, 128, 61, 0.22);
+  --glow-remind: drop-shadow(0 0 5px rgba(220, 38, 38, 0.4));
+  --glow-prio-high: 0 0 6px 1px rgba(185, 28, 28, 0.4);
 }

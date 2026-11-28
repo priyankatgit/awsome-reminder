@@ -12,7 +12,7 @@ import { el, keycaps, motionMs } from "./dom";
 import { icons } from "./icons";
 import { applyMarker, createRow, editRow, effectiveDue, fillRow, isDone, isOpenReply, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
-import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide } from "./motion";
+import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide, tokenNumber } from "./motion";
 import { personLabel } from "./reply-mode";
 import { mountSyncPill } from "./sync-pill";
 import { needsRefetch, showMarkers } from "./sync-status";
@@ -162,6 +162,8 @@ export function mountList(root: HTMLElement): void {
   let selectedIndex = 0;
   let edit: EditState | null = null;
   let holds = 0; // running done animations
+  let cascading: HTMLElement[] = []; // elements in the opening cascade
+  let cascadeTimer: number | undefined;
   let rendering = false; // render() is moving nodes: ignore the blurs that causes
   let fetchSeq = 0;
   let refreshTimer: number | undefined;
@@ -300,6 +302,7 @@ export function mountList(root: HTMLElement): void {
    * leaves a fading ghost where a row went away.
    */
   function render(animate = false): void {
+    if (cascading.length > 0) endCascade();
     const before = animate && !reducedMotion() ? measure(reflowEls()) : null;
     // A plain render (typing in search) must not leave a running glide
     // translating rows by an offset measured against the old layout.
@@ -547,6 +550,7 @@ export function mountList(root: HTMLElement): void {
     }
     render(!first);
     if (first) {
+      cascade();
       void consumeFocus();
       if (focusAfterLoad) {
         const id = focusAfterLoad;
@@ -554,6 +558,36 @@ export function mountList(root: HTMLElement): void {
         focusItem(id);
       }
     }
+  }
+
+  /**
+   * The window just opened: headers and rows cascade in, --stagger-row apart
+   * (rows past --stagger-max start together). Runs once per window, on the
+   * first view; later renders glide as before. Ruling R7 of the black glossy
+   * theme design.
+   */
+  function cascade(): void {
+    if (reducedMotion()) return;
+    const els = reflowEls();
+    if (els.length === 0) return;
+    els.forEach((e, i) => {
+      e.style.setProperty("--i", String(i));
+      e.classList.add("is-cascade");
+    });
+    cascading = els;
+    const steps = Math.min(els.length - 1, tokenNumber("--stagger-max"));
+    const total = steps * motionMs("--stagger-row") + motionMs("--dur-cascade");
+    cascadeTimer = window.setTimeout(endCascade, total);
+  }
+
+  /** Ends the opening cascade (on time, or early so a FLIP measures true places). */
+  function endCascade(): void {
+    window.clearTimeout(cascadeTimer);
+    for (const e of cascading) {
+      e.classList.remove("is-cascade");
+      e.style.removeProperty("--i");
+    }
+    cascading = [];
   }
 
   // ---------- focus from OpenList(id) ----------

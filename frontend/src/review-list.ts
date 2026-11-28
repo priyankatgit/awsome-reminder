@@ -1,7 +1,7 @@
 // Review list for the capture box (Phase 3): tasks dictated one after another
 // wait here until Enter (or a spoken "save all") saves them in order.
 import { api, errorText, type Item, type Preview } from "./api";
-import { el, tagChip } from "./dom";
+import { el, motionMs, tagChip } from "./dom";
 import { icons } from "./icons";
 
 /**
@@ -27,6 +27,8 @@ interface Row {
   text: string;
   preview: Preview | null;
   error: string;
+  /** When it was added (performance.now()): its element drops in (.is-new). */
+  addedAt?: number;
 }
 
 export interface ReviewListOptions {
@@ -56,7 +58,7 @@ export class ReviewList {
   }
 
   add(text: string): void {
-    const row: Row = { text, preview: null, error: "" };
+    const row: Row = { text, preview: null, error: "", addedAt: performance.now() };
     this.rows.push(row);
     this.changed();
     void api
@@ -138,6 +140,17 @@ export class ReviewList {
 
   private renderRow(r: Row, i: number): HTMLElement {
     const row = el("div", "rv-row");
+    // Re-renders (its preview landing a few ms later) rebuild the element:
+    // pick the drop-in up where it is rather than restarting or losing it.
+    if (r.addedAt !== undefined) {
+      const elapsed = performance.now() - r.addedAt;
+      if (elapsed < motionMs("--dur-dictated")) {
+        row.classList.add("is-new");
+        row.style.animationDelay = `-${Math.round(elapsed)}ms`;
+      } else {
+        r.addedAt = undefined;
+      }
+    }
     row.setAttribute("role", "listitem");
     row.tabIndex = -1;
     row.dataset.index = String(i);
