@@ -29,7 +29,7 @@ const (
 	pushBatch      = 100
 	maxPushBatches = 10
 	itemPage       = 200
-	attachmentPage = 8 // attachments carry their bytes
+	attachmentPage = 32 // and at most AttachmentPageBytes (or one attachment)
 	pullOverlap    = 2 * time.Minute
 	maxSkew        = 2 * time.Minute
 	offlineCapX    = 10 // the offline backoff caps at 10 polls (300 s)
@@ -604,7 +604,9 @@ func (e *Engine) pullAttachments(ctx context.Context) error {
 		} else if len(page) > 0 {
 			return errStuck(after, next)
 		}
-		if len(page) < attachmentPage {
+		// The byte budget can cut a page short: only an empty page is the
+		// end.
+		if len(page) == 0 {
 			return e.savePull(metaWMAttachments, metaPullAttachments, saved, done, start, startKnown)
 		}
 	}

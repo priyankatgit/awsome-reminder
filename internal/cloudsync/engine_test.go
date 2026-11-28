@@ -754,6 +754,39 @@ func TestServerClockUnknownFallsBackToWatermark(t *testing.T) {
 	}
 }
 
+// onePageSyncer returns at most one attachment per page, as a backend does
+// when its byte budget cuts a page short.
+type onePageSyncer struct{ cloudsync.Syncer }
+
+func (s onePageSyncer) PullAttachments(ctx context.Context, after cloudsync.Watermark, limit int) ([]cloudsync.RemoteAttachment, cloudsync.Watermark, error) {
+	return s.Syncer.PullAttachments(ctx, after, 1)
+}
+
+// TestShortAttachmentPageIsNotTheEnd: a page cut short by the byte budget is
+// not the end of the pull; only an empty page is.
+func TestShortAttachmentPageIsNotTheEnd(t *testing.T) {
+	ms, clk := setup()
+	ctx := context.Background()
+	data := tinyWebP(t)
+	ids := []string{"01JD00000000000000000000A1", "01JD00000000000000000000A2", "01JD00000000000000000000A3"}
+	for _, id := range ids {
+		if err := ms.PushAttachment(ctx, remoteAtt(id, data, clk.Now()), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := newDevice(t, onePageSyncer{ms}, clk)
+	b.sync()
+	for _, id := range ids {
+		if _, err := os.Stat(filepath.Join(b.dir, id+".webp")); err != nil {
+			t.Errorf("attachment %s not pulled in one cycle: %v", id, err)
+		}
+	}
+	_, last, _ := ms.PullAttachments(ctx, cloudsync.Watermark{}, 100)
+	if wm, ok := b.watermark("sync_wm_attachments"); !ok || wm != last {
+		t.Errorf("attachments watermark %+v, want %+v", wm, last)
+	}
+}
+
 func TestPagingLargeBacklog(t *testing.T) {
 	ms, clk := setup()
 	a := newDevice(t, ms, clk)

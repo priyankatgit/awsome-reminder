@@ -173,19 +173,71 @@ func (s *Syncer) PushShared(ctx context.Context, d cloudsync.SharedDoc) error {
 	return push(ctx, s.sets, "settings", d.UpdatedAt, d.UpdatedBy, sharedSet(d))
 }
 
+// pageSort is the pull order, which the {_srv, _id} index serves.
+var pageSort = bson.D{{Key: "_srv", Value: 1}, {Key: "_id", Value: 1}}
+
+// afterFilter matches the documents after the watermark.
+func afterFilter(after cloudsync.Watermark) bson.D {
+	return bson.D{{Key: "$or", Value: bson.A{
+		bson.D{{Key: "_srv", Value: bson.D{{Key: "$gt", Value: dt(after.T)}}}},
+		bson.D{{Key: "_srv", Value: dt(after.T)}, {Key: "_id", Value: bson.D{{Key: "$gt", Value: after.ID}}}},
+	}}}
+}
+
 // page reads up to limit documents after the watermark in (_srv, _id) order.
 // Documents are returned as raw BSON so a malformed one never fails the page;
 // the watermark moves past every document read.
 func page(ctx context.Context, c *mongo.Collection, after cloudsync.Watermark, limit int, each func(bson.Raw)) (cloudsync.Watermark, error) {
-	filter := bson.D{{Key: "$or", Value: bson.A{
-		bson.D{{Key: "_srv", Value: bson.D{{Key: "$gt", Value: dt(after.T)}}}},
-		bson.D{{Key: "_srv", Value: dt(after.T)}, {Key: "_id", Value: bson.D{{Key: "$gt", Value: after.ID}}}},
-	}}}
-	cur, err := c.Find(ctx, filter, options.Find().
-		SetSort(bson.D{{Key: "_srv", Value: 1}, {Key: "_id", Value: 1}}).SetLimit(int64(limit)))
+	cur, err := c.Find(ctx, afterFilter(after), options.Find().SetSort(pageSort).SetLimit(int64(limit)))
 	if err != nil {
 		return after, err
 	}
+	return drain(ctx, cur, after, each)
+}
+
+// attachmentPage is page under the attachment byte budget: the server keeps
+// the leading documents whose running BSON size stays within
+// cloudsync.AttachmentPageBytes, and always the first, so a page never
+// carries more than that (or one document) through the client timeout.
+func attachmentPage(ctx context.Context, c *mongo.Collection, after cloudsync.Watermark, limit int, each func(bson.Raw)) (cloudsync.Watermark, error) {
+	cur, err := c.Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: afterFilter(after)}},
+		{{Key: "$sort", Value: pageSort}},
+		{{Key: "$limit", Value: int64(limit)}},
+		{{Key: "$setWindowFields", Value: bson.D{
+			{Key: "sortBy", Value: pageSort},
+			{Key: "output", Value: bson.D{
+				// The bytes up to and including this document, and before
+				// it (0 only for the first: an empty window sums to 0).
+				{Key: "_page_bytes", Value: runningBytes("current")},
+				{Key: "_page_before", Value: runningBytes(-1)},
+			}},
+		}}},
+		{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "_page_before", Value: 0}},
+			bson.D{{Key: "_page_bytes", Value: bson.D{{Key: "$lte", Value: cloudsync.AttachmentPageBytes}}}},
+		}}}}},
+		{{Key: "$sort", Value: pageSort}},
+		{{Key: "$project", Value: bson.D{{Key: "_page_bytes", Value: 0}, {Key: "_page_before", Value: 0}}}},
+	})
+	if err != nil {
+		return after, err
+	}
+	return drain(ctx, cur, after, each)
+}
+
+// runningBytes is a window output summing the BSON size of the page's
+// documents from the first up to upper ("current", or -1 for the one before).
+func runningBytes(upper any) bson.D {
+	return bson.D{
+		{Key: "$sum", Value: bson.D{{Key: "$bsonSize", Value: "$$ROOT"}}},
+		{Key: "window", Value: bson.D{{Key: "documents", Value: bson.A{"unbounded", upper}}}},
+	}
+}
+
+// drain hands each document of a page to each and returns the watermark of
+// the last one (after when there are none).
+func drain(ctx context.Context, cur *mongo.Cursor, after cloudsync.Watermark, each func(bson.Raw)) (cloudsync.Watermark, error) {
 	defer cur.Close(context.Background())
 	wm := after
 	for cur.Next(ctx) {
@@ -214,7 +266,7 @@ func (s *Syncer) PullItems(ctx context.Context, after cloudsync.Watermark, limit
 // PullAttachments implements cloudsync.Syncer.
 func (s *Syncer) PullAttachments(ctx context.Context, after cloudsync.Watermark, limit int) ([]cloudsync.RemoteAttachment, cloudsync.Watermark, error) {
 	var out []cloudsync.RemoteAttachment
-	wm, err := page(ctx, s.atts, after, limit, func(r bson.Raw) { out = append(out, decodeAttachment(r)) })
+	wm, err := attachmentPage(ctx, s.atts, after, limit, func(r bson.Raw) { out = append(out, decodeAttachment(r)) })
 	if err != nil {
 		return nil, after, err
 	}

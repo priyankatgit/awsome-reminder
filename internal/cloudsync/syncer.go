@@ -44,6 +44,12 @@ type SharedDoc struct {
 	UpdatedBy string
 }
 
+// AttachmentPageBytes bounds the size of an attachment page (see
+// Syncer.PullAttachments). A page is at most this, or one document: 2 MiB, an
+// attachment's own limit, is under 30 s (the Atlas client timeout) down to
+// about 600 kbit/s.
+const AttachmentPageBytes = 2 << 20
+
 // Syncer is the backend (spec: "Sync is behind a Go Syncer interface").
 type Syncer interface {
 	// PushItem is a last-writer-wins conditional upsert. A remote copy that
@@ -67,7 +73,10 @@ type Syncer interface {
 	// it. Only a failure to read at all (network, auth, server) is an error.
 	PullItems(ctx context.Context, after Watermark, limit int) ([]model.Item, Watermark, error)
 	// PullAttachments is PullItems for attachments, with their bytes, under
-	// the same bad-document rule.
+	// the same bad-document rule, except that a page also stops before its
+	// documents pass AttachmentPageBytes (it always holds at least one), so
+	// it fits the client timeout on a slow link. A page can therefore be
+	// short before the end: only an empty page ends an attachment pull.
 	PullAttachments(ctx context.Context, after Watermark, limit int) ([]RemoteAttachment, Watermark, error)
 	// PullShared returns the shared settings, nil when the cluster has none.
 	PullShared(ctx context.Context) (*SharedDoc, error)

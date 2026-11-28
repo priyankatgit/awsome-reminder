@@ -399,16 +399,29 @@ func (s *Syncer) PullItems(ctx context.Context, after cloudsync.Watermark, limit
 	return out, wm, nil
 }
 
-// PullAttachments implements cloudsync.Syncer.
+// attOverhead stands in for an attachment document's fields other than its
+// bytes when sizing a page, as their BSON encoding would take in Atlas.
+const attOverhead = 256
+
+// PullAttachments implements cloudsync.Syncer: a page stops before its
+// documents pass cloudsync.AttachmentPageBytes, holding at least one.
 func (s *Syncer) PullAttachments(ctx context.Context, after cloudsync.Watermark, limit int) ([]cloudsync.RemoteAttachment, cloudsync.Watermark, error) {
 	if err := s.enter(ctx); err != nil {
 		return nil, after, err
 	}
 	defer s.mu.Unlock()
-	page, wm := pageLocked(s.atts, after, limit)
-	out := make([]cloudsync.RemoteAttachment, len(page))
-	for i, d := range page {
-		out[i] = decodeAttachment(d)
+	page, _ := pageLocked(s.atts, after, limit)
+	var out []cloudsync.RemoteAttachment
+	wm, size := after, 0
+	for _, d := range page {
+		b, _ := d["data"].([]byte)
+		n := len(b) + attOverhead
+		if len(out) > 0 && size+n > cloudsync.AttachmentPageBytes {
+			break
+		}
+		size += n
+		out = append(out, decodeAttachment(d))
+		wm = key(d)
 	}
 	return out, wm, nil
 }

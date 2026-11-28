@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,6 +57,7 @@ func Run(t *testing.T, open func(t *testing.T) cloudsync.Syncer, opts ...Option)
 		{"TestSpecialTextRoundTrips", testSpecialTextRoundTrips},
 		{"ReplyFieldsRoundTrip", testReplyFieldsRoundTrip},
 		{"AttachmentBytesSumsLive", testAttachmentBytesSumsLive},
+		{"AttachmentPageIsByteBounded", testAttachmentPageIsByteBounded},
 		{"MalformedDocDoesNotFailPull", func(t *testing.T, s cloudsync.Syncer) {
 			if cfg.rawInsert == nil {
 				t.Skip("backend gives no RawInsert hook (WithRawInsert)")
@@ -115,6 +117,8 @@ func pullAllItems(t *testing.T, s cloudsync.Syncer) []model.Item {
 	return nil
 }
 
+// pullAllAttachments reads every attachment from the start. A page may be
+// cut short by its byte budget, so only an empty page ends the pull.
 func pullAllAttachments(t *testing.T, s cloudsync.Syncer) []cloudsync.RemoteAttachment {
 	t.Helper()
 	var out []cloudsync.RemoteAttachment
@@ -124,10 +128,10 @@ func pullAllAttachments(t *testing.T, s cloudsync.Syncer) []cloudsync.RemoteAtta
 		if err != nil {
 			t.Fatalf("pull attachments: %v", err)
 		}
-		out = append(out, page...)
-		if len(page) < 8 {
+		if len(page) == 0 {
 			return out
 		}
+		out = append(out, page...)
 		wm = next
 	}
 	t.Fatal("pull attachments did not end")
@@ -493,5 +497,63 @@ func testMalformedDocDoesNotFailPull(t *testing.T, s cloudsync.Syncer, raw RawIn
 	}
 	if !reflect.DeepEqual(ids, []string{itemID(1), itemID(2), itemID(3)}) {
 		t.Errorf("paged ids %v", ids)
+	}
+}
+
+// testAttachmentPageIsByteBounded: an attachment page stops before its
+// documents pass AttachmentPageBytes, so it fits the client timeout on a slow
+// link, but always holds at least one document, so an oversized one still
+// comes through. Paging still visits every document once, in order.
+func testAttachmentPageIsByteBounded(t *testing.T, s cloudsync.Syncer) {
+	const kib = 1024
+	sizes := []int{900 * kib, 900 * kib, 900 * kib, cloudsync.AttachmentPageBytes + 512*kib, 10}
+	var ids []string
+	for i, n := range sizes {
+		data := bytes.Repeat([]byte{byte(i + 1)}, n)
+		sum := sha256.Sum256(data)
+		a := model.Attachment{
+			ID: fmt.Sprintf("01JD00000000000000000000P%d", i), ItemID: itemID(1), Mime: "image/webp",
+			SHA256: hex.EncodeToString(sum[:]), Width: 1, Height: 1, Bytes: n,
+			CreatedAt: base, UpdatedAt: base, UpdatedBy: devA,
+		}
+		if err := s.PushAttachment(ctx(t), a, data); err != nil {
+			t.Fatalf("push %s: %v", a.ID, err)
+		}
+		ids = append(ids, a.ID)
+	}
+	var wm cloudsync.Watermark
+	var pages [][]string
+	for range 10 {
+		page, next, err := s.PullAttachments(ctx(t), wm, 8)
+		if err != nil {
+			t.Fatalf("pull attachments: %v", err)
+		}
+		if len(page) == 0 {
+			if next != wm {
+				t.Errorf("empty page moved the watermark: %+v → %+v", wm, next)
+			}
+			break
+		}
+		if !wm.Less(next) {
+			t.Errorf("watermark not strictly ascending: %+v → %+v", wm, next)
+		}
+		var got []string
+		total := 0
+		for _, a := range page {
+			got = append(got, a.ID)
+			total += len(a.Data)
+			if len(a.Data) != a.Bytes {
+				t.Errorf("%s: %d data bytes, want %d", a.ID, len(a.Data), a.Bytes)
+			}
+		}
+		if len(page) > 1 && total > cloudsync.AttachmentPageBytes {
+			t.Errorf("page %v holds %d bytes, over the %d budget", got, total, cloudsync.AttachmentPageBytes)
+		}
+		pages = append(pages, got)
+		wm = next
+	}
+	want := [][]string{{ids[0], ids[1]}, {ids[2]}, {ids[3]}, {ids[4]}}
+	if !reflect.DeepEqual(pages, want) {
+		t.Errorf("pages %v, want %v", pages, want)
 	}
 }
