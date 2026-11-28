@@ -226,18 +226,36 @@ func countRows(db *sql.DB, table string) (int64, error) {
 	return n, err
 }
 
+// ownLeftover reports whether to's database is the unfinished result of an
+// earlier move from `from`: the pointer still asks for this move and the
+// source database has not been renamed.
+func ownLeftover(from, to paths.Layout) bool {
+	loc, found, err := paths.LoadLocation()
+	return err == nil && found && loc.PendingMove != "" && paths.SameDir(loc.PendingMove, to.Root) && exists(from.DB())
+}
+
 // Move copies the data folder `from` into `to`, checks the copy and then
 // switches the pointer. Before the pointer is saved a failure removes what
 // this call created in `to` and leaves the pointer and the source alone.
 func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress)) (err error) {
-	if paths.SameDir(from.Root, to.Root) || paths.Within(to.Root, from.Root) || paths.Within(from.Root, to.Root) {
+	if paths.SameDir(from.Root, to.Root) || paths.Within(to.Root, from.Root) || paths.Within(from.Root, to.Root) ||
+		paths.Within(to.Root, from.Voice()) {
 		return errors.New(outsideMsg)
 	}
 	if !exists(from.DB()) {
 		return errors.New("database: the current data folder has no database")
 	}
 	if exists(to.DB()) {
-		return errors.New("database: the new folder already holds a database")
+		if !ownLeftover(from, to) {
+			return errors.New("database: the new folder already holds a database")
+		}
+		// A previous attempt died between making the copy live and saving
+		// the pointer: the copy is ours and the source is still in place.
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if err := os.Remove(to.DB() + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("database: %w", err)
+			}
+		}
 	}
 	sizes, err := Measure(from)
 	if err != nil {

@@ -522,3 +522,143 @@ func TestRemoveOldCopyRefusesLive(t *testing.T) {
 		t.Fatal("live database removed")
 	}
 }
+
+func TestRemoveOldCopyRemovesLegacyProfile(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+	isolate(t)
+	std, _ := paths.StandardRoot()
+	write(t, filepath.Join(std, "awesome.db.moved"), []byte("x"))
+	profile := filepath.Join(os.Getenv("APPDATA"), "awesome-reminder.exe")
+	write(t, filepath.Join(profile, "EBWebView", "x"), []byte("x"))
+	loc := paths.Location{DataDir: filepath.Join(t.TempDir(), "new"), PreviousDir: std}
+	if err := paths.SaveLocation(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveOldCopy(loc); err != nil {
+		t.Fatal(err)
+	}
+	if exists(profile) {
+		t.Fatal("legacy profile kept")
+	}
+	got, _, _ := paths.LoadLocation()
+	if got.PreviousDir != "" {
+		t.Fatalf("pointer %+v", got)
+	}
+}
+
+func TestRemoveOldCopyKeepsLiveProfile(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+	isolate(t)
+	std, _ := paths.StandardRoot()
+	prev := filepath.Join(t.TempDir(), "old")
+	write(t, filepath.Join(prev, "awesome.db.moved"), []byte("x"))
+	profile := filepath.Join(os.Getenv("APPDATA"), "awesome-reminder.exe")
+	write(t, filepath.Join(profile, "EBWebView", "x"), []byte("x"))
+	loc := paths.Location{DataDir: std, PreviousDir: prev}
+	if err := paths.SaveLocation(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveOldCopy(loc); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(profile, "EBWebView", "x")) {
+		t.Fatal("live profile removed")
+	}
+}
+
+func TestRemoveOldCopyRefusesStaleArgument(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(t.TempDir(), "live")
+	write(t, filepath.Join(dir, "awesome.db"), []byte("x"))
+	// The pointer on disk says dir is live; the caller's copy is stale.
+	if err := paths.SaveLocation(paths.Location{DataDir: dir, PreviousDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	stale := paths.Location{DataDir: filepath.Join(t.TempDir(), "elsewhere"), PreviousDir: dir}
+	if err := RemoveOldCopy(stale); err == nil {
+		t.Fatal("expected refusal")
+	}
+	if !exists(filepath.Join(dir, "awesome.db")) {
+		t.Fatal("live database removed")
+	}
+	// Differing previousDir is refused too.
+	loc := paths.Location{DataDir: dir, PreviousDir: "other"}
+	if err := RemoveOldCopy(loc); err == nil {
+		t.Fatal("expected refusal")
+	}
+}
+
+func TestRemoveOldCopyRefusesSameFileViaLink(t *testing.T) {
+	isolate(t)
+	live := filepath.Join(t.TempDir(), "live")
+	write(t, filepath.Join(live, "awesome.db"), []byte("x"))
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(live, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	loc := paths.Location{DataDir: live, PreviousDir: link}
+	if err := paths.SaveLocation(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveOldCopy(loc); err == nil {
+		t.Fatal("expected refusal")
+	}
+	if !exists(filepath.Join(live, "awesome.db")) {
+		t.Fatal("live database removed")
+	}
+}
+
+func TestMoveAndCheckRefuseTargetInsideSourceVoice(t *testing.T) {
+	isolate(t)
+	std, _ := paths.StandardRoot()
+	src, _ := paths.NewLayout(std)
+	os.MkdirAll(src.Root, 0o755)
+	putItems(t, src.DB(), 1)
+	write(t, filepath.Join(src.Voice(), "m.bin"), []byte("m"))
+	dst, _ := paths.NewLayout(filepath.Join(src.Voice(), "inner"))
+	if c := CheckTarget(dst.Root, &src); c.Err != outsideMsg {
+		t.Fatalf("check: %+v", c)
+	}
+	if err := Move(context.Background(), src, dst, nil); err == nil {
+		t.Fatal("expected refusal")
+	}
+	if !exists(filepath.Join(src.Voice(), "m.bin")) || !exists(src.DB()) {
+		t.Fatal("source touched")
+	}
+}
+
+func TestMoveRetryAfterRenameBeforeSwitch(t *testing.T) {
+	isolate(t)
+	src := newSource(t)
+	dst := newDest(t, "dst")
+	// State left by a run killed after tmp->awesome.db, before the pointer.
+	b, _ := os.ReadFile(src.DB())
+	write(t, dst.DB(), b)
+	if err := paths.SaveLocation(paths.Location{DataDir: src.Root, PendingMove: dst.Root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Move(context.Background(), src, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	if countItems(t, dst.DB()) != 3 {
+		t.Fatal("items missing")
+	}
+	loc, _, _ := paths.LoadLocation()
+	if loc.DataDir != dst.Root || loc.PendingMove != "" {
+		t.Fatalf("pointer %+v", loc)
+	}
+}
+
+func TestMkdirTrackedReturnsStatErrors(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "file")
+	write(t, f, []byte("x"))
+	// A path under a regular file cannot be created and must not be reported
+	// as created folders.
+	if created, err := mkdirTracked(filepath.Join(f, "sub")); err == nil || len(created) != 0 {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+}

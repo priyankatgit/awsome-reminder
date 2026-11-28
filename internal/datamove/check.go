@@ -109,7 +109,8 @@ func CheckTarget(picked string, from *paths.Layout) Check {
 			}
 			return c
 		}
-		if paths.Within(target, from.Root) || paths.Within(from.Root, target) {
+		if paths.Within(target, from.Root) || paths.Within(from.Root, target) ||
+			paths.Within(target, from.Voice()) {
 			c.Err = outsideMsg
 			return c
 		}

@@ -68,8 +68,12 @@ func Target(picked string) (string, error) {
 func mkdirTracked(dir string) ([]string, error) {
 	var missing []string
 	for d := dir; ; {
-		if _, err := os.Stat(d); err == nil {
+		_, err := os.Stat(d)
+		if err == nil {
 			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
 		}
 		missing = append(missing, d)
 		parent := filepath.Dir(d)
