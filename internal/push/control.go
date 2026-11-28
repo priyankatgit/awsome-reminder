@@ -3,14 +3,12 @@ package push
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"awesome-reminder/internal/core"
-	"awesome-reminder/internal/model"
-	"awesome-reminder/internal/store"
 )
 
 const (
@@ -55,6 +53,14 @@ func StartControl(ctx context.Context, d ControlDeps, restart <-chan struct{}) (
 }
 
 func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
+	// since is read once and then kept here across reconnects. Empty (none
+	// stored, or unreadable) polls everything cached, which is safe: applying
+	// a Done twice changes nothing.
+	since, _, err := d.Meta.Meta(ctlSinceKey)
+	if err != nil {
+		log.Printf("push: control: reading last message ID: %v; replaying the cache", err)
+		since = ""
+	}
 	backoff := time.Duration(0)
 	for ctx.Err() == nil {
 		cfg, on := d.Config()
@@ -80,7 +86,7 @@ func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
 			}
 		}()
 		began := time.Now()
-		controlSession(sctx, d, cfg)
+		err := controlSession(sctx, d, cfg, &since)
 		cancel()
 		<-watched
 
@@ -93,6 +99,7 @@ func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
 		if ctx.Err() != nil {
 			return
 		}
+		log.Printf("push: control listener: %v", err) // ntfy errors carry no topic or token
 		switch {
 		case time.Since(began) >= ctlHealthy:
 			backoff = ctlBackoffMin
@@ -113,28 +120,38 @@ func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
 }
 
 // controlSession polls then streams until ctx ends or the connection fails.
-func controlSession(ctx context.Context, d ControlDeps, cfg Config) error {
+// *since is the ID of the last message handled; it advances with each one.
+func controlSession(ctx context.Context, d ControlDeps, cfg Config, since *string) error {
 	c := Client{Server: cfg.Server, Topic: cfg.Topic, Token: cfg.Token, HTTP: d.HTTP}
-	since, _, _ := d.Meta.Meta(ctlSinceKey)
 	handle := func(m CtlMessage) {
 		if id, occ, ok := parseDone(m.Message); ok {
 			// A failed Done is dropped like a stale one: retrying a phone
 			// tap later could complete a newer occurrence.
-			_ = d.Done(id, occ)
+			if err := d.Done(id, occ); err != nil {
+				log.Printf("push: control: done for item %s: %v", id, err)
+			}
 		}
 		if m.ID != "" {
-			since = m.ID
-			_ = d.Meta.SetMeta(ctlSinceKey, since) // kept in memory if it fails
+			*since = m.ID
+			if err := d.Meta.SetMeta(ctlSinceKey, m.ID); err != nil {
+				log.Printf("push: control: saving last message ID: %v", err)
+			}
 		}
 	}
-	msgs, err := c.PollControl(ctx, since)
+	msgs, err := c.PollControl(ctx, *since)
 	if err != nil {
 		return err
 	}
 	for _, m := range msgs {
 		handle(m)
 	}
-	return c.StreamControl(ctx, since, handle)
+	from := *since
+	if from == "" {
+		// Nothing cached: replay from the start of the cache, so a message
+		// posted between the poll and the subscribe is not lost.
+		from = "all"
+	}
+	return c.StreamControl(ctx, from, handle)
 }
 
 // parseDone validates a control message: at most 1 KiB of JSON with
@@ -155,26 +172,14 @@ func parseDone(body string) (id string, occ time.Time, ok bool) {
 }
 
 // ApplyDone applies a phone Done for the occurrence due at occ (whole
-// seconds). A missing or no longer open item is ignored. An item with a due
-// time is completed through c.DoneThrough only when occ is its current due
-// time: a different occurrence means a computer already moved the item on
-// (recurring advance, edit, snooze to a new due) and the phone tap is stale,
-// so it must not complete a later occurrence. An item without a due time (a
-// reply) accepts any occ.
+// seconds) through c.DoneOccurrence, which completes it only while occ is
+// still live: the item is open and occ is its due time, or (recurring) a
+// later occurrence of its rule not in the future, which this computer has
+// not advanced to yet (it was asleep). Any other occ means a computer already
+// moved the item on (advance, edit, snooze to a new due) and the phone tap is
+// stale, so it must not complete a later occurrence. An item without a due
+// time (a reply) accepts any occ. Stale, missing or closed: nil, no change.
 func ApplyDone(c *core.Core, itemID string, occ time.Time) error {
-	it, err := c.Item(itemID)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if it.Status != model.StatusOpen {
-		return nil
-	}
-	if it.DueAt != nil && occ.Unix() != it.DueAt.Unix() {
-		return nil
-	}
-	_, err = c.DoneThrough(itemID, occ)
+	_, err := c.DoneOccurrence(itemID, occ)
 	return err
 }

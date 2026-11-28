@@ -68,25 +68,70 @@ func TestApplyDoneCurrentOccurrence(t *testing.T) {
 
 func TestApplyDoneStaleOccurrence(t *testing.T) {
 	e := newCoreEnv(t)
+	e.now = time.Date(2026, 11, 25, 8, 0, 0, 0, ctlNY)
 	it := e.capture(t, "every day 9am standup")
 	today9 := time.Date(2026, 11, 25, 9, 0, 0, 0, ctlNY)
 	tomorrow9 := today9.AddDate(0, 0, 1)
-	// The computer already moved it on (Done at the desk, or advance).
-	if it.DueAt == nil || !it.DueAt.Equal(tomorrow9) {
-		if _, err := e.c.DoneThrough(it.ID, today9); err != nil {
-			t.Fatal(err)
-		}
+	if it.DueAt == nil || !it.DueAt.Equal(today9) {
+		t.Fatalf("due = %v, want %v", it.DueAt, today9)
+	}
+	// Done at the desk at 09:01: the computer moves it on to tomorrow.
+	e.now = time.Date(2026, 11, 25, 9, 1, 0, 0, ctlNY)
+	if _, err := e.c.DoneThrough(it.ID, today9); err != nil {
+		t.Fatal(err)
 	}
 	before := e.get(t, it.ID)
-	if before.DueAt == nil || !before.DueAt.Equal(tomorrow9) {
+	if !before.DueAt.Equal(tomorrow9) {
 		t.Fatalf("setup: due = %v, want %v", before.DueAt, tomorrow9)
 	}
+	e.now = time.Date(2026, 11, 25, 9, 3, 0, 0, ctlNY) // then the phone tap for today
 	if err := ApplyDone(e.c, it.ID, today9); err != nil {
 		t.Fatal(err)
 	}
 	got := e.get(t, it.ID)
 	if got.Status != model.StatusOpen || !got.DueAt.Equal(tomorrow9) || !got.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("got status %s due %v updated %v, want unchanged", got.Status, got.DueAt, got.UpdatedAt)
+	}
+}
+
+// The computer slept through tomorrow's 09:00 and has not advanced the item
+// (DueAt still today 09:00) when the phone tap for tomorrow arrives.
+func TestApplyDoneLaterOccurrenceNotYetAdvanced(t *testing.T) {
+	today9 := time.Date(2026, 11, 25, 9, 0, 0, 0, ctlNY)
+	tomorrow9 := today9.AddDate(0, 0, 1)
+	for _, tc := range []struct {
+		name    string
+		occ     time.Time
+		applied bool
+	}{
+		{"real occurrence", tomorrow9, true},
+		{"not on the rule", tomorrow9.Add(30 * time.Minute), false},
+		{"in the future", tomorrow9.AddDate(0, 0, 1), false},
+		{"before due", today9.AddDate(0, 0, -1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newCoreEnv(t)
+			e.now = time.Date(2026, 11, 25, 8, 0, 0, 0, ctlNY)
+			it := e.capture(t, "every day 9am standup")
+			if it.DueAt == nil || !it.DueAt.Equal(today9) {
+				t.Fatalf("due = %v, want %v", it.DueAt, today9)
+			}
+			e.now = tomorrow9.Add(3 * time.Minute)
+			if err := ApplyDone(e.c, it.ID, tc.occ); err != nil {
+				t.Fatal(err)
+			}
+			got := e.get(t, it.ID)
+			want := today9
+			if tc.applied {
+				want = tomorrow9.AddDate(0, 0, 1)
+			}
+			if got.Status != model.StatusOpen || !got.DueAt.Equal(want) {
+				t.Fatalf("got status %s due %v, want open %v", got.Status, got.DueAt, want)
+			}
+			if !tc.applied && !got.UpdatedAt.Equal(it.UpdatedAt) {
+				t.Fatalf("ignored tap changed the item: updated %v", got.UpdatedAt)
+			}
+		})
 	}
 }
 
@@ -319,6 +364,11 @@ func TestControlRestartOnConfigChange(t *testing.T) {
 	restart := make(chan struct{}, 1)
 	start(t, e, restart)
 	waitFor(t, "stream on A", func() bool { return e.srv.Subscribers(testTopic+"-ctl") == 1 })
+	// Nothing cached yet: the stream replays the whole cache, so a message
+	// posted between the poll and the subscribe is not lost.
+	if r := e.srv.Requests(); r[len(r)-1].Query != "since=all" {
+		t.Fatalf("first stream query = %q, want since=all", r[len(r)-1].Query)
+	}
 
 	const topicB = "ar-othertopic"
 	e.mu.Lock()
