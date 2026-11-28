@@ -3024,3 +3024,36 @@ html[data-view="setup"] body {
 .setup-foot:empty {
   display: none;
 }
+
+/* ===== Settings: Data folder section (data-folder-settings.ts) ===== */
+.settings-data-folder [hidden] {
+  display: none;
+}
+
+.data-folder-path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.data-folder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.data-folder-confirm-text {
+  margin: 0;
+}
+
+.data-folder-old {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}

@@ -66,6 +66,10 @@ type Deps struct {
 	// Sync is the sync controller behind the Sync* bindings; nil reports
 	// sync as off.
 	Sync *syncController
+	// DataDir is the data folder in use; Restart quits and relaunches the app
+	// (DataFolder bindings).
+	DataDir string
+	Restart func()
 }
 
 // Status is app health shown in the tray tooltip and the settings window.

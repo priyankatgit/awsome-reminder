@@ -70,6 +70,33 @@ export interface AlertCard {
 }
 
 /**
+ * DataFolderInfo is what the Settings "Data folder" section shows.
+ */
+export interface DataFolderInfo {
+    "path": string;
+
+    /**
+     * e.g. "84 MB"
+     */
+    "usedText": string;
+
+    /**
+     * e.g. "41 GB free"; "" when unknown
+     */
+    "freeText": string;
+
+    /**
+     * "" when there is no old copy
+     */
+    "previousDir": string;
+
+    /**
+     * size of the old copy
+     */
+    "previousText": string;
+}
+
+/**
  * FolderOption is one place the data can live.
  */
 export interface FolderOption {

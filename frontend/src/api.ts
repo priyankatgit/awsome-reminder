@@ -6,12 +6,12 @@ import { Service, SetupService, VoiceService } from "../bindings/awesome-reminde
 import type { Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, FolderOption, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, FolderOption, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, DataFolderInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Check as SetupCheck, Progress as SetupProgress } from "../bindings/awesome-reminder/internal/datamove/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
+export type { Attachment, DataFolderInfo, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
 
 /** What the setup page shows (internal/app/setup_service.go); options never null. */
 export type SetupInfo = Omit<GenSetupInfo, "options"> & { options: FolderOption[] };
@@ -167,6 +167,15 @@ export const api = {
     quit: (): Promise<void> => SetupService.Quit(),
     onProgress: (cb: (p: SetupProgress) => void): (() => void) => on<SetupProgress>(events.setupProgress, cb),
     onDone: (cb: (d: SetupDone) => void): (() => void) => on<SetupDone>(events.setupDone, cb),
+  },
+  /** Settings "Data folder" section (internal/app/datafolder.go). */
+  dataFolder: {
+    info: (): Promise<DataFolderInfo> => Service.DataFolder(),
+    check: (picked: string): Promise<SetupCheck> => Service.CheckDataFolder(picked),
+    /** Rejects "confirm-adopt" when the folder holds data and needs confirming; success restarts the app. */
+    change: (picked: string, confirm: boolean): Promise<void> => Service.ChangeDataFolder(picked, confirm),
+    removeOldCopy: (): Promise<void> => Service.RemoveOldCopy(),
+    open: (): Promise<void> => Service.OpenDataFolder(),
   },
   /** Folder picker; "" when cancelled. */
   chooseFolder: async (title: string): Promise<string> => {

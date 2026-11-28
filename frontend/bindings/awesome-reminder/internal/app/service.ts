@@ -18,6 +18,9 @@ import * as cloudsync$0 from "../cloudsync/models.js";
 import * as core$0 from "../core/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as datamove$0 from "../datamove/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as model$0 from "../model/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -50,6 +53,29 @@ export function Capture(input: string): $CancellablePromise<model$0.Item> {
  */
 export function CaptureReply(input: string, m: reply$0.Meta): $CancellablePromise<model$0.Item> {
     return $Call.ByID(3927535266, input, m);
+}
+
+/**
+ * ChangeDataFolder switches to the picked folder and restarts. A folder that
+ * already holds data needs confirm (error "confirm-adopt") and is used as it
+ * is; any other folder gets a copy of the current data at the next start.
+ */
+export function ChangeDataFolder(picked: string, confirm: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3082898576, picked, confirm);
+}
+
+/**
+ * CheckDataFolder inspects a folder picked for the new data folder.
+ */
+export function CheckDataFolder(picked: string): $CancellablePromise<datamove$0.Check> {
+    return $Call.ByID(3260945848, picked);
+}
+
+/**
+ * DataFolder describes the data folder in use and any old copy left behind.
+ */
+export function DataFolder(): $CancellablePromise<$models.DataFolderInfo> {
+    return $Call.ByID(1997763776);
 }
 
 /**
@@ -120,6 +146,13 @@ export function ItemDetail(id: string): $CancellablePromise<core$0.Detail> {
 }
 
 /**
+ * OpenDataFolder shows the data folder in the file manager.
+ */
+export function OpenDataFolder(): $CancellablePromise<void> {
+    return $Call.ByID(1560067040);
+}
+
+/**
  * OpenList shows the list window, focusing focusItemID if not "".
  */
 export function OpenList(focusItemID: string): $CancellablePromise<void> {
@@ -154,6 +187,13 @@ export function PendingAlerts(): $CancellablePromise<$models.AlertCard[] | null>
  */
 export function Preview(input: string): $CancellablePromise<core$0.Preview> {
     return $Call.ByID(2092891144, input);
+}
+
+/**
+ * RemoveOldCopy deletes what the app left in the previous data folder.
+ */
+export function RemoveOldCopy(): $CancellablePromise<void> {
+    return $Call.ByID(1298836840);
 }
 
 /**

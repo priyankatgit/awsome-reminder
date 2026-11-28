@@ -246,6 +246,8 @@ func Run(opts Options) error {
 		Emit:          func(name string, data any) { emit(name, data) },
 		OpenURL:       app.Browser.OpenURL,
 		Sync:          syncCtl,
+		DataDir:       lay.Root,
+		Restart:       func() { RequestRestart(); app.Quit() },
 	})
 	app.RegisterService(application.NewService(svc))
 	// Recurring reminders not marked done move on to their latest occurrence

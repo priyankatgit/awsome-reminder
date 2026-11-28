@@ -2,13 +2,12 @@
 // decision at a time: options, a confirm panel, the progress of a move, or the
 // "your data folder isn't available" page. Copy follows the data-folder spec.
 import { api, errorText, type SetupCheck, type SetupInfo, type SetupProgress } from "./api";
+import { isConfirmAdopt, isConfirmFresh } from "./confirm-errors";
 import { el } from "./dom";
 import { icons } from "./icons";
 
 type Kind = "standard" | "beside" | "other";
 
-const CONFIRM_ADOPT = "confirm-adopt";
-const CONFIRM_FRESH = "confirm-fresh";
 
 const NETWORK_WARNING = "Network folders can damage the database if the connection drops.";
 const CLOUD_WARNING = "Cloud-synced folders can damage the database or create conflicting copies. Sync across machines with Atlas instead.";
@@ -241,8 +240,8 @@ export function mountSetup(root: HTMLElement): void {
       await api.setup.choose(kind, path, confirm);
     } catch (err) {
       const text = errorText(err);
-      if (text.includes(CONFIRM_ADOPT)) return showConfirm("adopt", kind, path);
-      if (text.includes(CONFIRM_FRESH)) return showConfirm("fresh", kind, path);
+      if (isConfirmAdopt(text)) return showConfirm("adopt", kind, path);
+      if (isConfirmFresh(text)) return showConfirm("fresh", kind, path);
       chooseErr = text;
       return back();
     }
