@@ -39,6 +39,7 @@ vi.mock("./api", () => ({
   isWindows: () => true,
 }));
 vi.mock("./sync-settings", () => ({ mountSyncSection: () => {} }));
+vi.mock("./voice-settings", () => ({ mountVoiceSection: () => {} }));
 import { mountSettings } from "./settings";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));

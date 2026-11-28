@@ -25,7 +25,9 @@ type Engine interface {
 	// Warm starts the engine ahead of a Transcribe (no-op for engines that
 	// cannot stay loaded).
 	Warm(ctx context.Context) error
-	Transcribe(ctx context.Context, wav []byte) (string, error)
+	// Transcribe returns the raw text of wav. A non-empty prompt (recent text)
+	// biases whisper towards the same words and style.
+	Transcribe(ctx context.Context, wav []byte, prompt string) (string, error)
 	// Running reports whether an engine process is alive.
 	Running() bool
 	// Close stops any engine process now.
@@ -300,7 +302,7 @@ func (s *ServerEngine) Warm(ctx context.Context) error {
 }
 
 // Transcribe sends wav to the server and returns its text.
-func (s *ServerEngine) Transcribe(ctx context.Context, wav []byte) (string, error) {
+func (s *ServerEngine) Transcribe(ctx context.Context, wav []byte, prompt string) (string, error) {
 	p, err := s.acquire(ctx)
 	if err != nil {
 		return "", err
@@ -318,6 +320,9 @@ func (s *ServerEngine) Transcribe(ctx context.Context, wav []byte) (string, erro
 	}
 	_ = mw.WriteField("response_format", "json")
 	_ = mw.WriteField("temperature", "0")
+	if prompt != "" {
+		_ = mw.WriteField("prompt", prompt)
+	}
 	if err := mw.Close(); err != nil {
 		return "", err
 	}

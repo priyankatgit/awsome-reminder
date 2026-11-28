@@ -45,6 +45,30 @@ func CleanTranscript(s string) string {
 	return s
 }
 
+// hallucinations are what whisper makes up from silence or noise.
+var hallucinations = map[string]bool{
+	"thank you": true, "thanks for watching": true,
+	"thank you for watching": true, "you": true, "bye": true,
+}
+
+// DropHallucination returns "" when a segment with under 1.5 s of speech is
+// only one of whisper's known silence hallucinations; otherwise text.
+func DropHallucination(text string, speechMs int) string {
+	if speechMs >= 1500 {
+		return text
+	}
+	n := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(".,!?", r) {
+			return -1
+		}
+		return r
+	}, strings.ToLower(text))
+	if hallucinations[strings.TrimSpace(n)] {
+		return ""
+	}
+	return text
+}
+
 var oclock = regexp.MustCompile(`(?i)\s*o['’]clock\b`)
 
 var smallNumbers = map[string]int{

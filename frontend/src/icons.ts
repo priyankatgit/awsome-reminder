@@ -40,6 +40,7 @@ import {
   Trash2,
   TextQuote,
   TriangleAlert,
+  Undo2,
   X,
 } from "lucide";
 
@@ -109,6 +110,8 @@ export const icons = {
   reply: render(Reply as IconNode),
   replyOff: render(MessageSquareOff as IconNode),
   quote: render(TextQuote as IconNode),
+  // Review list (Phase 3)
+  undo: render(Undo2 as IconNode),
 } as const;
 
 export type IconName = keyof typeof icons;

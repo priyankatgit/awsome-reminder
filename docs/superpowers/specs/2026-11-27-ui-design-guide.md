@@ -115,19 +115,28 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - **Priority chips (Phase 1.6):** a row of `High` `Med` `Low` chips under the input (`--prio-chip-height` 24 px, an 8 px `--prio-*` dot plus the word, so it never relies on colour alone). Chips are buttons with `aria-pressed` and `aria-keyshortcuts`, and come after the input and the time picker in Tab order. `Alt+1/2/3` set the priority and `Alt+0` clears it. A chip edits the typed token (`!high` / `!med` / `!low`) in the input, which stays the single source of truth; the active chip follows the parse. The hint row adds `Alt+1–3 priority` and `Alt+0 clear`.
 - **Live reminder indicator (Phase 1.6):** when the preview has a due time, the lead icon becomes a `--remind` bell with a spring pop (`--dur-pop` 280 ms on `--ease-spring-pop`, `scale(--pop-scale → 1)` + opacity) and then rings once (see **Motion**; neither under reduced motion), and a `chip-remind` badge "Reminder · Thu 26 Nov, 17:00" (`--remind-text` on `--remind-tint`) leads the preview row. Removing the time words fades both out (`--dur-pop-exit`, 180 ms). `role="status"` announces "Reminder detected for …" and "Reminder removed". The mic keeps the right action slot.
 
-### Listening state (voice phase, designed now)
+### Listening state (Phase 3: multi-task dictation)
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  ◉ Listening…  ▁▃▅▇▅▃▁▂▄▆▄▂  0:04                    [■]   │
-│  Speak naturally — "remind me tomorrow at 5 to call Sam"   │
+│  1  ☐  refactor auth                 To-do · #backend    × │  ← review rows (hands-free spec §5)
+│  2  🔔 check deploy        Reminder · Thu 26 Nov 17:00   × │
+├────────────────────────────────────────────────────────────┤
+│  🎙 call Sam about the invoice tomorrow at 10 ···      [■]  │  ← input stays visible and editable; ··· while a piece is transcribed
+│     Reminder · Fri 27 Nov 10:00                            │  ← live preview of the current task
 └────────────────────────────────────────────────────────────┘
-   auto-stops after a pause · Esc cancel · Ctrl+M stop
+   ● Listening… ▁▃▅▇▅▃▁ 0:42   "new task" next   "save all" done   Esc stop
 ```
-- The mic button (`mic` icon, `aria-label="Start dictation"`, `aria-pressed`) becomes a `square` stop button in `--danger`.
-- A pulsing ring around the button: 1.4 s loop, `scale 1→1.35`, `opacity .5→0`, `--danger`. Under reduced motion it's a static ring.
-- Live waveform: 24 bars of 3px width with 2px gap, height driven by RMS level (canvas, ≤ 30 fps), color `--danger` at 80%.
-- After stop, the label changes to "Transcribing…" with a 3-dot shimmer. The text then types into the input (fast fade-in, not char-by-char), the normal preview appears, and focus returns to the input. **Enter saves** — dictation never auto-saves.
-- `role="status"` announces "Listening", "Transcribing", "Ready to save".
+(The bracketed glyphs and the bell, check-square and mic are Lucide icons in the real UI.)
+- Every dictation (mic button, `Ctrl+M`) is a session that can hold several tasks: the audio is cut at pauses and each piece is transcribed while recording goes on. Spoken phrases drive the review list: "new task" moves the input into a new row, "scratch that" clears the input (or drops the last row), "save all" saves everything with an Undo note, "cancel" discards with an Undo note.
+- **The input stays visible** while listening: it shows the current task as it grows, with the dictation fade-in for each piece, and the user can still type in it. The preview row under it previews the current task; while the input is empty it shows "Speak naturally — "remind me tomorrow at 5 pm to call Sam"" instead. The leading icon is a `mic` in `--danger`.
+- While a piece is being transcribed, the 3-dot shimmer (`cap-dots`, `--fg-muted`) sits at the end of the input.
+- **The listening indicators replace the hint row**: an 8 px `--danger` pulse dot (`--listen-dot`, opacity pulse over `--dur-pulse`, static under reduced motion), "Listening…" in `--danger-text`, the waveform (24 bars of 3px with 2px gap, `--wave-height` 16 px, canvas ≤ 30 fps, `--danger` at 80%) and the timer in mono `--fg-muted`. Then the hints `"new task" next`, `"save all" done`, `↵ save N` (only when Enter would save more than one task: rows plus a non-empty input), `Esc stop`. In reply mode dictation is one line of text, so the hints read `auto-stops after a pause`, `Esc stop`.
+- The mic button (`mic` icon, `aria-label="Start dictation"`, `aria-pressed`) stays a `square` stop button in `--danger` for the whole session, with a pulsing ring: 1.4 s loop, `scale 1→1.35`, `opacity .5→0`, `--danger`. Under reduced motion it's a static ring.
+- The session ends 2 s after the last speech (8 s after a "new task", so the next task can start), on `Ctrl+M` or the stop button, on Enter (which then saves), or after 5 minutes ("Stopped after 5 minutes", the tasks stay). With nothing said for 8 s: "Didn't catch that. Try again closer to the mic." After it stops, the label reads "Transcribing…" (the input keeps its shimmer) until the last pieces land; the pulse dot and waveform hide.
+- **Esc while listening** stops listening and keeps everything; only audio not yet cut into a piece is dropped, and pending pieces still land. **Esc while transcribing** (a second Esc) gives up on the pending pieces: what already landed stays, and the error row says "Couldn't transcribe the last bit: cancelled". Window blur releases the mic the same way as Esc while listening; pending pieces land in the draft, and a blur before the mic opens stops the start.
+- A piece that fails shows "Couldn't transcribe the last bit: …" in the error row and the session goes on. A piece with no answer after 30 s is cancelled and fails the same way ("… timed out"), so a stuck engine never holds the box.
+- One task said and a pause gives the Phase 1.5 result: the text in the input, the preview, "Ready to save". **Enter saves**: dictation never auto-saves, except by the spoken "save all".
+- `role="status"` announces "Listening", "Task 2 added", "Removed", "Stopped listening", "Ready to save".
 
 ### Reply mode (Replies owed)
 - The reply hotkey (or `--reply`) opens the same box with `data-mode="reply"`: the line is pre-filled with the message in double quotes (`Reply to Priya: "can you check the deploy before 5?"`), so its times, `#tags` and `!priority` stay literal text and the saved title drops the quote marks; a `"` inside the message becomes `”`. The preview row starts with a `Reply owed` chip, then `for` and a person chip, then `from Teams` and the nudge plan in mono (`nudge in 2h, then 9:00`; with a due time, `alerts before 17:00, then daily 9:00`). The leading icon is the reply arrow (it swaps in with the bell's pop); the nudge summary stands in for the reminder bell.
@@ -214,6 +223,7 @@ Tokens live in `tokens.css` (the "Motion" blocks); JS reads them through `fronte
 - Save button at the bottom-right (accent); unsaved changes enable it.
 - **Replies group** (a `fieldset` titled "Replies", after the capture hotkey): the reply hotkey recorder (same pill as the capture hotkey, with its own inline error; the same key as the capture hotkey is refused), **Working days** as seven day chips, **End of day** as a time field, and an **End-of-day sweep** switch.
 - "Show pending count" switch (Phase 1.6) after "Start at login"; its help text names the tray icon plus the taskbar (Windows) or the Dock (macOS).
+- **Voice section** (Phase 3, `voice-settings.ts`, a `settings-sync`-style section after Sync; outside the form and its Save button, so it never dirties the form; says "Voice settings apply right away."): a **Listen for "Hey Awesome"** switch with the privacy help text (mic stays on, audio never stored or sent, about 70 MB), then a **Play a sound when it hears you** switch (disabled while the wake word is off), then a status line (`Listening for "Hey Awesome"`, `Starting…`, or the error in `--danger` with **Try again**). Turning the wake switch on with the files absent opens an inline consent box (the capture box's download panel look: `cap-voice-*` and `cap-progress` classes) with the total download (wake files plus dictation files when those are absent too), **Download** (primary, focused) and **Not now**; during the download the box shows a `role="progressbar"` bar with sizes and **Cancel** (dictation first, then the wake word). When dictation is unsupported the wake switch is disabled and the hint shows under it.
 
 ## Sync status (Phase 2)
 Only exists once the user has connected an Atlas cluster; with no connection string nothing below is drawn. Wording is in `internal/app/synctext.go` (tray) and `frontend/src/sync-status.ts` (pill); the two share one vocabulary.

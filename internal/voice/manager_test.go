@@ -18,6 +18,7 @@ type stubEngine struct {
 	text   string
 	calls  int
 	warmed int
+	prompt string
 }
 
 func (s *stubEngine) Warm(context.Context) error {
@@ -27,10 +28,11 @@ func (s *stubEngine) Warm(context.Context) error {
 	return nil
 }
 
-func (s *stubEngine) Transcribe(context.Context, []byte) (string, error) {
+func (s *stubEngine) Transcribe(_ context.Context, _ []byte, prompt string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
+	s.prompt = prompt
 	return s.text, nil
 }
 func (s *stubEngine) Running() bool { return false }
@@ -293,5 +295,30 @@ func TestTranscribeCleansText(t *testing.T) {
 	}
 	if f.engine.calls != 1 {
 		t.Errorf("engine calls = %d, want 1", f.engine.calls)
+	}
+}
+
+func TestTranscribeSegmentFilters(t *testing.T) {
+	f := newFixture(t, "windows", modelBody, nil)
+	f.engine.text = " Thank you."
+	m := NewManager(f.cfg)
+	if err := m.Install(); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, m, "ready")
+	pcm := pcmB64(make([]int16, MinSamples))
+	got, err := m.TranscribeSegment(context.Background(), pcm, "buy milk", 800)
+	if err != nil || got != "" {
+		t.Errorf("short segment = %q, %v; want empty", got, err)
+	}
+	if f.engine.prompt != "buy milk" {
+		t.Errorf("prompt = %q", f.engine.prompt)
+	}
+	got, err = m.TranscribeSegment(context.Background(), pcm, "", 2000)
+	if err != nil || got != "Thank you" {
+		t.Errorf("long segment = %q, %v", got, err)
+	}
+	if _, err := m.TranscribeSegment(context.Background(), pcmB64(make([]int16, 10)), "", 800); !errors.Is(err, ErrTooShort) {
+		t.Errorf("short audio: err = %v", err)
 	}
 }

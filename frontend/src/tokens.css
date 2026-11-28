@@ -105,6 +105,9 @@
   --chip-height: 20px;
   --keycap-min: 20px;
   --control-height: 32px;
+  /* Capture box review list: rows shown before it scrolls. */
+  --review-max-rows: 6;
+  --review-row-height: 32px;
 
   /* Capture box */
   --capture-input-row: 64px;
@@ -217,7 +220,8 @@
   --wave-bar: 3px;
   --wave-gap: 2px;
   --wave-width: 118px; /* 24 bars * 3px + 23 gaps * 2px */
-  --wave-height: 24px;
+  --wave-height: 16px; /* Phase 3: the waveform sits in the hint row (24px in the input row before) */
+  --listen-dot: 8px; /* Phase 3: the pulse dot before "Listening…" */
   --wave-opacity: 0.8;
   --wave-fps: 30;
   --pulse-scale: 1.35;

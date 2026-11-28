@@ -22,7 +22,7 @@ vi.mock("./api", () => ({
     hideCapture: async () => {},
     resizeCapture: async () => {},
     withDue: async (input: string) => input,
-    voice: { status: async () => ({}), install: async () => {}, cancelInstall: async () => {}, warm: () => Promise.resolve(), transcribe: () => Promise.resolve("") },
+    voice: { status: async () => ({}), install: async () => {}, cancelInstall: async () => {}, warm: () => Promise.resolve(), transcribe: () => Promise.resolve(""), wakeStatus: async () => ({ chime: true }) },
   },
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   events: { captureOpen: "capture:open", replyOpen: "reply:open" },

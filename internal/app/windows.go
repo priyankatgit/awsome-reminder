@@ -75,6 +75,11 @@ type wailsWindows struct {
 	// replyOpen is set by ShowReply and cleared when the capture box hides
 	// or opens in normal mode.
 	replyOpen atomic.Bool
+	// captureVisible is true from the moment the capture box starts to show
+	// (any mode) until HideCapture hides it. It is the wake word's Suppress:
+	// that runs on the wake helper's output reader, which Wake.SetEnabled and
+	// Wake.Close wait for, so it must stay a lock-free atomic.
+	captureVisible atomic.Bool
 
 	// Set by Run before the app starts.
 	onAlertsClosed   func() // the user closed the alert window (Alt+F4)
@@ -475,18 +480,48 @@ func (w *wailsWindows) newAlert() popup {
 // tells the frontend to reset and focus its input.
 func (w *wailsWindows) ShowCapture() {
 	w.replyOpen.Store(false)
+	w.captureShown()
 	w.app.Event.Emit(EventCaptureOpen)
 	w.showCapture()
 	log.Printf("capture: shown")
 }
+
+// ShowCaptureForWake opens the capture box for "Hey Awesome": placed like
+// ShowCapture, but shown without activating it (showNoActivate), so the
+// app the user is in keeps keyboard focus; Focus is never called. The
+// frontend is told first to start a wake-mode dictation (EventCaptureWake),
+// so it can arm its keyboard guard before the window shows (the page also
+// never focuses its input on a window focus by itself).
+// A click into the box, the hotkey or Ctrl+M gives it focus. It does
+// nothing if the box was opened another way since the wake was detected.
+func (w *wailsWindows) ShowCaptureForWake() {
+	if !w.captureVisible.CompareAndSwap(false, true) {
+		log.Printf("capture: already open, wake ignored")
+		return
+	}
+	w.replyOpen.Store(false)
+	w.app.Event.Emit(EventCaptureWake)
+	w.placeCapture()
+	showNoActivate(w.capture)
+	log.Printf("capture: shown for the wake word")
+}
+
+// CaptureVisible reports whether the capture box is showing (or about to).
+// Lock-free; safe to call from the wake helper's output reader.
+func (w *wailsWindows) CaptureVisible() bool { return w.captureVisible.Load() }
+
+func (w *wailsWindows) captureShown()  { w.captureVisible.Store(true) }
+func (w *wailsWindows) captureHidden() { w.captureVisible.Store(false) }
 
 // ShowReply tells the frontend to open the capture box in reply mode with p,
 // then shows and focuses it like ShowCapture. With p.KeepText the box is
 // already open: it is only focused, where it is.
 func (w *wailsWindows) ShowReply(p ReplyPrefill) {
 	w.replyOpen.Store(true)
+	w.captureShown() // the reply box is the capture box: wakes stay suppressed
 	w.app.Event.Emit(EventReplyOpen, p)
 	if p.KeepText {
+		restoreActivation(w.capture) // a wake-opened box may still be no-focus
 		w.capture.Focus()
 		log.Printf("capture: switched to reply mode")
 		return
@@ -510,19 +545,28 @@ func (w *wailsWindows) CaptureMode() captureMode {
 // showCapture centers the capture box on the screen under the mouse cursor
 // (falling back to the window's current screen), shows and focuses it.
 func (w *wailsWindows) showCapture() {
+	w.placeCapture()
+	restoreActivation(w.capture) // undo a wake show's no-focus state
+	w.capture.Show()
+	w.capture.Focus()
+}
+
+// placeCapture centers the capture box on the screen under the mouse cursor,
+// falling back to the window's current screen.
+func (w *wailsWindows) placeCapture() {
 	if s := cursorScreen(w.app); s != nil {
 		w.capture.SetScreen(s)
 	} else {
 		w.capture.Center()
 	}
-	w.capture.Show()
-	w.capture.Focus()
 }
 
-// HideCapture hides the capture box.
+// HideCapture hides the capture box. Wakes are allowed again only once it
+// is hidden.
 func (w *wailsWindows) HideCapture() {
 	w.replyOpen.Store(false)
 	w.capture.Hide()
+	w.captureHidden()
 }
 
 // ResizeCapture sets the capture window height to fit its content.

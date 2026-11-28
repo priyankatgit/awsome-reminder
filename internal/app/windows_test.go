@@ -113,6 +113,45 @@ func TestFocusSlotTakeClears(t *testing.T) {
 	}
 }
 
+// CaptureVisible (the wake word's Suppress) follows the capture box: set by
+// every way of showing it (hotkey, reply, wake), cleared when it hides. It is
+// a plain atomic, so the wake helper's output reader never waits on a lock.
+func TestCaptureVisibleTracksShowHide(t *testing.T) {
+	var w wailsWindows
+	if w.CaptureVisible() {
+		t.Fatal("visible before any show")
+	}
+	steps := []struct {
+		name string
+		do   func()
+		want bool
+	}{
+		{"show", w.captureShown, true},
+		{"hide", w.captureHidden, false},
+		{"wake-show", w.captureShown, true},
+		{"hide again", w.captureHidden, false},
+		{"reply-show", w.captureShown, true},
+	}
+	for _, s := range steps {
+		s.do()
+		if got := w.CaptureVisible(); got != s.want {
+			t.Fatalf("after %s: CaptureVisible %v, want %v", s.name, got, s.want)
+		}
+	}
+}
+
+// A wake that lands after the box was opened another way (the hotkey was
+// pressed between the detection and the show) leaves the box alone: no
+// window call (this test has none), no capture:wake for a box in use.
+func TestShowCaptureForWakeIgnoredWhileVisible(t *testing.T) {
+	var w wailsWindows
+	w.captureShown()
+	w.ShowCaptureForWake()
+	if !w.CaptureVisible() {
+		t.Fatal("box no longer counted as visible")
+	}
+}
+
 type fakePopup struct {
 	n         int
 	placed    []int

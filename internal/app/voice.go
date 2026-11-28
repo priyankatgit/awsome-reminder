@@ -25,6 +25,9 @@ func init() {
 // the core wiring.
 type VoiceService struct {
 	m *voice.Manager
+	w *voice.Wake // "Hey Awesome" (wake.go)
+
+	wakeSubs wakeSubs // wake status listeners (the tray)
 }
 
 // Status reports whether voice is ready, downloadable or unsupported.
@@ -45,14 +48,23 @@ func (v *VoiceService) Transcribe(ctx context.Context, pcm string) (string, erro
 	return v.m.Transcribe(ctx, pcm)
 }
 
-// ServiceShutdown stops the engine and any download when the app quits.
+// TranscribeSegment transcribes one piece of a continuous dictation; prompt
+// is the recent text and speechMs the speech in the piece.
+func (v *VoiceService) TranscribeSegment(ctx context.Context, pcm, prompt string, speechMs int) (string, error) {
+	return v.m.TranscribeSegment(ctx, pcm, prompt, speechMs)
+}
+
+// ServiceShutdown stops the engine, the wake word helper and any download
+// when the app quits.
 func (v *VoiceService) ServiceShutdown() error {
 	v.m.Close()
+	v.w.Close()
 	return nil
 }
 
-// registerVoice binds VoiceService to app.
-func registerVoice(app *application.App) {
+// registerVoice binds VoiceService to app and starts the wake word if it is
+// on and installed. A wake opens win's capture box without focus.
+func registerVoice(app *application.App, win *wailsWindows) *VoiceService {
 	dir, err := paths.VoiceDir()
 	if err != nil {
 		log.Printf("voice dir: %v", err)
@@ -62,5 +74,9 @@ func registerVoice(app *application.App) {
 		Dir:      dir,
 		OnStatus: func(s voice.Status) { app.Event.Emit(EventVoiceStatus, s) },
 	})
-	app.RegisterService(application.NewService(&VoiceService{m: m}))
+	vs := &VoiceService{m: m}
+	vs.w = newWake(app, win, dir, vs.wakeSubs.emit)
+	app.RegisterService(application.NewService(vs))
+	vs.w.Start()
+	return vs
 }

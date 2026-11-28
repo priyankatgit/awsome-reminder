@@ -79,14 +79,14 @@ Priority shows as a coloured dot before the item text (red High, amber Medium, b
 
 ### Voice
 
-Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself after about 1.5 seconds of silence (or at 30 seconds). Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
+Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself about 2 seconds after you finish speaking (8 seconds after "new task", while you think of the next one; 8 seconds if nothing is said at all), or after 5 minutes. Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
 
 - Say "hashtag" or "hash tag" before a word to tag it (`#backend`). Spoken times such as "five p.m." and "in two hours" become `5 pm` and `in 2 hours` so the parser understands them.
 - **Everything stays on your computer.** Speech is turned into text locally by [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with the English `base.en` model. No audio or text is sent anywhere.
 - **First use asks before downloading.** The first time you press the mic, the box explains what is needed and offers a one-time download: about 9 MB for the speech engine and 148 MB for the model (157 MB on Windows). Nothing is downloaded until you click **Download**. A progress bar shows the download; you can close the box and it continues. Each file is checked against a pinned SHA-256 before it is used (whisper.cpp release `b5454` = v1.9.5).
 - **No memory cost while idle.** The speech engine starts when you start listening (so the model loads while you talk), and exits 30 seconds after your last dictation. It uses at most half your CPU cores (8 at most) and no GPU. Measured on Windows 11 (16 cores): while you dictate the engine takes about 250 MB of working set (about 740 MB committed); once it exits, voice adds nothing but one small WebView2 audio process (about 16 MB).
 - **Microphone access.** On Windows, if dictation says the microphone is blocked, turn on Settings › Privacy & security › Microphone › "Let desktop apps access your microphone". On macOS the system asks once. If the box loses focus while listening, the recording is dropped and the mic is released.
-- **Removing voice:** delete the `voice` folder listed under "Where data lives".
+- **Removing voice:** delete the `voice` folder listed under "Where data lives" (this also removes the wake word, see Hands-free voice).
 
 Engine per OS:
 
@@ -95,6 +95,51 @@ Engine per OS:
 | Windows x64 | Official whisper.cpp release build, downloaded on consent. It needs the Microsoft Visual C++ Redistributable (x64), which most PCs already have; if it is missing the box links to [the installer](https://aka.ms/vs/17/release/vc_redist.x64.exe). |
 | Linux x64 / arm64 | Official whisper.cpp Ubuntu build, downloaded on consent (needs glibc from Ubuntu 22.04 or newer). |
 | macOS | whisper.cpp publishes no macOS binaries. Install the engine with Homebrew, `brew install whisper.cpp`; the app then downloads only the model. Each dictation runs `whisper-cli` once, so there is no warm start. A `whisper-server` you built yourself and put on `PATH` is used instead when present. |
+
+### Hands-free voice
+
+Turn on **Settings › Voice › Listen for "Hey Awesome"** (or the tray menu's **Listen for "Hey Awesome"** checkbox). Say "Hey Awesome"; a short chime plays and the capture box opens showing "Listening — say your task". Then speak your tasks. The box opens **without taking your keyboard**, so whatever you were typing in another app keeps working. To type in the box instead, click it or press the capture hotkey. A box that hears nothing hides by itself after about 6 seconds with nothing saved.
+
+Dictation in the capture box (hands-free or from the mic button) can hold several tasks in one go. Each finished task becomes a row in a review list above the input; the task you are still saying is in the input. Nothing is saved until you say so:
+
+| Say | Does | Where it counts |
+|---|---|---|
+| "new task", "create new task", "create a new task", "next task", "add another task" | finishes the current task and starts the next | anywhere in a sentence |
+| "scratch that", "delete that" | removes the current task | alone, or as the last sentence of a piece of speech |
+| "save all", "save them", "save them all", "save tasks", "that's all", "that's it" | saves every task | alone, or as the last sentence |
+| "cancel", "cancel all", "never mind" | throws away the whole session | alone, or as the last sentence |
+
+"scratch that" also works when you dictate a single task. The other commands are plain text there. A command inside a longer sentence ("please save all my notes") is just text.
+
+- **Review list.** `Enter` saves all tasks (the one in the input too). `Esc` with finished tasks asks first; `Esc` again discards them. After a spoken save or cancel the box shows "Saved 3 tasks" or "Discarded 3 tasks" with **Undo** for 5 seconds. After a save, Undo deletes what was saved and puts the tasks back in the list; after a cancel, Undo brings back the discarded tasks and the text that was in the input. In the list, `Enter` on a row edits it, and `Delete` or the **×** removes it.
+- **Silence keeps your words.** When the box hides because nothing more was said, the tasks stay as a draft and the next time you open the box it says "2 unsaved tasks from voice". A box opened by the wake word closes after about 15 seconds of silence once you have said something, or when you say "save all".
+- **Before you click the box or press the hotkey, only an explicit save saves.** In a box the wake word opened, "save all", "save tasks" and "save them all" save; "that's it", "that's all" and "save them" stay text (people end ordinary sentences that way), and "cancel" still cancels. The silence rules count only speech that turned into words, and a wake-opened box you never touch stops listening after a minute, keeping what it heard as the draft, so a false wake during a call ends by itself without saving anything. Once you click or press the hotkey, every command in the table works.
+- **Switching the wake word off** while a wake-opened box is listening (and untouched) closes it and releases the microphone; what it heard stays as the draft.
+- **"Hey Awesome" while the box is open is ignored.**
+
+**Privacy.** The wake word is off by default and nothing is downloaded until you agree. While it is on, the microphone stays open and the OS shows its microphone indicator the whole time; switching it off, or quitting the app, releases the microphone. The listener works on audio in memory only: nothing is stored and nothing is sent anywhere. Only after it hears "Hey Awesome" does the box start the normal local dictation (whisper.cpp) described above.
+
+**Listener per OS.** The wake word runs in a separate small process, so a crash there never takes the app down (it is restarted a few times, then Settings shows the error with **Try again**). The engine is [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) v2.0.3 with its small keyword-spotting model.
+
+| OS | Listener |
+|---|---|
+| Windows x64 | The app's own exe started with `--wake-helper`: it loads the sherpa-onnx C API library and reads the microphone through Windows. The downloaded libraries are the static-runtime build, so the wake word needs **no Visual C++ runtime** (whisper dictation still does, as above). |
+| Linux x64 / arm64 | sherpa-onnx's stock `sherpa-onnx-keyword-spotter-microphone` program, downloaded on consent. |
+| macOS (Apple silicon / Intel) | The same stock microphone program, downloaded on consent. The OS may ask for microphone access, and may warn about the downloaded program the first time. |
+
+**Download.** The wake word engine plus model, one time and only after you click **Download**, each file checked against a pinned SHA-256: about 26 MB on Windows (8.3 MB engine, 17.6 MB model), about 40 MB on macOS (arm64; 42 MB on Intel), about 48 MB on Linux (x64 47.6 MB, arm64 47.1 MB). If dictation is not installed yet, its download (above) is offered in the same step.
+
+**Measured cost (Windows 11, wake word on, quiet room).** The listener process holds about 69 MB of working set and used about 0.05 % of one core over a minute (it skips silence before it reaches the model; a separate 300 s run of the listener loop measured 61 MB and 0.08 %). With the wake word off, the default, there is no listener process: the app process sits at about 48 to 50 MB and 0 % CPU, as before this feature. Counting the WebView2 processes the app starts, a fresh profile showed about 300 to 320 MB in total with the wake word off and about 370 to 390 MB with it on; the difference is the listener. Whisper dictation still starts only while you dictate.
+
+**Where the files live.** In the same local `voice` folder as dictation: `voice/wake-v2.0.3/` (engine), `voice/models/kws-gigaspeech-3.3M/` (model and keyword) and `voice/wake.json` (whether the wake word is on; per computer, never synced). **To remove it:** switch it off in Settings, quit the app, and delete those two folders and `wake.json` (or the whole `voice` folder).
+
+**Known limits.**
+
+- Words said in the same breath as "Hey Awesome" may be cut off. Pause for the chime.
+- On Windows, a microphone blocked in privacy settings (or muted) delivers silence rather than an error. The listener notices when the microphone has delivered nothing but exact silence for its first 10 seconds and, after three tries, Settings › Voice shows the error with where to allow the microphone and **Try again**.
+- After you plug or unplug a headset or change the default microphone, switch the wake word off and on again. (Sleep and resume are handled: the listener restarts by itself.)
+- The wake word is English only and has been tuned with synthetic speech so far. Missed and false wakes with real voices are not measured yet; see the [checklist](docs/manual-test-checklist.md).
+- Where the system gives the wake-opened box keyboard focus anyway (Wayland), typing is ignored until you click the box or press the hotkey, so stray keys cannot land in it.
 
 ### Replies owed
 
@@ -205,7 +250,7 @@ It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments`
 
 At startup the app deletes images that no description has referred to for more than 7 days, and images of items that have been deleted for more than 30 days. Undoing a delete within those windows keeps the images.
 
-The voice engine and model (Phase 1.5, about 160 MB) live in the local cache instead, so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux. Delete that folder to remove voice; the next mic press offers the download again.
+The voice engine and model (Phase 1.5, about 160 MB) and the optional wake word (Phase 3, about 26 to 48 MB, plus its on/off file `wake.json`) live in the local cache instead, so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux. Delete that folder to remove voice; the next mic press offers the download again, and the wake word is off until you turn it on in Settings.
 
 ### Command-line flags
 
@@ -238,11 +283,10 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Nothing leaves your machine unless you turn sync on (the one-time voice download is the only other network use, and only after you agree to it).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Phase 3 (hands-free voice: the "Hey Awesome" wake word and several tasks per dictation, collected in a review list) is done; the macOS and Linux listeners and real-voice tuning are not yet checked on real machines (see the [checklist](docs/manual-test-checklist.md)). Nothing leaves your machine unless you turn sync on (the one-time voice and wake word downloads are the only other network use, and only after you agree to them).
 
 Planned, in order:
 
-1. **Phase 3:** hands-free voice. Say "Hey Awesome" to start capturing without the hotkey, and dictate several tasks in one go: saying "create new task" saves the current one and starts the next.
-2. **Phase 4:** optional phone push for reminders through ntfy.
+1. **Phase 4:** optional phone push for reminders through ntfy.
 
 The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Atlas setup is in [docs/atlas-setup.md](docs/atlas-setup.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).

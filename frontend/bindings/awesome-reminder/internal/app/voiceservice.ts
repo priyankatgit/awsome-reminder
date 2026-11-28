@@ -24,11 +24,49 @@ export function CancelInstall(): $CancellablePromise<void> {
 }
 
 /**
+ * CancelWakeInstall stops a running wake word download.
+ */
+export function CancelWakeInstall(): $CancellablePromise<void> {
+    return $Call.ByID(270508921);
+}
+
+/**
  * Install starts the download the user just agreed to; progress arrives as
  * EventVoiceStatus.
  */
 export function Install(): $CancellablePromise<void> {
     return $Call.ByID(2378884883);
+}
+
+/**
+ * InstallWake starts the download the user just agreed to; progress arrives
+ * as EventWakeStatus, and a finished install switches the wake word on.
+ */
+export function InstallWake(): $CancellablePromise<void> {
+    return $Call.ByID(1249345539);
+}
+
+/**
+ * SessionEnded tells the wake word a dictation session just ended, so its
+ * echo does not open the box again.
+ */
+export function SessionEnded(): $CancellablePromise<void> {
+    return $Call.ByID(2065741672);
+}
+
+/**
+ * SetWakeChime sets whether a wake plays a short chime.
+ */
+export function SetWakeChime(on: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1950989812, on);
+}
+
+/**
+ * SetWakeEnabled switches the wake word on or off on this device; on needs
+ * the files installed (InstallWake).
+ */
+export function SetWakeEnabled(on: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2581707857, on);
 }
 
 /**
@@ -43,6 +81,21 @@ export function Status(): $CancellablePromise<voice$0.Status> {
  */
 export function Transcribe(pcm: string): $CancellablePromise<string> {
     return $Call.ByID(2105305627, pcm);
+}
+
+/**
+ * TranscribeSegment transcribes one piece of a continuous dictation; prompt
+ * is the recent text and speechMs the speech in the piece.
+ */
+export function TranscribeSegment(pcm: string, prompt: string, speechMs: number): $CancellablePromise<string> {
+    return $Call.ByID(2537243540, pcm, prompt, speechMs);
+}
+
+/**
+ * WakeStatus reports the wake word's state, settings and install progress.
+ */
+export function WakeStatus(): $CancellablePromise<voice$0.WakeStatus> {
+    return $Call.ByID(414857186);
 }
 
 /**

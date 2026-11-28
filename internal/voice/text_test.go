@@ -30,3 +30,21 @@ func TestCleanTranscript(t *testing.T) {
 		}
 	}
 }
+
+func TestDropHallucination(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		ms   int
+		want string
+	}{
+		{"Thank you.", 900, ""},
+		{"you", 400, ""},
+		{"Thank you.", 2000, "Thank you."},
+		{"thank you Sam", 900, "thank you Sam"},
+		{"Bye!", 1000, ""},
+	} {
+		if got := DropHallucination(c.in, c.ms); got != c.want {
+			t.Errorf("DropHallucination(%q, %d) = %q, want %q", c.in, c.ms, got, c.want)
+		}
+	}
+}

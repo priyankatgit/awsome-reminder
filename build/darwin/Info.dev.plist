@@ -28,7 +28,7 @@
 		<key>NSHighResolutionCapable</key>
 		<string>true</string>
 		<key>NSMicrophoneUsageDescription</key>
-		<string>Awesome Reminder listens only while you dictate a reminder. Audio is transcribed on this computer.</string>
+		<string>Awesome Reminder listens while you dictate, and for "Hey Awesome" if you turn that on. Audio is processed on this computer.</string>
 		<key>NSHumanReadableCopyright</key>
 		<string>(c) 2026 Awesome Reminder contributors</string>
 	</dict>

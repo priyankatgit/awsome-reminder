@@ -1,9 +1,13 @@
-// Voice dictation for the capture box (Phase 1.5). The page records the mic,
-// turns it into 16 kHz mono PCM and hands it to Go, which runs whisper.cpp
-// locally. Layout follows "Listening state" in the UI design guide.
+// Voice dictation for the capture box (Phase 1.5, sessions since Phase 3).
+// The page records the mic, cuts it into 16 kHz mono PCM segments at pauses
+// and hands each to Go, which runs whisper.cpp locally; voice-session.ts turns
+// the text into tasks and spoken commands. Layout follows "Listening state"
+// in the UI design guide.
 import { api, errorText, events, on, type Cancellable, type VoiceStatus } from "./api";
 import { el } from "./dom";
 import { icons } from "./icons";
+import { Segmenter, type PcmSegment, type SessionMode } from "./voice-segment";
+import { VoiceSession, type SessionEnd, type SessionHost, type SessionPhase } from "./voice-session";
 
 const TARGET_RATE = 16000;
 const LEVEL_WINDOW_MS = 33; // one RMS level (and one VAD step) per ~frame
@@ -13,8 +17,18 @@ const MAX_RECORD_MS = 30000; // whisper's window; stop there
 const SPEECH_MIN_RMS = 0.015;
 const SPEECH_OVER_FLOOR = 3;
 const INITIAL_FLOOR_RMS = 0.003;
-const MIN_SAMPLES = TARGET_RATE / 4; // matches voice.MinSamples in Go
 const READY_NOTE_MS = 2500;
+const TICK_MS = 250; // timer refresh and session end check
+// Chromium leaves resume() pending while autoplay is blocked: give up then.
+const RESUME_WAIT_MS = 500;
+const CHIME_NOTES = [660, 880]; // Hz, one after the other
+const CHIME_NOTE_S = 0.07;
+const CHIME_FADE_S = 0.01;
+const CHIME_GAIN = 0.15;
+const CHIME_SAFETY_MS = 1000; // resolve even if onended never fires
+const WAKE_LABEL = "Listening — say your task";
+const WAKE_NOT_READY = "Voice isn't set up yet. Open Settings › Voice to set it up.";
+const WAKE_INSTALLING = "Voice is still downloading. Try again when it's ready.";
 
 export type StopReason = "user" | "silence" | "limit" | "nothing";
 
@@ -54,6 +68,66 @@ function toInt16(f: Float32Array): Int16Array {
   return out;
 }
 
+/**
+ * Resumes ctx and checks that it runs. A wake opens the box with no user
+ * gesture, and Chromium (WebView2) or WebKit may keep an AudioContext
+ * suspended then, which silences the chime and the recorder alike (spec
+ * "Audio without a user gesture"). Rejects if it is not running.
+ */
+async function resumeAudio(ctx: AudioContext): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    ctx.resume(),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, RESUME_WAIT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (ctx.state !== "running") throw new Error(`audio is ${ctx.state} (no user gesture yet?)`);
+}
+
+/**
+ * The wake chime: two soft sine notes (660 Hz then 880 Hz, 70 ms each, 10 ms
+ * fades, gain 0.15), made with WebAudio so there is no asset. Resolves when
+ * it has played. Without ctx it makes its own AudioContext and closes it
+ * (without waiting for the close: the mic opens right after).
+ */
+export async function playChime(ctx?: AudioContext): Promise<void> {
+  const ac = ctx ?? new AudioContext();
+  try {
+    await resumeAudio(ac);
+    const t0 = ac.currentTime;
+    let last: OscillatorNode | undefined;
+    CHIME_NOTES.forEach((hz, i) => {
+      const start = t0 + i * CHIME_NOTE_S;
+      const end = start + CHIME_NOTE_S;
+      const gain = ac.createGain();
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(CHIME_GAIN, start + CHIME_FADE_S);
+      gain.gain.setValueAtTime(CHIME_GAIN, end - CHIME_FADE_S);
+      gain.gain.linearRampToValueAtTime(0, end);
+      gain.connect(ac.destination);
+      const osc = ac.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      osc.connect(gain);
+      osc.start(start);
+      osc.stop(end);
+      last = osc;
+    });
+    let safety: ReturnType<typeof setTimeout> | undefined;
+    await new Promise<void>((resolve) => {
+      // A session must always start: never wait on onended alone.
+      safety = setTimeout(resolve, CHIME_SAFETY_MS);
+      if (last) last.onended = () => resolve();
+      else resolve();
+    });
+    clearTimeout(safety);
+  } finally {
+    if (!ctx) void ac.close().catch(() => undefined);
+  }
+}
+
 /** What to tell the user when the mic cannot be opened. */
 export function micErrorText(err: unknown): string {
   const name = err instanceof DOMException ? err.name : "";
@@ -88,9 +162,20 @@ export class Recorder {
   private floor = INITIAL_FLOOR_RMS;
   private lastSpeech = 0;
   private stopped = false;
+  private segmenter?: Segmenter;
+  private pending: Float32Array[] = [];
   heardSpeech = false;
 
-  async start(onLevel: (rms: number) => void, onAutoStop: (why: StopReason) => void): Promise<void> {
+  /**
+   * With `opts.onSegment` the recorder cuts the audio at pauses and emits each
+   * segment as it completes; it never auto-stops then (the session decides).
+   */
+  async start(
+    onLevel: (rms: number) => void,
+    onAutoStop: (why: StopReason) => void,
+    opts?: { onSegment?: (seg: PcmSegment) => void },
+  ): Promise<void> {
+    const onSegment = opts?.onSegment;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
@@ -106,6 +191,9 @@ export class Recorder {
         this.ctx = new AudioContext();
       }
       this.rate = this.ctx.sampleRate;
+      // A wake starts this without a user gesture: a suspended context would
+      // deliver no audio at all, so fail here with the mic error instead.
+      await resumeAudio(this.ctx);
       const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: "application/javascript" }));
       try {
         await this.ctx.audioWorklet.addModule(url);
@@ -125,10 +213,12 @@ export class Recorder {
 
       const windowSize = Math.round((this.rate * LEVEL_WINDOW_MS) / 1000);
       this.startedAt = performance.now();
+      if (onSegment) this.segmenter = new Segmenter(this.rate);
       tap.port.onmessage = (e: MessageEvent<Float32Array>) => {
         if (this.stopped) return;
         const block = e.data;
-        this.chunks.push(block);
+        if (this.segmenter) this.pending.push(block);
+        else this.chunks.push(block);
         for (let i = 0; i < block.length; i++) this.acc += block[i] * block[i];
         this.accN += block.length;
         if (this.accN < windowSize) return;
@@ -136,6 +226,16 @@ export class Recorder {
         this.acc = 0;
         this.accN = 0;
         onLevel(rms);
+        if (this.segmenter && onSegment) {
+          const speech = this.isSpeech(rms);
+          const blocks = this.pending;
+          this.pending = [];
+          for (const b of blocks) {
+            const seg = this.segmenter.push(b, speech);
+            if (seg) onSegment(this.toPcm(seg));
+          }
+          return;
+        }
         const why = this.detect(rms);
         if (why) onAutoStop(why);
       };
@@ -145,15 +245,22 @@ export class Recorder {
     }
   }
 
-  /** One VAD step; returns why recording should end, if it should. */
-  private detect(rms: number): StopReason | null {
-    const now = performance.now();
+  /** The speech test for one level window; tracks the noise floor. */
+  private isSpeech(rms: number): boolean {
     // Noise floor: follows quiet levels at once, louder ones only slowly.
     this.floor = rms < this.floor ? rms : this.floor * 0.995 + rms * 0.005;
     if (rms > Math.max(SPEECH_MIN_RMS, this.floor * SPEECH_OVER_FLOOR)) {
       this.heardSpeech = true;
-      this.lastSpeech = now;
+      this.lastSpeech = performance.now();
+      return true;
     }
+    return false;
+  }
+
+  /** One VAD step; returns why recording should end, if it should. */
+  private detect(rms: number): StopReason | null {
+    const now = performance.now();
+    this.isSpeech(rms);
     const elapsed = now - this.startedAt;
     if (this.heardSpeech && now - this.lastSpeech > SILENCE_STOP_MS) return "silence";
     if (elapsed > MAX_RECORD_MS) return "limit";
@@ -163,6 +270,22 @@ export class Recorder {
 
   elapsedMs(): number {
     return this.startedAt ? performance.now() - this.startedAt : 0;
+  }
+
+  /** performance.now() of the last speech window, 0 if none yet. */
+  lastSpeechAt(): number {
+    return this.lastSpeech;
+  }
+
+  private toPcm(seg: { pcm: Float32Array; speechMs: number }): PcmSegment {
+    return { pcm: toInt16(resampleTo16k(seg.pcm, this.rate)), speechMs: seg.speechMs };
+  }
+
+  /** Segment mode: flushes the open segment, releases the mic. */
+  stopSegments(): PcmSegment | null {
+    const seg = this.segmenter?.flush() ?? null;
+    this.release();
+    return seg ? this.toPcm(seg) : null;
   }
 
   /** Ends the recording and returns it as 16 kHz mono Int16 PCM. */
@@ -186,6 +309,7 @@ export class Recorder {
   private release(): void {
     this.stopped = true;
     this.chunks = [];
+    this.pending = [];
     for (const n of this.nodes) n.disconnect();
     this.nodes = [];
     this.stream?.getTracks().forEach((t) => t.stop());
@@ -281,6 +405,30 @@ export interface VoiceHost {
   showError(msg: string): void;
   /** Swaps the leading icon while listening ("mic") and back (null). */
   setListeningLead(on: boolean): void;
+  /** Spoken boundary: a non-empty input becomes a new row. Returns the row count, 0 when nothing was added. */
+  addTask(): number;
+  /** "scratch that": clears the input, or drops the last row. Returns whether anything went. */
+  scratch(): boolean;
+  /** Enter's save; spoken adds the Undo note and keeps the box open. */
+  saveAll(spoken: boolean): Promise<void>;
+  cancelAll(spoken: boolean): void;
+  /** False in reply mode: dictation is one line of text there. */
+  multi(): boolean;
+  /** The last ~200 characters of the rows plus the input (the whisper prompt). */
+  sessionText(): string;
+  /** A short status note with no Undo ("Stopped after 5 minutes"). */
+  showNote(text: string): void;
+  /**
+   * A session is over (its last segment landed). mode is the mode it ended
+   * in: a wake session the user engaged with (focusGained) ends "focused".
+   */
+  sessionEnded(mode: SessionMode, end: SessionEnd | null): void;
+  /**
+   * A wake could not start a session (voice not ready, the status check or
+   * the mic failed, a session still busy). msg, when given, says why; the
+   * error a failed status check showed stays otherwise.
+   */
+  wakeFailed(msg?: string): void;
 }
 
 export interface VoiceControl {
@@ -288,9 +436,15 @@ export interface VoiceControl {
   toggle(): void;
   /** Esc: returns true when voice consumed it. */
   escape(): boolean;
-  /** The window lost focus or is hiding: drop any recording. */
+  /** The window lost focus or is hiding: release the mic; queued segments still land. */
   cancel(): void;
   state(): VoiceState;
+  /** Starts a dictation session (Ctrl+M and the mic use "focused"). */
+  startSession(mode: SessionMode): void;
+  /** The box got focus: a wake session follows the focused rules. */
+  focusGained(): void;
+  /** Stops listening and waits for pending segments (Enter while listening). */
+  finish(): Promise<void>;
 }
 
 /** Wires the mic button, listening row and setup panel into the capture box. */
@@ -308,19 +462,40 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
   const bar = root.querySelector<HTMLElement>("#cap-progress-bar")!;
   const meta = root.querySelector<HTMLElement>("#cap-voice-meta")!;
   const actions = root.querySelector<HTMLElement>("#cap-voice-actions")!;
+  const busyDots = root.querySelector<HTMLElement>("#cap-busy")!;
   const wave = new Waveform(root.querySelector<HTMLCanvasElement>("#cap-wave")!);
 
   let state: VoiceState = "idle";
   let status: VoiceStatus | null = null;
-  let recorder: Recorder | null = null;
-  let pending: Cancellable<string> | null = null;
+  let session: VoiceSession | null = null;
+  let starting = false; // the status check before a session is running
+  let hiddenGen = 0; // bumped by blur/hide: a start still awaiting must not open the mic
+  let inflight: Cancellable<string> | null = null; // the segment request being transcribed
   let ticker: number | undefined;
   let noteTimer: number | undefined;
-  let run = 0; // invalidates async work of an earlier dictation
 
   function announce(msg: string): void {
     live.textContent = msg;
   }
+
+  /** The shimmer at the end of the input while segments are transcribed. */
+  function setBusy(on: boolean): void {
+    busyDots.hidden = !on;
+  }
+
+  const sessionHost: SessionHost = {
+    insert: (text) => host.insert(text),
+    addTask: () => host.addTask(),
+    scratch: () => host.scratch(),
+    saveAll: (spoken) => host.saveAll(spoken),
+    cancelAll: (spoken) => host.cancelAll(spoken),
+    multi: () => host.multi(),
+    sessionText: () => host.sessionText(),
+    showError: (msg) => host.showError(msg),
+    showNote: (text) => host.showNote(text),
+    announce,
+    setBusy,
+  };
 
   function setMic(listening: boolean): void {
     mic.setAttribute("aria-pressed", String(listening));
@@ -344,10 +519,8 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
       timerEl.textContent = "0:00";
       wave.clear();
     } else if (next === "transcribing") {
-      const dots = el("span", "cap-dots");
-      dots.setAttribute("aria-hidden", "true");
-      dots.append(el("i"), el("i"), el("i"));
-      listenLabel.replaceChildren("Transcribing", dots);
+      // The shimmer at the end of the input shows the pending pieces.
+      listenLabel.replaceChildren("Transcribing…");
     }
   }
 
@@ -444,119 +617,144 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     return status;
   }
 
-  async function start(): Promise<void> {
-    host.showError("");
+  /** Starts a dictation session once voice is installed (setup panel otherwise). */
+  async function startSession(mode: SessionMode): Promise<void> {
+    // Every exit without a session reports a wake to the box (wakeFailed),
+    // so a wake-opened box never stays up with nothing going on. The one
+    // exception is a box hidden meanwhile: there is nothing left to show.
+    if (starting || session || (state !== "idle" && state !== "ready-note")) {
+      if (mode === "wake") host.wakeFailed();
+      return;
+    }
+    starting = true;
+    const gen = hiddenGen;
+    host.showError(""); // a new session starts without the last one's errors
     const st = await refreshStatus();
-    if (!st) return;
+    starting = false;
+    if (gen !== hiddenGen) return; // the box was blurred or hidden meanwhile
+    if (!st || session || (state !== "idle" && state !== "ready-note")) {
+      if (mode === "wake") host.wakeFailed(); // a failed check already shows its error
+      return;
+    }
     if (st.state !== "ready") {
+      if (mode === "wake") {
+        // No setup panel behind an unfocused box: say why nothing listens.
+        if (st.state === "installing") host.wakeFailed(WAKE_INSTALLING);
+        else if (st.state === "unsupported") host.wakeFailed(st.hint || WAKE_NOT_READY);
+        else host.wakeFailed(WAKE_NOT_READY);
+        return;
+      }
       setState(st.state === "installing" ? "installing" : "consent");
       renderPanel();
       return;
     }
-    const my = ++run;
     const rec = new Recorder();
-    recorder = rec;
+    const s: VoiceSession = new VoiceSession(mode, rec, sessionHost, {
+      transcribe: (seg, prompt) => {
+        const p = api.voice.transcribeSegment(seg.pcm, prompt, seg.speechMs);
+        inflight = p;
+        const clear = () => {
+          if (inflight === p) inflight = null;
+        };
+        p.then(clear, clear);
+        return p;
+      },
+      now: () => performance.now(),
+      sessionEnded: () => void api.voice.sessionEnded().catch(() => undefined),
+      errorText,
+      onPhase: (p) => onPhase(s, p),
+      cancelTranscribe: () => {
+        inflight?.cancel();
+        inflight = null;
+      },
+    });
+    session = s;
+    host.box.dataset.dictation = host.multi() ? "multi" : "single";
     setState("listening");
+    if (mode === "wake") listenLabel.replaceChildren(WAKE_LABEL);
     announce("Listening");
     try {
       await rec.start(
         (rms) => wave.push(rms),
-        (why) => {
-          if (my === run && state === "listening") void finish(why);
-        },
+        () => undefined, // segment mode never auto-stops; the session decides
+        { onSegment: (seg) => s.segment(seg) },
       );
     } catch (err) {
-      if (my !== run) return;
-      recorder = null;
-      setState("idle");
-      host.showError(micErrorText(err));
-      host.input.focus();
+      if (session !== s) return;
+      s.abort();
+      if (s.sessionMode() === "wake") {
+        host.wakeFailed(micErrorText(err));
+      } else {
+        host.showError(micErrorText(err));
+        host.input.focus();
+      }
       return;
     }
-    if (my !== run) return;
+    if (session !== s || s.state() !== "listening") return;
     ticker = window.setInterval(() => {
       timerEl.textContent = clock(rec.elapsedMs());
-    }, 250);
-    // Load the model while the user speaks; errors surface on Transcribe.
+      s.tick();
+    }, TICK_MS);
+    // Load the model while the user speaks; errors surface on the first segment.
     void api.voice.warm().catch(() => undefined);
   }
 
-  async function finish(why: StopReason): Promise<void> {
-    const rec = recorder;
-    if (!rec || state !== "listening") return;
-    recorder = null;
-    const heard = rec.heardSpeech;
-    const pcm = rec.stop();
-    const my = ++run;
-    if (why === "nothing" || (!heard && why !== "user") || pcm.length < MIN_SAMPLES) {
-      setState("idle");
-      host.showError("Didn't catch that. Try again closer to the mic.");
-      host.input.focus();
-      announce("Nothing heard");
+  function onPhase(s: VoiceSession, p: SessionPhase): void {
+    if (session !== s) return;
+    if (p === "draining") {
+      setState("transcribing");
       return;
     }
-    setState("transcribing");
-    announce("Transcribing");
-    const p = api.voice.transcribe(pcm);
-    pending = p;
-    let text: string;
-    try {
-      text = await p;
-    } catch (err) {
-      if (my !== run) return; // cancelled
-      pending = null;
-      setState("idle");
-      host.showError(errorText(err));
-      host.input.focus();
-      return;
-    }
-    if (my !== run) return;
-    pending = null;
+    if (p !== "done") return;
+    session = null;
+    setBusy(false);
     setState("idle");
-    if (text.trim() === "") {
-      host.showError("Didn't catch that. Try again closer to the mic.");
-      host.input.focus();
-      announce("Nothing heard");
-      return;
-    }
-    host.insert(text);
-    announce("Ready to save");
+    // Back to typing, unless the user moved on (a row, the window lost focus).
+    const end = s.endedBy();
+    const active = document.activeElement;
+    const inBox = active !== null && active !== document.body && active !== mic && host.box.contains(active);
+    if (s.sessionMode() === "focused" && end !== "blur" && end !== "abort" && !inBox) host.input.focus();
+    host.sessionEnded(s.sessionMode(), end);
   }
 
+  /** Stops listening (Ctrl+M, the stop button, Enter) and waits for the queue. */
+  function finish(): Promise<void> {
+    return session ? session.finish() : Promise.resolve();
+  }
+
+  /** Blur or hide: release the mic; queued segments still land in the draft. */
   function cancel(): void {
-    run++;
-    recorder?.cancel();
-    recorder = null;
-    pending?.cancel();
-    pending = null;
-    if (state === "listening" || state === "transcribing") setState("idle");
+    hiddenGen++;
+    session?.blur();
   }
 
   function toggle(): void {
     switch (state) {
       case "idle":
       case "ready-note":
-        void start();
+        void startSession("focused");
         break;
       case "listening":
-        void finish("user");
+        void finish();
         break;
       case "consent":
       case "installing":
         closePanel();
         break;
       case "transcribing":
-        break;
+        break; // the queue finishes on its own
     }
   }
 
   function escape(): boolean {
     switch (state) {
       case "listening":
+        // Stops; only the audio not yet cut into a segment is dropped.
+        session?.escape();
+        return true;
       case "transcribing":
-        cancel();
-        announce("Cancelled");
-        host.input.focus();
+        // A second Esc (or a stuck request): give up on the pending segments.
+        session?.escape();
         return true;
       case "consent":
       case "installing":
@@ -588,5 +786,13 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
   });
 
   setState("idle");
-  return { toggle, escape, cancel, state: () => state };
+  return {
+    toggle,
+    escape,
+    cancel,
+    state: () => state,
+    startSession: (mode) => void startSession(mode),
+    focusGained: () => session?.focusGained(),
+    finish,
+  };
 }

@@ -3,14 +3,14 @@
 import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
 import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
-import type { Status as VoiceStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
+import type { Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, ReplyPrefill, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, Status, SyncInfo, TagGroup, View, VoiceStatus };
+export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -130,6 +130,19 @@ export const api = {
     cancelInstall: (): Promise<void> => VoiceService.CancelInstall(),
     warm: (): Cancellable<void> => VoiceService.Warm(),
     transcribe: (pcm: Int16Array): Cancellable<string> => VoiceService.Transcribe(pcmBase64(pcm)),
+    /** One piece of a continuous dictation; prompt is the recent text, speechMs the speech in the piece. */
+    transcribeSegment: (pcm: Int16Array, prompt: string, speechMs: number): Cancellable<string> =>
+      VoiceService.TranscribeSegment(pcmBase64(pcm), prompt, speechMs),
+    /** "Hey Awesome" wake word (internal/app/wake.go). */
+    wakeStatus: (): Promise<WakeStatus> => VoiceService.WakeStatus(),
+    /** Turning it on needs the files installed (installWake); rejects otherwise. */
+    setWakeEnabled: (on: boolean): Promise<void> => VoiceService.SetWakeEnabled(on),
+    setWakeChime: (on: boolean): Promise<void> => VoiceService.SetWakeChime(on),
+    /** Starts the consented download; progress arrives as events.wakeStatus, and success switches it on. */
+    installWake: (): Promise<void> => VoiceService.InstallWake(),
+    cancelWakeInstall: (): Promise<void> => VoiceService.CancelWakeInstall(),
+    /** A dictation session just ended: its echo must not wake the box again. */
+    sessionEnded: (): Promise<void> => VoiceService.SessionEnded(),
   },
   /** Closes the window this page runs in. */
   closeWindow: (): Promise<void> => Window.Close(),
@@ -176,6 +189,10 @@ export const events = {
    */
   replyOpen: "reply:open",
   voiceStatus: "voice:status",
+  /** WakeStatus, whenever it changes (install progress included). */
+  wakeStatus: "voice:wake-status",
+  /** The capture box was opened by "Hey Awesome", shown without focus: start a wake-mode dictation. */
+  captureWake: "capture:wake",
   syncStatus: "sync:status",
 } as const;
 

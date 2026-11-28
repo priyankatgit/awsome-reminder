@@ -3,6 +3,7 @@ package voice
 import (
 	"archive/tar"
 	"archive/zip"
+	"compress/bzip2"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -13,11 +14,12 @@ import (
 	"strings"
 )
 
-// engineFile reports whether an archive entry's base name is part of the
-// engine we run: the server and the whisper/ggml shared libraries. The
-// release archives also carry examples, tests, llama, SDL2 and parakeet,
-// which are left out.
-func engineFile(base string) bool {
+// WhisperFile reports whether an archive entry, by its path (only the base
+// name matters), is part of the whisper engine we run: the server and the
+// whisper/ggml shared libraries. The release archives also carry examples,
+// tests, llama, SDL2 and parakeet, which are left out.
+func WhisperFile(p string) bool {
+	base := baseName(p)
 	switch {
 	case base == "whisper-server", base == "whisper-server.exe", base == "whisper.dll":
 		return true
@@ -29,16 +31,17 @@ func engineFile(base string) bool {
 	return false
 }
 
-// Extract writes the engine files of a release archive ("zip" or "tar.gz")
+// Extract writes the files of a release archive ("zip", "tar.gz" or "tar.bz2")
+// that keep accepts (it gets the entry's slash path inside the archive)
 // flat into dir, by base name only, so no entry can land outside dir. Tar
 // symlinks between kept files become copies of their target; a symlink that
 // points outside the archive is skipped.
-func Extract(archive, kind, dir string) error {
+func Extract(archive, kind, dir string, keep func(path string) bool) error {
 	switch kind {
 	case "zip":
-		return extractZip(archive, dir)
-	case "tar.gz":
-		return extractTarGz(archive, dir)
+		return extractZip(archive, dir, keep)
+	case "tar.gz", "tar.bz2":
+		return extractTar(archive, kind, dir, keep)
 	}
 	return fmt.Errorf("extract: unknown archive kind %q", kind)
 }
@@ -59,7 +62,7 @@ func writeFile(dir, base string, r io.Reader) error {
 	return f.Close()
 }
 
-func extractZip(archive, dir string) error {
+func extractZip(archive, dir string, keep func(string) bool) error {
 	zr, err := zip.OpenReader(archive)
 	if err != nil {
 		return err
@@ -67,7 +70,7 @@ func extractZip(archive, dir string) error {
 	defer zr.Close()
 	for _, f := range zr.File {
 		base := baseName(f.Name)
-		if f.FileInfo().IsDir() || !engineFile(base) {
+		if f.FileInfo().IsDir() || !keep(strings.ReplaceAll(f.Name, "\\", "/")) {
 			continue
 		}
 		rc, err := f.Open()
@@ -83,21 +86,27 @@ func extractZip(archive, dir string) error {
 	return nil
 }
 
-func extractTarGz(archive, dir string) error {
+func extractTar(archive, kind, dir string, keep func(string) bool) error {
 	f, err := os.Open(archive)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
+	var src io.Reader
+	if kind == "tar.bz2" {
+		src = bzip2.NewReader(f)
+	} else {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		defer gz.Close()
+		src = gz
 	}
-	defer gz.Close()
 
 	links := map[string]string{} // kept symlink base -> target base
 	written := map[string]bool{}
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(src)
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -107,7 +116,7 @@ func extractTarGz(archive, dir string) error {
 			return err
 		}
 		base := baseName(h.Name)
-		if !engineFile(base) {
+		if !keep(strings.ReplaceAll(h.Name, "\\", "/")) {
 			continue
 		}
 		switch h.Typeflag {
