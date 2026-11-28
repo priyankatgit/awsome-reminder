@@ -214,7 +214,158 @@ describe("capture box wake mode", () => {
     window.dispatchEvent(new Event("focus")); // the user clicked or alt-tabbed in
     spy.mockRestore();
     expect(h.fake.calls).toContain("focusGained");
+    expect(document.activeElement).not.toBe(input()); // only the open handlers and a click place the caret
+  });
+
+  it("a window focus never puts the caret in the input by itself", async () => {
+    window.dispatchEvent(new Event("focus")); // before capture:wake (Go used to show first)
+    expect(document.activeElement).not.toBe(input());
+    await wake();
+    expect(document.activeElement).not.toBe(input());
+    expect(press(input(), "a").defaultPrevented).toBe(true); // the guard is on
+  });
+
+  it("a click on a bare part of a wake-opened box puts the caret in the input", async () => {
+    await wake();
+    const field = document.querySelector<HTMLElement>(".cap-field")!;
+    field.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(h.fake.calls).toContain("focusGained");
     expect(document.activeElement).toBe(input());
+  });
+
+  it("a segment landing in a wake-opened box does not take the caret", async () => {
+    await wake();
+    h.fake.host.insert("buy milk");
+    expect(input().value).toBe("buy milk");
+    expect(document.activeElement).not.toBe(input());
+  });
+
+  it("the reply hotkey on a wake-opened box engages it", async () => {
+    await wake();
+    h.handlers.get("reply:open")!({ line: "Reply to Priya: \"hi\"", owedTo: "Priya", source: "Teams", quote: "", keepText: false });
+    await settle();
+    expect(h.fake.calls).toContain("focusGained");
+    expect(wakeHint().hidden).toBe(true);
+    expect(press(input(), "a").defaultPrevented).toBe(false);
+  });
+
+  describe("a wake that cannot listen, or ends with a message", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** With fake timers on: still showing at 3.9 s, hidden (and Go told) after 4 s. */
+    async function expectHidesAfter4s(): Promise<void> {
+      await vi.advanceTimersByTimeAsync(3900);
+      expect(box().classList.contains("is-hidden")).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(box().classList.contains("is-hidden")).toBe(true);
+      expect(h.log).toContain("hideCapture");
+    }
+
+    it("not installed: the error shows 4 s, then the box hides with the draft untouched", async () => {
+      h.fake.host.insert("call Sam"); // a draft from before
+      h.fake.host.addTask();
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.wakeFailed("Voice isn't set up yet. Open Settings \u203a Voice to set it up.");
+      expect(errorRow().textContent).toBe("Voice isn't set up yet. Open Settings \u203a Voice to set it up.");
+      await expectHidesAfter4s();
+      expect(rows()).toEqual(["call Sam"]);
+    });
+
+    it("installing: the same", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.wakeFailed("Voice is still downloading. Try again when it's ready.");
+      expect(errorRow().hidden).toBe(false);
+      await expectHidesAfter4s();
+    });
+
+    it("a mic error: the session aborts, the error shows 4 s, then the box hides", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.sessionEnded("wake", "abort");
+      expect(box().classList.contains("is-hidden")).toBe(false);
+      h.fake.host.wakeFailed("Microphone access is blocked.");
+      expect(errorRow().textContent).toBe("Microphone access is blocked.");
+      await expectHidesAfter4s();
+    });
+
+    it("a failed status check: its error stays 4 s, then the box hides", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.showError("status broke");
+      h.fake.host.wakeFailed();
+      expect(errorRow().textContent).toBe("status broke");
+      await expectHidesAfter4s();
+    });
+
+    it("a click cancels the hide", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.wakeFailed("Voice is still downloading. Try again when it's ready.");
+      box().dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(box().classList.contains("is-hidden")).toBe(false);
+    });
+
+    it("the hotkey cancels the hide", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.wakeFailed("Voice is still downloading. Try again when it's ready.");
+      h.handlers.get("capture:open")!(undefined);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(box().classList.contains("is-hidden")).toBe(false);
+    });
+
+    it("a transcription error with nothing dictated stays 4 s", async () => {
+      await wake();
+      vi.useFakeTimers();
+      h.fake.host.showError("Couldn't transcribe the last bit: timed out");
+      h.fake.host.sessionEnded("wake", "silence");
+      expect(box().classList.contains("is-hidden")).toBe(false);
+      await expectHidesAfter4s();
+    });
+
+    it("the 5-minute note stays 4 s", async () => {
+      await wake();
+      h.fake.host.insert("buy milk");
+      vi.useFakeTimers();
+      h.fake.host.showNote("Stopped after 5 minutes");
+      h.fake.host.sessionEnded("wake", "limit");
+      expect(box().classList.contains("is-hidden")).toBe(false);
+      await expectHidesAfter4s();
+      expect(input().value).toBe("buy milk");
+    });
+
+    it("an error with text dictated hides at once, keeping the text", async () => {
+      await wake();
+      h.fake.host.insert("buy milk");
+      h.fake.host.showError("Couldn't transcribe the last bit: timed out");
+      h.fake.host.sessionEnded("wake", "silence");
+      expect(box().classList.contains("is-hidden")).toBe(true);
+    });
+  });
+
+  it("text landing after an Esc-hide counts on the next open", async () => {
+    await wake();
+    press(document, "Escape"); // hidden while the first segment transcribes
+    h.fake.host.insert("buy milk"); // it lands in the hidden box
+    h.fake.host.sessionEnded("wake", "blur");
+    await settle();
+    h.handlers.get("capture:open")!(undefined);
+    expect(input().value).toBe("buy milk");
+    expect(status().textContent).toBe("1 unsaved task from voice");
+  });
+
+  it("text kept by a blur on a wake box counts on the next open", async () => {
+    await wake();
+    h.fake.host.insert("buy milk");
+    window.dispatchEvent(new Event("blur"));
+    await settle();
+    h.handlers.get("capture:open")!(undefined);
+    expect(status().textContent).toBe("1 unsaved task from voice");
   });
 
   it("a quiet wake hides the box with no error", async () => {

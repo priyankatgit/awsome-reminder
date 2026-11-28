@@ -489,7 +489,9 @@ func (w *wailsWindows) ShowCapture() {
 // ShowCaptureForWake opens the capture box for "Hey Awesome": placed like
 // ShowCapture, but shown without activating it (showNoActivate), so the
 // app the user is in keeps keyboard focus; Focus is never called. The
-// frontend is then told to start a wake-mode dictation (EventCaptureWake).
+// frontend is told first to start a wake-mode dictation (EventCaptureWake),
+// so it can arm its keyboard guard before the window shows (the page also
+// never focuses its input on a window focus by itself).
 // A click into the box, the hotkey or Ctrl+M gives it focus. It does
 // nothing if the box was opened another way since the wake was detected.
 func (w *wailsWindows) ShowCaptureForWake() {
@@ -498,9 +500,9 @@ func (w *wailsWindows) ShowCaptureForWake() {
 		return
 	}
 	w.replyOpen.Store(false)
+	w.app.Event.Emit(EventCaptureWake)
 	w.placeCapture()
 	showNoActivate(w.capture)
-	w.app.Event.Emit(EventCaptureWake)
 	log.Printf("capture: shown for the wake word")
 }
 

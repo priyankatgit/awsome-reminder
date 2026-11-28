@@ -26,6 +26,7 @@ class FakeCtx {
   currentTime = 1;
   destination = {};
   closed = false;
+  silentEnd = false; // onended never fires
   constructor(private resumesTo: AudioContextState | "never" = "running") {}
   resume(): Promise<void> {
     this.log.push("resume");
@@ -44,6 +45,7 @@ class FakeCtx {
   }
   createOscillator() {
     const log = this.log;
+    const silent = this.silentEnd;
     const osc = {
       type: "",
       frequency: new FakeParam(log, "freq"),
@@ -52,7 +54,7 @@ class FakeCtx {
       start: (t: number) => log.push(`start ${osc.type} ${osc.frequency.value} @${t.toFixed(3)}`),
       stop: (t: number) => {
         log.push(`stop @${t.toFixed(3)}`);
-        setTimeout(() => osc.onended?.(), 0);
+        if (!silent) setTimeout(() => osc.onended?.(), 0);
       },
     };
     return osc;
@@ -99,6 +101,21 @@ describe("playChime", () => {
     const check = expect(p).rejects.toThrow(/suspended/);
     await vi.advanceTimersByTimeAsync(1000);
     await check;
+  });
+
+  it("resolves after a safety timeout when onended never fires", async () => {
+    vi.useFakeTimers();
+    const c = new FakeCtx();
+    c.silentEnd = true;
+    let done = false;
+    const p = playChime(asCtx(c)).then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    await p;
+    expect(done).toBe(true);
   });
 
   it("creates and closes its own context when none is passed", async () => {

@@ -25,8 +25,9 @@ const CHIME_NOTES = [660, 880]; // Hz, one after the other
 const CHIME_NOTE_S = 0.07;
 const CHIME_FADE_S = 0.01;
 const CHIME_GAIN = 0.15;
+const CHIME_SAFETY_MS = 1000; // resolve even if onended never fires
 const WAKE_LABEL = "Listening — say your task";
-const WAKE_NOT_READY = "Dictation isn't set up. Click here, then press Ctrl+M to set it up.";
+const WAKE_NOT_READY = "Voice isn't set up yet. Open Settings › Voice to set it up.";
 const WAKE_INSTALLING = "Voice is still downloading. Try again when it's ready.";
 
 export type StopReason = "user" | "silence" | "limit" | "nothing";
@@ -114,10 +115,14 @@ export async function playChime(ctx?: AudioContext): Promise<void> {
       osc.stop(end);
       last = osc;
     });
+    let safety: ReturnType<typeof setTimeout> | undefined;
     await new Promise<void>((resolve) => {
+      // A session must always start: never wait on onended alone.
+      safety = setTimeout(resolve, CHIME_SAFETY_MS);
       if (last) last.onended = () => resolve();
       else resolve();
     });
+    clearTimeout(safety);
   } finally {
     if (!ctx) void ac.close().catch(() => undefined);
   }
@@ -418,6 +423,12 @@ export interface VoiceHost {
    * in: a wake session the user engaged with (focusGained) ends "focused".
    */
   sessionEnded(mode: SessionMode, end: SessionEnd | null): void;
+  /**
+   * A wake could not start a session (voice not ready, the status check or
+   * the mic failed, a session still busy). msg, when given, says why; the
+   * error a failed status check showed stays otherwise.
+   */
+  wakeFailed(msg?: string): void;
 }
 
 export interface VoiceControl {
@@ -608,18 +619,29 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
 
   /** Starts a dictation session once voice is installed (setup panel otherwise). */
   async function startSession(mode: SessionMode): Promise<void> {
-    if (starting || session || (state !== "idle" && state !== "ready-note")) return;
+    // Every exit without a session reports a wake to the box (wakeFailed),
+    // so a wake-opened box never stays up with nothing going on. The one
+    // exception is a box hidden meanwhile: there is nothing left to show.
+    if (starting || session || (state !== "idle" && state !== "ready-note")) {
+      if (mode === "wake") host.wakeFailed();
+      return;
+    }
     starting = true;
     const gen = hiddenGen;
     host.showError(""); // a new session starts without the last one's errors
     const st = await refreshStatus();
     starting = false;
     if (gen !== hiddenGen) return; // the box was blurred or hidden meanwhile
-    if (!st || session || (state !== "idle" && state !== "ready-note")) return;
+    if (!st || session || (state !== "idle" && state !== "ready-note")) {
+      if (mode === "wake") host.wakeFailed(); // a failed check already shows its error
+      return;
+    }
     if (st.state !== "ready") {
       if (mode === "wake") {
         // No setup panel behind an unfocused box: say why nothing listens.
-        host.showError(st.state === "installing" ? WAKE_INSTALLING : WAKE_NOT_READY);
+        if (st.state === "installing") host.wakeFailed(WAKE_INSTALLING);
+        else if (st.state === "unsupported") host.wakeFailed(st.hint || WAKE_NOT_READY);
+        else host.wakeFailed(WAKE_NOT_READY);
         return;
       }
       setState(st.state === "installing" ? "installing" : "consent");
@@ -660,8 +682,12 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     } catch (err) {
       if (session !== s) return;
       s.abort();
-      host.showError(micErrorText(err));
-      if (s.sessionMode() === "focused") host.input.focus();
+      if (s.sessionMode() === "wake") {
+        host.wakeFailed(micErrorText(err));
+      } else {
+        host.showError(micErrorText(err));
+        host.input.focus();
+      }
       return;
     }
     if (session !== s || s.state() !== "listening") return;

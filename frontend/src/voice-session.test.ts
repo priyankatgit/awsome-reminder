@@ -560,7 +560,7 @@ describe("mountVoice wiring", () => {
   }
 
   let root: HTMLElement;
-  let host: VoiceHost & { errors: string[]; inserted: string[]; ends: string[] };
+  let host: VoiceHost & { errors: string[]; inserted: string[]; ends: string[]; fails: string[] };
 
   function mount() {
     document.body.innerHTML = `
@@ -582,6 +582,7 @@ describe("mountVoice wiring", () => {
       errors: [],
       inserted: [],
       ends: [],
+      fails: [],
       insert(t) {
         host.inserted.push(t);
         input.value = `${input.value} ${t}`.trim();
@@ -599,6 +600,9 @@ describe("mountVoice wiring", () => {
       showNote() {},
       sessionEnded(mode, end) {
         host.ends.push(`${mode}:${end}`);
+      },
+      wakeFailed(msg) {
+        host.fails.push(msg ?? "(error kept)");
       },
     };
     return mountVoice(root, host);
@@ -702,7 +706,7 @@ describe("mountVoice wiring", () => {
     expect(host.ends).toEqual(["focused:escape"]);
   });
 
-  it("an audio context that stays suspended fails as a mic error", async () => {
+  it("a wake whose mic cannot start reports the mic error as a failed wake", async () => {
     stubAudio();
     FakeContext.resumesTo = "suspended"; // autoplay blocked: no user gesture
     m.status = () => Promise.resolve({ state: "ready" });
@@ -710,11 +714,22 @@ describe("mountVoice wiring", () => {
     ctl.startSession("wake");
     await settle();
     expect(ctl.state()).toBe("idle");
-    expect(host.errors).toEqual(["Could not start the microphone: audio is suspended (no user gesture yet?)"]);
+    expect(host.fails).toEqual(["Could not start the microphone: audio is suspended (no user gesture yet?)"]);
     expect(host.ends).toEqual(["wake:abort"]);
   });
 
-  it("a wake without dictation installed says so instead of the setup panel", async () => {
+  it("a focused session's mic error is shown as before, not as a failed wake", async () => {
+    stubAudio();
+    FakeContext.resumesTo = "suspended";
+    m.status = () => Promise.resolve({ state: "ready" });
+    const ctl = mount();
+    ctl.startSession("focused");
+    await settle();
+    expect(host.errors).toEqual(["Could not start the microphone: audio is suspended (no user gesture yet?)"]);
+    expect(host.fails).toEqual([]);
+  });
+
+  it("a wake without dictation installed fails with the setup copy, no panel, no mic", async () => {
     stubAudio();
     m.status = () => Promise.resolve({ state: "absent" });
     const ctl = mount();
@@ -722,7 +737,50 @@ describe("mountVoice wiring", () => {
     await settle();
     expect(ctl.state()).toBe("idle");
     expect(root.querySelector<HTMLElement>("#cap-voice")!.hidden).toBe(true);
-    expect(host.errors).toEqual(["Dictation isn't set up. Click here, then press Ctrl+M to set it up."]);
+    expect(host.fails).toEqual(["Voice isn't set up yet. Open Settings › Voice to set it up."]);
     expect(m.getUserMedia).toBe(0);
+  });
+
+  it("a wake while voice is installing fails with the downloading copy", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "installing" });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(host.fails).toEqual(["Voice is still downloading. Try again when it's ready."]);
+    expect(root.querySelector<HTMLElement>("#cap-voice")!.hidden).toBe(true);
+  });
+
+  it("a wake where voice is unsupported fails with the status hint", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "unsupported", hint: "Install whisper-cpp with Homebrew." });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(host.fails).toEqual(["Install whisper-cpp with Homebrew."]);
+  });
+
+  it("a wake whose status check fails keeps that error and reports a failed wake", async () => {
+    stubAudio();
+    m.status = () => Promise.reject(new Error("status broke"));
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(host.errors).toEqual(["status broke"]);
+    expect(host.fails).toEqual(["(error kept)"]);
+    expect(m.getUserMedia).toBe(0);
+  });
+
+  it("a wake while a session is still running reports a failed wake", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "ready" });
+    const ctl = mount();
+    ctl.startSession("focused");
+    await settle();
+    expect(ctl.state()).toBe("listening");
+    ctl.startSession("wake");
+    await settle();
+    expect(host.fails).toEqual(["(error kept)"]);
+    expect(m.getUserMedia).toBe(1);
   });
 });
