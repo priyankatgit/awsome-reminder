@@ -290,7 +290,9 @@ export function mountSetup(root: HTMLElement): void {
       main.append(el("p", "setup-sub", "Start with an empty list here?"));
     }
     main.append(el("p", "setup-path", path === "" ? "" : path));
-    if (adopt) {
+    // Adopting, or starting fresh after the data went missing, clears the
+    // saved connection string.
+    if (adopt || info?.state === "unavailable") {
       const n = el("p", "setup-notice");
       n.insertAdjacentHTML("afterbegin", icons.info);
       n.append(el("span", undefined, "Sync across machines will be off until you connect again."));

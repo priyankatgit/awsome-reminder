@@ -301,6 +301,8 @@ describe("unavailable", () => {
     byText("Choose another folder…").click();
     await flush();
     expect(root().textContent).toContain("Start with an empty list here?");
+    // Starting fresh here clears the saved connection string too.
+    expect(root().textContent).toContain("Sync across machines will be off until you connect again.");
     byText("Start with an empty list").click();
     await flush();
     expect(h.chosen.at(-1)).toEqual(["other", "E:\\Notes\\Awesome Reminder", true]);
