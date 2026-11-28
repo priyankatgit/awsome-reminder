@@ -25,7 +25,6 @@ import (
 	"awesome-reminder/internal/push"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/secret"
-	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -146,14 +145,7 @@ func Run(opts Options) error {
 	hotkey.SetMainThreadRunner(application.InvokeSync)
 
 	emit := func(name string, data ...any) { app.Event.Emit(name, data...) }
-	sched := scheduler.New(st, func() scheduler.Rules {
-		s, err := c.Settings()
-		if err != nil {
-			s = settings.Defaults(runtime.GOOS)
-			s.LeadTimes = nil // as before: no default leads while settings can't be read
-		}
-		return core.SchedulerRules(s, time.Local)
-	}, func(alerts []scheduler.Alert) {
+	sched := scheduler.New(st, func() scheduler.Rules { return appRules(c) }, func(alerts []scheduler.Alert) {
 		// Runs inline in the scheduler loop: never block it. The scheduler
 		// only fires after Start (ApplicationStarted), when svc is set.
 		for _, a := range alerts {
@@ -194,7 +186,7 @@ func Run(opts Options) error {
 	})
 	// Phone push (off by default: nothing touches the network until enabled).
 	pushCtl := newPushController(c, st, filepath.Dir(dbPath),
-		func(id string) { svc.dropItemAlerts(id) },
+		func(id string) { go svc.dropItemAlerts(id) }, // off the listener, like showAlerts
 		func(s push.Status) { emit(EventPushStatus, s) })
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the

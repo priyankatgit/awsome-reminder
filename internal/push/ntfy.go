@@ -308,6 +308,10 @@ func unwrapURL(err error) error {
 	return err
 }
 
+// TopicURL is the topic's URL as the client publishes to it (the
+// subscribe link).
+func (c Client) TopicURL() string { return c.url(c.Topic) }
+
 // url joins the server URL (any case of scheme, trailing slash, subpath)
 // with path segments.
 func (c Client) url(segs ...string) string {

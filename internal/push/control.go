@@ -24,10 +24,15 @@ const (
 	ctlHealthy = time.Minute
 )
 
+// ctlConfigRetry is how soon the listener tries again after the settings
+// could not be read (a variable for tests).
+var ctlConfigRetry = ctlBackoffMin
+
 // ControlDeps is what the control listener reads. Config returns false when
-// push is off. Done applies a phone Done (the app uses ApplyDone).
+// push is off; an error (settings unreadable) is retried after
+// ctlConfigRetry, not taken as off. Done applies a phone Done (the app uses ApplyDone).
 type ControlDeps struct {
-	Config func() (Config, bool)
+	Config func() (Config, bool, error)
 	Meta   interface {
 		Meta(string) (string, bool, error)
 		SetMeta(string, string) error
@@ -63,7 +68,18 @@ func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
 	}
 	backoff := time.Duration(0)
 	for ctx.Err() == nil {
-		cfg, on := d.Config()
+		cfg, on, err := d.Config()
+		if err != nil {
+			log.Printf("push: control listener: reading settings: %v", err)
+			t := time.NewTimer(ctlConfigRetry)
+			select {
+			case <-ctx.Done():
+			case <-restart:
+			case <-t.C:
+			}
+			t.Stop()
+			continue
+		}
 		if !on || cfg.Topic == "" {
 			select {
 			case <-ctx.Done():
@@ -86,7 +102,7 @@ func controlLoop(ctx context.Context, d ControlDeps, restart <-chan struct{}) {
 			}
 		}()
 		began := time.Now()
-		err := controlSession(sctx, d, cfg, &since)
+		err = controlSession(sctx, d, cfg, &since)
 		cancel()
 		<-watched
 

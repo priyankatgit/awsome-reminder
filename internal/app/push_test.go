@@ -218,3 +218,73 @@ func TestPushChangedRestartsListenerOnTopicChange(t *testing.T) {
 		t.Fatal("unchanged config restarted the listener")
 	}
 }
+
+// A missed card (fired late, Lead 0) cancels the push of its occurrence: the
+// one Upcoming produced at the item's due time.
+func TestDismissMissedCardSeq(t *testing.T) {
+	due := time.Date(2026, 12, 1, 10, 0, 0, 0, time.UTC)
+	created := due.Add(-2 * time.Hour)
+	it := model.Item{ID: "M", Kind: model.KindReminder, Text: "missed", DueAt: &due, TZ: "UTC", Tags: []string{},
+		Status: model.StatusOpen, CreatedAt: created, UpdatedAt: created, UpdatedBy: "test"}
+	h := newHarness(t)
+	if err := h.st.Put(it); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := withPush(h)
+	r := core.SchedulerRules(settings.Defaults(runtime.GOOS), time.UTC)
+	occs := scheduler.Upcoming([]model.Item{it}, r, created, due.Add(time.Hour))
+	if len(occs) != 1 {
+		t.Fatalf("occurrences %+v", occs)
+	}
+	fired, _, _ := scheduler.Plan([]model.Item{it}, r, due.Add(10*time.Minute), func(string) bool { return false })
+	if len(fired) != 1 || !fired[0].Missed || fired[0].Lead != 0 {
+		t.Fatalf("fired %+v", fired)
+	}
+	h.svc.showAlerts(fired)
+	h.svc.DismissAlert(fired[0].Key)
+	want := push.SeqFor("M", occs[0].Kind, occs[0].At)
+	if got := rec.take(); len(got) != 1 || len(got[0]) != 1 || got[0][0] != want {
+		t.Fatalf("dismissed %v, want [[%s]]", got, want)
+	}
+}
+
+// The subscribe link is the URL the client publishes to: scheme case and a
+// server subpath are kept the way the client builds them.
+func TestPushInfoSubscribeURLMatchesClient(t *testing.T) {
+	h := newHarness(t)
+	withPush(h)
+	st, _ := h.svc.GetSettings()
+	st.PushServer, st.PushTopic = "HTTPS://ntfy.example.com/ntfy/", "ar-x"
+	if _, err := h.svc.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.svc.PushInfo().SubscribeURL; got != "https://ntfy.example.com/ntfy/ar-x" {
+		t.Fatalf("SubscribeURL = %q", got)
+	}
+}
+
+// countToken counts keychain reads.
+type countToken struct {
+	fakeToken
+	gets int
+}
+
+func (t *countToken) Get() (string, error) { t.gets++; return t.fakeToken.Get() }
+
+// An item change never reads the keychain.
+func TestPushChangedSkipsKeychain(t *testing.T) {
+	h := newHarness(t)
+	rec := &fakeRec{}
+	tok := &countToken{}
+	h.svc.d.Push = &pushController{core: h.svc.d.Core, rec: rec, token: tok, restart: make(chan struct{}, 1)}
+	st, _ := h.svc.GetSettings()
+	st.PushEnabled = true
+	if _, err := h.svc.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.d.Push.changed()
+	h.svc.d.Push.changed()
+	if tok.gets != 0 {
+		t.Fatalf("keychain read %d times", tok.gets)
+	}
+}

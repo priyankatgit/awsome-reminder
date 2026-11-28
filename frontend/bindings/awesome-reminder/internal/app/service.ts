@@ -61,8 +61,7 @@ export function Delete(id: string): $CancellablePromise<void> {
 
 /**
  * DismissAlert removes one card; the window hides when none are left. The
- * card's phone push is cancelled when the card counts as handling the item
- * (pushSeq).
+ * card's phone push is cancelled too, lead-time cards excepted.
  */
 export function DismissAlert(key: string): $CancellablePromise<void> {
     return $Call.ByID(364701302, key);
@@ -70,7 +69,7 @@ export function DismissAlert(key: string): $CancellablePromise<void> {
 
 /**
  * DismissAlerts removes every card and hides the alert window, cancelling
- * the phone pushes of the cards that count, like DismissAlert.
+ * the cards' phone pushes, lead-time cards excepted.
  */
 export function DismissAlerts(): $CancellablePromise<void> {
     return $Call.ByID(1029577183);

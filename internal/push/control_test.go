@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -224,10 +225,11 @@ type ctlEnv struct {
 	srv  *pushtest.Server
 	meta *memMeta
 
-	mu    sync.Mutex
-	cfg   Config
-	on    bool
-	calls chan doneCall
+	mu     sync.Mutex
+	cfg    Config
+	on     bool
+	cfgErr error
+	calls  chan doneCall
 }
 
 func newCtlEnv(t *testing.T) *ctlEnv {
@@ -239,10 +241,13 @@ func newCtlEnv(t *testing.T) *ctlEnv {
 
 func (e *ctlEnv) deps() ControlDeps {
 	return ControlDeps{
-		Config: func() (Config, bool) {
+		Config: func() (Config, bool, error) {
 			e.mu.Lock()
 			defer e.mu.Unlock()
-			return e.cfg, e.on
+			if e.cfgErr != nil {
+				return Config{}, false, e.cfgErr
+			}
+			return e.cfg, e.on, nil
 		},
 		Meta: e.meta,
 		Done: func(id string, occ time.Time) error {
@@ -392,4 +397,19 @@ func TestControlRestartOnConfigChange(t *testing.T) {
 	e.post(t, topicB, `{"op":"done","id":"whileOff","occ":1}`)
 	time.Sleep(50 * time.Millisecond)
 	e.noCall(t)
+}
+
+// A settings read error is not "off": the listener retries on its own
+// instead of idling until a restart.
+func TestControlConfigErrorRetries(t *testing.T) {
+	defer func(d time.Duration) { ctlConfigRetry = d }(ctlConfigRetry)
+	ctlConfigRetry = 20 * time.Millisecond
+	e := newCtlEnv(t)
+	e.cfgErr = errors.New("database is locked")
+	start(t, e, make(chan struct{}))
+	time.Sleep(50 * time.Millisecond)
+	e.mu.Lock()
+	e.cfgErr = nil
+	e.mu.Unlock()
+	waitFor(t, "stream after the error cleared", func() bool { return e.srv.Subscribers(testTopic+"-ctl") == 1 })
 }

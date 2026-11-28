@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,13 +55,14 @@ type pushController struct {
 }
 
 // newPushController wires push to the store and core. done is called after a
-// phone Done completed an item (the app drops its alert cards); onStatus gets
-// each status change.
+// phone Done completed an item (the app drops its alert cards); it runs on
+// the listener's goroutine, which shutdown joins, so it must not block.
+// onStatus gets each status change.
 func newPushController(c *core.Core, st *store.Store, dataDir string, done func(itemID string), onStatus func(push.Status)) *pushController {
 	p := &pushController{core: c, token: secret.NewNamed(dataDir, st, secret.PushToken), restart: make(chan struct{}, 1)}
 	p.rec = push.NewReconciler(push.Deps{
 		Items:    st.ListOpen,
-		Rules:    p.rules,
+		Rules:    func() scheduler.Rules { return appRules(c) },
 		Config:   p.config,
 		Log:      st,
 		Now:      time.Now,
@@ -96,8 +96,9 @@ func (p *pushController) start(ctx context.Context) {
 	if p == nil {
 		return
 	}
+	k, _ := p.listenKey()
 	p.mu.Lock()
-	p.ctlKey = p.listenKey()
+	p.ctlKey = k
 	p.mu.Unlock()
 	p.rec.Start(ctx)
 	if p.control != nil {
@@ -138,7 +139,10 @@ func (p *pushController) changed() {
 		return
 	}
 	p.rec.Kick()
-	k := p.listenKey()
+	k, ok := p.listenKey()
+	if !ok {
+		return
+	}
 	p.mu.Lock()
 	moved := k != p.ctlKey
 	p.ctlKey = k
@@ -162,7 +166,8 @@ func (p *pushController) restartListener() {
 	}
 }
 
-// dismiss cancels the phone pushes of dismissed cards (see pushSeq).
+// dismiss cancels the phone pushes of dismissed cards (the ones pushSeq
+// counts).
 func (p *pushController) dismiss(cards []AlertCard) {
 	if p == nil {
 		return
@@ -176,24 +181,30 @@ func (p *pushController) dismiss(cards []AlertCard) {
 	p.rec.Dismiss(seqs)
 }
 
-// listenKey is what the control listener depends on besides the token.
-func (p *pushController) listenKey() string {
-	cfg, on := p.config()
-	if !on {
-		return ""
+// listenKey is what the control listener depends on besides the token, from
+// the settings alone (no keychain read: it runs on every change). ok is
+// false when the settings can't be read.
+func (p *pushController) listenKey() (key string, ok bool) {
+	s, err := p.core.Settings()
+	if err != nil {
+		return "", false
 	}
-	return cfg.Server + "\n" + cfg.Topic
+	if !s.PushEnabled || s.PushTopic == "" {
+		return "", true
+	}
+	return s.PushServer + "\n" + s.PushTopic, true
 }
 
 // config is the reconciler's and listener's view of the settings: on only
-// with push enabled and a topic. The token is read on each call.
-func (p *pushController) config() (push.Config, bool) {
+// with push enabled and a topic. The token is read on each call. A settings
+// read error is returned as such, never as "off", which would delete every
+// pending push.
+func (p *pushController) config() (push.Config, bool, error) {
 	s, err := p.core.Settings()
 	if err != nil {
-		log.Printf("push: settings: %v", err)
-		return push.Config{}, false
+		return push.Config{}, false, err
 	}
-	return push.ConfigFrom(s, p.tokenValue(), time.Local), s.PushEnabled && s.PushTopic != ""
+	return push.ConfigFrom(s, p.tokenValue(), time.Local), s.PushEnabled && s.PushTopic != "", nil
 }
 
 // tokenValue is the saved access token, "" when none (or unreadable).
@@ -206,17 +217,6 @@ func (p *pushController) tokenValue() string {
 		return ""
 	}
 	return t
-}
-
-// rules are the scheduler's rules from the current settings (as the
-// scheduler reads them).
-func (p *pushController) rules() scheduler.Rules {
-	s, err := p.core.Settings()
-	if err != nil {
-		s = settings.Defaults(runtime.GOOS)
-		s.LeadTimes = nil
-	}
-	return core.SchedulerRules(s, time.Local)
 }
 
 // pushSeq is the push sequence ID of the occurrence a card shows, and false
@@ -271,7 +271,12 @@ func (s *Service) PushInfo() PushInfo {
 	if err != nil || st.PushTopic == "" {
 		return info
 	}
-	info.SubscribeURL = strings.TrimRight(st.PushServer, "/") + "/" + st.PushTopic
+	cfg := push.ConfigFrom(st, "", time.Local)
+	if strings.TrimSpace(cfg.Server) == "" {
+		cfg.Server = settings.DefaultPushServer
+	}
+	// The URL the client publishes to, so the QR subscribes to that topic.
+	info.SubscribeURL = push.Client{Server: cfg.Server, Topic: cfg.Topic}.TopicURL()
 	png, err := qrcode.Encode(info.SubscribeURL, qrcode.Medium, 256)
 	if err != nil {
 		log.Printf("push: QR code: %v", err)

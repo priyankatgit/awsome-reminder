@@ -36,6 +36,10 @@ const (
 	dismissKeep = 71 * time.Hour
 )
 
+// errConfig marks a run skipped because the settings could not be read; it
+// is retried with back-off like a TempError.
+var errConfig = errors.New("reading settings")
+
 // Status messages (user-facing).
 const (
 	msgOffline = "Offline · will retry"
@@ -54,11 +58,12 @@ type Log interface {
 
 // Deps is what the Reconciler reads. Config returns false when push is off;
 // the Config it returns then may still carry the token, used to delete what
-// is pending.
+// is pending. A Config error (the settings could not be read) is not "off":
+// the run is skipped and retried with back-off, and nothing is deleted.
 type Deps struct {
 	Items    func() ([]model.Item, error) // open items
 	Rules    func() scheduler.Rules
-	Config   func() (Config, bool)
+	Config   func() (Config, bool, error)
 	Log      Log
 	Now      func() time.Time
 	HTTP     *http.Client
@@ -145,12 +150,15 @@ func (r *Reconciler) Status() Status {
 // SendTest publishes an immediate test push with the current settings. It
 // counts against the daily quota.
 func (r *Reconciler) SendTest(ctx context.Context) error {
-	cfg, on := r.d.Config()
+	cfg, on, err := r.d.Config()
+	if err != nil {
+		return fmt.Errorf("reading settings: %w", err)
+	}
 	if !on {
 		return errors.New("Phone push is off")
 	}
 	r.rollDay(r.d.Now(), cfg.Loc)
-	err := r.client(cfg.Server, cfg.Topic, cfg.Token).SendNow(ctx, "Awesome Reminder", "Test notification — phone push works.")
+	err = r.client(cfg.Server, cfg.Topic, cfg.Token).SendNow(ctx, "Awesome Reminder", "Test notification — phone push works.")
 	r.count(err, 1)
 	r.mu.Lock()
 	r.status.SentToday = r.sent
@@ -240,6 +248,16 @@ func (r *Reconciler) runOnce(ctx context.Context) time.Duration {
 	if ctx.Err() != nil {
 		return 0
 	}
+	r.mu.Lock()
+	queued := len(r.queue) > 0
+	r.mu.Unlock()
+	if queued && res.err == nil && !res.off {
+		// Dismissals held back by a settings read error: process them now.
+		select {
+		case r.dismiss <- struct{}{}:
+		default:
+		}
+	}
 	return r.settle(res)
 }
 
@@ -271,7 +289,7 @@ func (r *Reconciler) settle(res result) time.Duration {
 	var retry time.Duration
 	var te *TempError
 	switch {
-	case errors.As(res.err, &te):
+	case errors.As(res.err, &te) || errors.Is(res.err, errConfig):
 		if r.backoff == 0 {
 			r.backoff = r.backoffMin
 		}
@@ -346,7 +364,10 @@ func shortReason(err error) string {
 // and is reported once the rest is done.
 func (r *Reconciler) reconcile(ctx context.Context) result {
 	now := r.d.Now()
-	cfg, on := r.d.Config()
+	cfg, on, err := r.d.Config()
+	if err != nil {
+		return result{err: fmt.Errorf("%w: %w", errConfig, err)}
+	}
 	r.rollDay(now, cfg.Loc)
 	entries, err := r.d.Log.PushLog()
 	if err != nil {
@@ -539,7 +560,14 @@ func (r *Reconciler) processDismissals(ctx context.Context) result {
 	seqs := r.queue
 	r.queue = nil
 	r.mu.Unlock()
-	cfg, on := r.d.Config()
+	cfg, on, err := r.d.Config()
+	if err != nil {
+		// Keep them for the next try.
+		r.mu.Lock()
+		r.queue = append(seqs, r.queue...)
+		r.mu.Unlock()
+		return result{err: fmt.Errorf("%w: %w", errConfig, err)}
+	}
 	if !on {
 		return result{off: true}
 	}

@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -97,6 +98,7 @@ type rig struct {
 	items    []model.Item
 	cfg      Config
 	on       bool
+	cfgErr   error // Config's error (settings unreadable)
 	statuses []Status
 }
 
@@ -110,10 +112,13 @@ func newRig(t *testing.T, srv *pushtest.Server, items ...model.Item) *rig {
 			return append([]model.Item(nil), g.items...), nil
 		},
 		Rules: func() scheduler.Rules { return tRule },
-		Config: func() (Config, bool) {
+		Config: func() (Config, bool, error) {
 			g.mu.Lock()
 			defer g.mu.Unlock()
-			return g.cfg, g.on
+			if g.cfgErr != nil {
+				return Config{}, false, g.cfgErr
+			}
+			return g.cfg, g.on, nil
 		},
 		Log: g.log,
 		Now: func() time.Time {
@@ -699,5 +704,46 @@ func TestFailedDeleteKeepsLog(t *testing.T) {
 	wantReqs(t, reqs(srv, n), req{"DELETE", "/ar-topic/" + seq}, req{"DELETE", "/ar-topic/" + seq + "s"})
 	if g.log.len() != 0 || len(srv.Pending()) != 0 {
 		t.Errorf("log = %d, pending = %d", g.log.len(), len(srv.Pending()))
+	}
+}
+
+// A settings read error is not "off": the run is skipped (nothing deleted,
+// the log kept) and retried with back-off; queued dismissals wait for it.
+func TestConfigErrorSkipsRun(t *testing.T) {
+	srv := newServer(t)
+	g := newRig(t, srv, reminder("01A", "check deploy", tDue))
+	g.run()
+	if len(srv.Pending()) != 1 || g.log.len() != 1 {
+		t.Fatalf("pending = %d, log = %d", len(srv.Pending()), g.log.len())
+	}
+	n := len(srv.Requests())
+	g.set(func(g *rig) { g.cfgErr = errors.New("database is locked") })
+	if d := g.run(); d != 30*time.Second {
+		t.Fatalf("retry after %v, want 30s", d)
+	}
+	g.r.Dismiss([]string{seqOf("01A", tDue)})
+	g.r.dismissNow(context.Background())
+	if len(srv.Requests()) != n || len(srv.Pending()) != 1 || g.log.len() != 1 {
+		t.Fatalf("settings error touched the server or log: requests +%d, pending %d, log %d", len(srv.Requests())-n, len(srv.Pending()), g.log.len())
+	}
+	if st := g.r.Status(); st.State != "error" || !strings.Contains(st.Message, "reading settings") {
+		t.Fatalf("status = %+v", st)
+	}
+	if err := g.r.SendTest(context.Background()); err == nil || !strings.Contains(err.Error(), "reading settings") {
+		t.Fatalf("SendTest = %v", err)
+	}
+	g.set(func(g *rig) { g.cfgErr = nil })
+	if d := g.run(); d != 0 || g.r.Status().State != "ok" {
+		t.Fatalf("after recovery: retry %v, status %+v", d, g.r.Status())
+	}
+	// The held dismissal is signalled again and now applies.
+	select {
+	case <-g.r.dismiss:
+	default:
+		t.Fatal("held dismissal not signalled")
+	}
+	g.r.dismissNow(context.Background())
+	if len(srv.Pending()) != 0 {
+		t.Fatalf("dismissed push still pending: %d", len(srv.Pending()))
 	}
 }
