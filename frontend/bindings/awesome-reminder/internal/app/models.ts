@@ -73,6 +73,47 @@ export interface AlertCard {
 }
 
 /**
+ * DataFolderInfo is what the Settings "Data folder" section shows.
+ */
+export interface DataFolderInfo {
+    "path": string;
+
+    /**
+     * e.g. "84 MB"
+     */
+    "usedText": string;
+
+    /**
+     * e.g. "41 GB free"; "" when unknown
+     */
+    "freeText": string;
+
+    /**
+     * "" when there is no old copy
+     */
+    "previousDir": string;
+
+    /**
+     * size of the old copy
+     */
+    "previousText": string;
+}
+
+/**
+ * FolderOption is one place the data can live.
+ */
+export interface FolderOption {
+    /**
+     * "standard", "beside" or "other"
+     */
+    "kind": string;
+    "label": string;
+    "path": string;
+    "free": number;
+    "freeText": string;
+}
+
+/**
  * PushInfo is Settings › Phone push's view of push.
  */
 export interface PushInfo {
@@ -114,6 +155,28 @@ export interface ReplyPrefill {
     "grabbed": boolean;
     "needsAccess": boolean;
     "keepText": boolean;
+}
+
+/**
+ * SetupDone ends a move that ran in the background.
+ */
+export interface SetupDone {
+    "ok": boolean;
+    "error": string;
+}
+
+/**
+ * SetupInfo is what the setup page shows.
+ */
+export interface SetupInfo {
+    "state": string;
+    "root": string;
+    "reason": string;
+    "existingDir": string;
+    "options": FolderOption[] | null;
+    "moveFrom": string;
+    "moveTo": string;
+    "needText": string;
 }
 
 /**

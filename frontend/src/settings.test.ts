@@ -54,6 +54,7 @@ vi.mock("./push-settings", () => ({
     return { render() {}, refresh: async () => {} };
   },
 }));
+vi.mock("./data-folder-settings", () => ({ mountDataFolderSection: () => {} }));
 import { mountSettings } from "./settings";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));

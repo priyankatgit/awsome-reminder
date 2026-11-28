@@ -6,6 +6,7 @@ import { mountAlert } from "./alert";
 import { mountCapture } from "./capture";
 import { mountList } from "./list";
 import { mountSettings } from "./settings";
+import { mountSetup } from "./setup";
 
 // One page, one view per window, chosen by location.hash.
 const routes: Record<string, (root: HTMLElement) => void> = {
@@ -13,6 +14,7 @@ const routes: Record<string, (root: HTMLElement) => void> = {
   list: mountList,
   alert: mountAlert,
   settings: mountSettings,
+  setup: mountSetup,
 };
 
 // The webview never navigates: a link or text dragged in from outside (or
@@ -38,7 +40,8 @@ async function start(): Promise<void> {
   document.documentElement.dataset.backdrop = hasNativeBackdrop() ? "glass" : "solid";
   // Dev-only sample data for a plain-browser preview; dropped from production builds.
   if (import.meta.env.DEV && new URLSearchParams(location.search).has("demo")) {
-    (await import("./list-demo")).installDemo();
+    if (location.hash === "#setup") (await import("./setup-demo")).installSetupDemo();
+    else (await import("./list-demo")).installDemo();
   }
   route(root);
 }

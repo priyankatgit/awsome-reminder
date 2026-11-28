@@ -6,6 +6,7 @@ import { api, errorText, isMac, isWindows, type Settings } from "./api";
 import { el, keycaps } from "./dom";
 import { icons } from "./icons";
 import { mountPushSection, type PushForm } from "./push-settings";
+import { mountDataFolderSection } from "./data-folder-settings";
 import { mountSyncSection } from "./sync-settings";
 import { mountVoiceSection } from "./voice-settings";
 
@@ -409,6 +410,7 @@ const TEMPLATE = `
     <section class="settings-sync" id="sync-section"></section>
     <section class="settings-sync settings-push" id="push-section"></section>
     <section class="settings-sync settings-voice" id="voice-section"></section>
+    <section class="settings-sync settings-data-folder" id="data-folder-section"></section>
   </main>
   <footer class="settings-foot">
     <p class="field-error settings-form-error" id="form-error" role="alert" hidden></p>
@@ -906,6 +908,7 @@ export function mountSettings(root: HTMLElement): void {
 
   mountSyncSection($("sync-section"));
   mountVoiceSection($("voice-section"));
+  mountDataFolderSection($("data-folder-section"));
 
   hotkeyHelp.textContent = helpIdle;
   replyHelp.textContent = replyHelpIdle;

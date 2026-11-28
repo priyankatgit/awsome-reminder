@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"awesome-reminder/internal/paths"
 )
 
 // fatalShower shows a blocking error dialog with title and text.
@@ -20,12 +18,8 @@ type fatalShower func(title, text string) error
 // stderr and shows a native message box with the error and the data folder
 // (MessageBoxW on Windows, osascript on macOS, zenity on Linux when
 // installed). The caller exits afterwards.
-func ReportFatal(err error) {
-	dir, derr := paths.Dir()
-	if derr != nil {
-		dir = ""
-	}
-	reportFatal(err, dir, showFatal, os.Stderr)
+func ReportFatal(err error, dataDir string) {
+	reportFatal(err, dataDir, showFatal, os.Stderr)
 }
 
 // reportFatal is ReportFatal with its dependencies injected. show may be nil

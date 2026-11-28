@@ -13,6 +13,9 @@ import type * as app$0 from "../../../../../awesome-reminder/internal/app/models
 import type * as cloudsync$0 from "../../../../../awesome-reminder/internal/cloudsync/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import type * as datamove$0 from "../../../../../awesome-reminder/internal/datamove/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import type * as push$0 from "../../../../../awesome-reminder/internal/push/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -28,6 +31,8 @@ declare module "@wailsio/runtime" {
             "list:focus": string;
             "push:status": push$0.Status;
             "reply:open": app$0.ReplyPrefill;
+            "setup:done": app$0.SetupDone;
+            "setup:progress": datamove$0.Progress;
             "sync:status": cloudsync$0.Status;
             "voice:status": voice$0.Status;
             "voice:wake-status": voice$0.WakeStatus;

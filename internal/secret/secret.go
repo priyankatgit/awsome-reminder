@@ -149,3 +149,31 @@ func (s *store) Kind() string {
 		return "Secret Service"
 	}
 }
+
+// sysKeychain is the keychain ClearKeychain acts on, swappable for tests.
+var sysKeychain keychain = osKeychain{}
+
+// ClearKeychain removes the saved secrets (the connection string and the
+// phone push access token) from the OS keychain, where one entry is shared by
+// every data folder. A missing entry is not an error, and neither is a
+// keychain that can't be used at all (Linux without Secret Service): like
+// Store.Delete, it fails only when an entry demonstrably survives. The
+// encrypted-file fallbacks live in the data folder and are not touched.
+func ClearKeychain() error {
+	var errs []error
+	for _, n := range []Name{AtlasURI, PushToken} {
+		errs = append(errs, clearAccount(n.account))
+	}
+	return errors.Join(errs...)
+}
+
+func clearAccount(account string) error {
+	err := sysKeychain.Delete(service, account)
+	if err == nil || errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	if v, gerr := sysKeychain.Get(service, account); gerr == nil && v != "" {
+		return err
+	}
+	return nil
+}

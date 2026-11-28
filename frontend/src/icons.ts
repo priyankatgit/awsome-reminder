@@ -18,9 +18,11 @@ import {
   Ellipsis,
   Eye,
   EyeOff,
+  FolderOpen,
   Heading2,
   ImagePlus,
   Inbox,
+  Info,
   Italic,
   Link,
   List,
@@ -110,6 +112,9 @@ export const icons = {
   reply: render(Reply as IconNode),
   replyOff: render(MessageSquareOff as IconNode),
   quote: render(TextQuote as IconNode),
+  // Setup (data folder)
+  folderOpen: render(FolderOpen as IconNode),
+  info: render(Info as IconNode),
   // Review list (Phase 3)
   undo: render(Undo2 as IconNode),
 } as const;

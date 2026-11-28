@@ -2824,3 +2824,248 @@ legend.field-label {
 .voice-status-text.is-error {
   color: var(--danger-text);
 }
+
+/* ---------- Setup: first-run data folder screen ---------- */
+
+html[data-view="setup"],
+html[data-view="setup"] body {
+  background: var(--bg);
+}
+
+.setup-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.setup-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: var(--setup-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  overflow-y: auto;
+}
+
+.setup-title {
+  margin: 0;
+  font-size: var(--text-input);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-body);
+}
+
+.setup-sub,
+.setup-reason {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.setup-reason:empty {
+  display: none;
+}
+
+.setup-mono,
+.setup-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.setup-path {
+  margin: 0;
+}
+
+.setup-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--muted);
+}
+
+.setup-notice .icon {
+  margin-top: calc((var(--line-body) - var(--icon-size)) / 2);
+  color: var(--fg-muted);
+}
+
+.setup-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setup-opt {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  transition: background-color var(--dur-hover);
+}
+
+.setup-opt.has-action {
+  grid-template-columns: auto 1fr auto;
+}
+
+.setup-opt:hover {
+  background: var(--muted);
+}
+
+.setup-opt:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.setup-opt input[type="radio"] {
+  width: var(--radio-size);
+  height: var(--radio-size);
+  margin: calc((var(--line-body) - var(--radio-size)) / 2) 0 0;
+  accent-color: var(--accent-fill);
+  cursor: pointer;
+}
+
+.setup-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.setup-opt-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+
+.setup-opt-aka {
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  font-weight: var(--weight-regular);
+}
+
+.setup-opt-detail {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.setup-opt-path {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  overflow-wrap: anywhere;
+}
+
+.setup-opt-path.is-empty {
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+}
+
+.setup-opt-free {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  white-space: nowrap;
+}
+
+.setup-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setup-msgs:empty {
+  display: none;
+}
+
+.setup-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+}
+
+.setup-note .icon {
+  width: var(--icon-size-inline);
+  height: var(--icon-size-inline);
+  margin-top: calc((var(--line-small) - var(--icon-size-inline)) / 2);
+}
+
+.setup-note.is-warn {
+  color: var(--time-text);
+}
+
+.setup-note.is-error {
+  color: var(--danger-text);
+}
+
+.setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setup-step {
+  color: var(--fg-muted);
+}
+
+.setup-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.setup-foot:empty {
+  display: none;
+}
+
+/* ===== Settings: Data folder section (data-folder-settings.ts) ===== */
+.settings-data-folder [hidden] {
+  display: none;
+}
+
+.data-folder-path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--line-small);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.data-folder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.data-folder-confirm-text {
+  margin: 0;
+}
+
+.data-folder-old {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}

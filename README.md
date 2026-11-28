@@ -86,7 +86,7 @@ Click the mic at the right of the capture box, or press `Ctrl+M`, and say the li
 - **First use asks before downloading.** The first time you press the mic, the box explains what is needed and offers a one-time download: about 9 MB for the speech engine and 148 MB for the model (157 MB on Windows). Nothing is downloaded until you click **Download**. A progress bar shows the download; you can close the box and it continues. Each file is checked against a pinned SHA-256 before it is used (whisper.cpp release `b5454` = v1.9.5).
 - **No memory cost while idle.** The speech engine starts when you start listening (so the model loads while you talk), and exits 30 seconds after your last dictation. It uses at most half your CPU cores (8 at most) and no GPU. Measured on Windows 11 (16 cores): while you dictate the engine takes about 250 MB of working set (about 740 MB committed); once it exits, voice adds nothing but one small WebView2 audio process (about 16 MB).
 - **Microphone access.** On Windows, if dictation says the microphone is blocked, turn on Settings › Privacy & security › Microphone › "Let desktop apps access your microphone". On macOS the system asks once. If the box loses focus while listening, the recording is dropped and the mic is released.
-- **Removing voice:** delete the `voice` folder listed under "Where data lives" (this also removes the wake word, see Hands-free voice).
+- **Removing voice:** delete the `voice` folder described under "Where data lives" (this also removes the wake word, see Hands-free voice).
 
 Engine per OS:
 
@@ -270,19 +270,31 @@ The number of open items (to-dos and reminders not yet done) shows as a red badg
 
 ### Where data lives
 
-Everything is under the per-user config directory, in an `awesome-reminder` folder:
+**You choose the data folder.** The first time the app starts it asks where to keep its data: **Standard location**, **Next to the app** (a `Data` folder beside the exe, for a portable copy; not offered under Program Files, in a macOS app bundle or where the folder is not writable) or **Another folder…**. If you already have data from an earlier build, **Keep it where it is** is selected by default and nothing moves.
+
+The standard location is the per-user config directory, in an `awesome-reminder` folder:
 
 | OS | Path |
 |---|---|
 | Windows | `%APPDATA%\awesome-reminder\` |
 | macOS | `~/Library/Application Support/awesome-reminder/` |
-| Linux | `~/.config/awesome-reminder/` |
+| Linux | `$XDG_CONFIG_HOME/awesome-reminder/` (usually `~/.config/awesome-reminder/`) |
 
-It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). With sync on and no OS keychain it also holds `sync.key`; with a phone push token and no OS keychain, `push.key`. Settings are stored in the database. Delete the folder to reset the app.
+That folder also holds a small pointer file, `location.json`, which records the folder you chose. It stays there even when your data is elsewhere. Delete it and the app asks again at the next start.
+
+The data folder holds `awesome.db` (the SQLite database), `awesome.log`, an `attachments` folder with the description images (`<id>.webp`), the `voice` folder (engine, model, wake word, see below) and, on Windows, a `webview` folder (the WebView2 profile). With sync on and no OS keychain it also holds `sync.key`; with a phone push token and no OS keychain, `push.key`. Settings are stored in the database. Delete the folder to reset the app.
 
 At startup the app deletes images that no description has referred to for more than 7 days, and images of items that have been deleted for more than 30 days. Undoing a delete within those windows keeps the images.
 
-The voice engine and model (Phase 1.5, about 160 MB) and the optional wake word (Phase 3, about 26 to 48 MB, plus its on/off file `wake.json`) live in the local cache instead, so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux. Delete that folder to remove voice; the next mic press offers the download again, and the wake word is off until you turn it on in Settings.
+**Voice.** The voice engine and model (Phase 1.5, about 160 MB) and the optional wake word (Phase 3, about 26 to 48 MB, plus its on/off file `wake.json`) are in the `voice` folder inside the data folder. The exception is the standard location, where they stay in the local cache so they never roam with your profile: `%LOCALAPPDATA%\awesome-reminder\voice\` on Windows, `~/Library/Caches/awesome-reminder/voice/` on macOS and `~/.cache/awesome-reminder/voice/` on Linux (and the WebView2 profile stays in its default place). Delete the `voice` folder to remove voice; the next mic press offers the download again, and the wake word is off until you turn it on in Settings.
+
+**Moving the folder.** Settings › Data folder › **Change…** copies everything to the new folder, checks the copy, then switches over. The old copy is kept (its database is renamed `awesome.db.moved`) until you click **Remove old copy** in the same section; the voice folder is moved, not kept. Remove the old copy before moving the folder again. If the folder you pick already holds Awesome Reminder data, the app uses that data as it is (the two are never merged) and turns Atlas sync off until you connect again; a phone push access token kept in the OS keychain is cleared too, so enter it again if your topic needs one.
+
+**Folder missing.** If the data folder is not there at start (an unplugged drive, a network share that is down), the app shows "Your data folder isn't available" with **Retry**, **Choose another folder…** and **Quit**. It never creates an empty database in its place.
+
+**Network and cloud-synced folders.** SQLite does not work reliably over a network share, and OneDrive, Dropbox, Google Drive or iCloud can lock or duplicate the database while it syncs. The app warns you when you pick such a folder; a local folder is safer, and sync across machines is what Atlas is for.
+
+**Older builds.** After a move, an older build of the exe finds no database (it was renamed) and shows an empty list. Use the new build.
 
 ### Command-line flags
 

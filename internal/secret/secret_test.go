@@ -354,3 +354,45 @@ func TestPushTokenDeleteErrorText(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestClearKeychain(t *testing.T) {
+	old := sysKeychain
+	t.Cleanup(func() { sysKeychain = old })
+
+	kc := &fakeKeychain{val: "x", set: true}
+	sysKeychain = kc
+	if err := ClearKeychain(); err != nil || kc.set {
+		t.Fatalf("clear present entry: err=%v set=%v", err, kc.set)
+	}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("missing entry must not be an error: %v", err)
+	}
+	// No usable keychain (Linux without Secret Service): nothing can survive.
+	sysKeychain = &fakeKeychain{err: dbusErr}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("unavailable keychain must not be an error, got %v", err)
+	}
+	// Delete fails but the entry demonstrably survives.
+	sysKeychain = &failDelete{&fakeKeychain{val: "x", set: true}}
+	if err := ClearKeychain(); err == nil {
+		t.Fatal("surviving entry must be an error")
+	}
+	// Delete fails and the entry is gone or empty.
+	sysKeychain = &failDelete{&fakeKeychain{}}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("delete error with no entry left must not be an error, got %v", err)
+	}
+}
+
+func TestClearKeychainClearsBothSecrets(t *testing.T) {
+	old := sysKeychain
+	t.Cleanup(func() { sysKeychain = old })
+	kc := &mapKeychain{vals: map[string]string{"atlas-uri": testURI, "ntfy-token": "tk_x", "other": "keep"}}
+	sysKeychain = kc
+	if err := ClearKeychain(); err != nil {
+		t.Fatal(err)
+	}
+	if len(kc.vals) != 1 || kc.vals["other"] != "keep" {
+		t.Fatalf("keychain after clear = %v", kc.vals)
+	}
+}

@@ -2,16 +2,24 @@
 // import generated paths directly.
 import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
-import { Service, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
+import { Service, SetupService, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
 import type { Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, PushInfo as GenPushInfo, ReplyPrefill, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, DataFolderInfo, FolderOption, PushInfo as GenPushInfo, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { Check as SetupCheck, Progress as SetupProgress } from "../bindings/awesome-reminder/internal/datamove/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
 import type { Status as GenPushStatus } from "../bindings/awesome-reminder/internal/push/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, Detail, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
+export type { Attachment, DataFolderInfo, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
+
+/** What the setup page shows (internal/app/setup_service.go); options never null. */
+export type SetupInfo = Omit<GenSetupInfo, "options"> & { options: FolderOption[] };
+
+function setupInfo(i: GenSetupInfo): SetupInfo {
+  return { ...i, options: i.options ?? [] };
+}
 
 /** A binding call that can be cancelled (Esc while transcribing). */
 export type Cancellable<T> = Promise<T> & { cancel(): void };
@@ -170,6 +178,35 @@ export const api = {
     /** A dictation session just ended: its echo must not wake the box again. */
     sessionEnded: (): Promise<void> => VoiceService.SessionEnded(),
   },
+  /** First-run / unavailable data folder screen (internal/app/setup_service.go). */
+  setup: {
+    info: async (): Promise<SetupInfo> => setupInfo(await SetupService.Info()),
+    check: (picked: string): Promise<SetupCheck> => SetupService.Check(picked),
+    /** Rejects "confirm-adopt" / "confirm-fresh" when the user must confirm; call again with confirm. */
+    choose: (kind: string, path: string, confirm: boolean): Promise<void> => SetupService.Choose(kind, path, confirm),
+    runPendingMove: (): Promise<void> => SetupService.RunPendingMove(),
+    cancelMove: (): Promise<void> => SetupService.CancelMove(),
+    /** Drops a pending move that cannot run and restarts into the current folder. */
+    abandonMove: (): Promise<void> => SetupService.AbandonMove(),
+    retry: async (): Promise<SetupInfo> => setupInfo(await SetupService.Retry()),
+    quit: (): Promise<void> => SetupService.Quit(),
+    onProgress: (cb: (p: SetupProgress) => void): (() => void) => on<SetupProgress>(events.setupProgress, cb),
+    onDone: (cb: (d: SetupDone) => void): (() => void) => on<SetupDone>(events.setupDone, cb),
+  },
+  /** Settings "Data folder" section (internal/app/datafolder.go). */
+  dataFolder: {
+    info: (): Promise<DataFolderInfo> => Service.DataFolder(),
+    check: (picked: string): Promise<SetupCheck> => Service.CheckDataFolder(picked),
+    /** Rejects "confirm-adopt" when the folder holds data and needs confirming; success restarts the app. */
+    change: (picked: string, confirm: boolean): Promise<void> => Service.ChangeDataFolder(picked, confirm),
+    removeOldCopy: (): Promise<void> => Service.RemoveOldCopy(),
+    open: (): Promise<void> => Service.OpenDataFolder(),
+  },
+  /** Folder picker; "" when cancelled. */
+  chooseFolder: async (title: string): Promise<string> => {
+    const picked = await Dialogs.OpenFile({ Title: title, CanChooseDirectories: true, CanChooseFiles: false, CanCreateDirectories: true });
+    return (Array.isArray(picked) ? picked[0] : picked) ?? "";
+  },
   /** Closes the window this page runs in. */
   closeWindow: (): Promise<void> => Window.Close(),
   /** Detail panel (Phase 1.6). */
@@ -233,6 +270,8 @@ export const events = {
   syncStatus: "sync:status",
   /** push.Status, whenever it changes. */
   pushStatus: "push:status",
+  setupProgress: "setup:progress",
+  setupDone: "setup:done",
 } as const;
 
 const local = new Map<string, Set<(data: unknown) => void>>();
