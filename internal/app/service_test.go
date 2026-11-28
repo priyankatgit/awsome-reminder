@@ -175,12 +175,39 @@ func newHarnessAt(t *testing.T, now func() time.Time) *harness {
 	return h
 }
 
+// A Settings draft loaded before another computer's shared-settings change
+// landed saves its local fields and returns the note for the window.
+func TestServiceSaveSettingsStaleDraftNote(t *testing.T) {
+	h := newHarness(t)
+	draft, _ := h.svc.GetSettings()
+	p := draft.Shared()
+	p.DefaultTime = "07:00"
+	if ok, err := h.svc.d.Core.ApplyRemoteShared(p, time.Now().Add(time.Minute), "ZZZZ"); err != nil || !ok {
+		t.Fatalf("remote: %v %v", ok, err)
+	}
+	draft.Hotkey = "Alt+K"
+	note, err := h.svc.SaveSettings(draft)
+	if err != nil || note != core.SettingsChangedElsewhere {
+		t.Fatalf("note %q, err %v", note, err)
+	}
+	got, _ := h.svc.GetSettings()
+	if got.DefaultTime != "07:00" || got.Hotkey != "Alt+K" {
+		t.Errorf("stored %+v", got)
+	}
+	if last := h.reg.registered[len(h.reg.registered)-1]; last != "Alt+K" {
+		t.Errorf("registrar calls %v, want last Alt+K", h.reg.registered)
+	}
+	if fresh, _ := h.svc.SaveSettings(got); fresh != "" {
+		t.Errorf("a draft with the stored stamp got a note: %q", fresh)
+	}
+}
+
 func TestServiceSaveSettingsReRegistersHotkey(t *testing.T) {
 	h := newHarness(t)
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey = "Alt+K"
 	s.Autostart = false
-	if err := h.svc.SaveSettings(s); err != nil {
+	if _, err := h.svc.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	if last := h.reg.registered[len(h.reg.registered)-1]; last != "Alt+K" {
@@ -211,7 +238,7 @@ func TestServiceSaveSettingsInvalid(t *testing.T) {
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey = "Alt+K"
 	s.DefaultTime = "25:00"
-	if err := h.svc.SaveSettings(s); err == nil {
+	if _, err := h.svc.SaveSettings(s); err == nil {
 		t.Fatal("invalid settings saved without error")
 	}
 	after, err := h.svc.GetSettings()
@@ -231,7 +258,7 @@ func TestServiceSaveSettingsHotkeyTakenStillSaves(t *testing.T) {
 	h.reg.fail["Alt+K"] = errors.New("Alt+K is already used by another app")
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey = "Alt+K"
-	if err := h.svc.SaveSettings(s); err == nil {
+	if _, err := h.svc.SaveSettings(s); err == nil {
 		t.Fatal("want hotkey error")
 	}
 	got, _ := h.svc.GetSettings()
@@ -409,7 +436,7 @@ func TestSaveSettingsReportsReplyHotkeyError(t *testing.T) {
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey = "Alt+K"
 	s.ReplyHotkey = "Ctrl+Alt+S"
-	err := h.svc.SaveSettings(s)
+	_, err := h.svc.SaveSettings(s)
 	if err == nil || !strings.Contains(err.Error(), "reply hotkey") {
 		t.Fatalf("SaveSettings err = %v, want a reply hotkey error", err)
 	}
@@ -436,7 +463,7 @@ func TestSaveSettingsReportsReplyHotkeyError(t *testing.T) {
 
 	// A later save that works clears the error.
 	s.ReplyHotkey = "Ctrl+Alt+T"
-	if err := h.svc.SaveSettings(s); err != nil {
+	if _, err := h.svc.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	if st := h.svc.Status(); st.ReplyHotkeyErr != "" || st.HotkeyErr != "" {
@@ -461,7 +488,7 @@ func TestSaveSettingsSwapsHotkeys(t *testing.T) {
 	h.svc.d.Hotkey, h.svc.d.ReplyHotkey = capHk, repHk
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey, s.ReplyHotkey = "Ctrl+Alt+R", "Ctrl+Shift+Space"
-	if err := h.svc.SaveSettings(s); err != nil {
+	if _, err := h.svc.SaveSettings(s); err != nil {
 		t.Fatalf("swap: %v", err)
 	}
 	if st := h.svc.Status(); st.HotkeyErr != "" || st.ReplyHotkeyErr != "" {

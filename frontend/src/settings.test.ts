@@ -5,13 +5,17 @@ const h = vi.hoisted(() => {
   return {
     saved: [] as unknown[],
     saveErr: "" as string,
+    saveNote: "" as string,
+    // What getSettings returns after the first load (undefined: the defaults).
+    stored: undefined as Record<string, unknown> | undefined,
+    loads: 0,
     recording: [] as boolean[],
     status: { hotkeyErr: "", replyHotkeyErr: "" },
   };
 });
 vi.mock("./api", () => ({
   api: {
-    getSettings: async () => ({
+    getSettings: async () => (h.loads++ > 0 && h.stored ? h.stored : {
       hotkey: "Ctrl+Shift+Space",
       leadTimes: ["1h0m0s"],
       defaultTime: "09:00",
@@ -24,11 +28,14 @@ vi.mock("./api", () => ({
       workDays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
       endOfDay: "17:30",
       endOfDaySweep: true,
+      sharedUpdatedAt: 1000,
+      sharedUpdatedBy: "DEV-A",
     }),
     status: async () => h.status,
     saveSettings: async (s: unknown) => {
       if (h.saveErr) throw new Error(h.saveErr);
       h.saved.push(s);
+      return h.saveNote;
     },
     setHotkeyRecording: async (on: boolean) => void h.recording.push(on),
     chooseExportPath: async () => "",
@@ -57,6 +64,9 @@ describe("Replies settings", () => {
   beforeEach(() => {
     h.saved = [];
     h.saveErr = "";
+    h.saveNote = "";
+    h.stored = undefined;
+    h.loads = 0;
     h.recording = [];
     h.status = { hotkeyErr: "", replyHotkeyErr: "" };
   });
@@ -181,5 +191,65 @@ describe("Replies settings", () => {
     expect(q(r, "#reply-hotkey-error").textContent).toBe("Already used");
     expect(q(r, "#settings-status").textContent).toBe("Saved, with a problem");
     expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(true);
+  });
+});
+
+describe("Saving over another computer's change", () => {
+  const base = {
+    hotkey: "Ctrl+Shift+Space",
+    leadTimes: ["1h0m0s"],
+    defaultTime: "09:00",
+    nextWeekDay: "monday",
+    nextWeekTime: "09:00",
+    exportPath: "",
+    autostart: false,
+    showPendingCount: true,
+    replyHotkey: "Ctrl+Alt+R",
+    workDays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    endOfDay: "17:30",
+    endOfDaySweep: true,
+  };
+  beforeEach(() => {
+    h.saved = [];
+    h.saveErr = "";
+    h.saveNote = "";
+    h.stored = undefined;
+    h.loads = 0;
+    h.status = { hotkeyErr: "", replyHotkeyErr: "" };
+  });
+
+  it("shows Go's note and the shared values that were kept", async () => {
+    const r = await mount();
+    h.saveNote = "Saved. The reminder and reply settings were changed on another computer.";
+    // Another computer moved the default time while the window was open.
+    h.stored = { ...base, autostart: true, defaultTime: "07:00", sharedUpdatedAt: 5000, sharedUpdatedBy: "DEV-B" };
+    const auto = q<HTMLInputElement>(r, "#autostart");
+    auto.checked = true;
+    auto.dispatchEvent(new Event("change", { bubbles: true }));
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(h.saved[0]).toMatchObject({ autostart: true, defaultTime: "09:00", sharedUpdatedAt: 1000 });
+    expect(q(r, "#settings-status").textContent).toBe(h.saveNote);
+    expect(q<HTMLInputElement>(r, "#default-time").value).toBe("07:00");
+    expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(true);
+  });
+
+  it("takes the stored stamp after a save, so the next save is not stale", async () => {
+    const r = await mount();
+    h.stored = { ...base, endOfDay: "18:00", sharedUpdatedAt: 2000, sharedUpdatedBy: "DEV-A" };
+    const eod = q<HTMLInputElement>(r, "#end-of-day");
+    eod.value = "18:00";
+    eod.dispatchEvent(new Event("input", { bubbles: true }));
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(q(r, "#settings-status").textContent).toBe("Saved");
+    eod.value = "18:30";
+    eod.dispatchEvent(new Event("input", { bubbles: true }));
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(h.saved[1]).toMatchObject({ endOfDay: "18:30", sharedUpdatedAt: 2000 });
   });
 });

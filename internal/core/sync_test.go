@@ -12,6 +12,7 @@ import (
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/scheduler"
+	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -154,7 +155,7 @@ func TestApplyRemoteReplySuppressesPastNudges(t *testing.T) {
 	}
 	s, _ := e.c.Settings()
 	s.EndOfDaySweep = false
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	if _, next := planFor(t, e); !next.Equal(time.Date(2026, 11, 26, 9, 0, 0, 0, ny)) {
@@ -166,7 +167,7 @@ func TestApplyRemoteNewItemSuppressesPastAlerts(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
 	s.LeadTimes = []time.Duration{time.Hour, 10 * time.Minute}
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	now := e.now.UTC()
@@ -385,7 +386,7 @@ func TestApplyRemoteShared(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
 	s.Hotkey = "Ctrl+Alt+Q"
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	_, at, by, _ := e.c.SharedForSync()
@@ -418,7 +419,7 @@ func TestApplyRemoteSharedClearsPending(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
 	s.LeadTimes = []time.Duration{time.Minute}
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := e.c.OutboxCount(); n != 1 {
@@ -528,12 +529,13 @@ func TestSharedStampsStrictlyIncrease(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
 	s.LeadTimes = []time.Duration{time.Minute}
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	_, at1, _, _ := e.c.SharedForSync()
+	s, _ = e.c.Settings() // the stored stamp, as the Settings window reloads it
 	s.LeadTimes = []time.Duration{2 * time.Minute}
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	_, at2, _, _ := e.c.SharedForSync()
@@ -549,12 +551,105 @@ func TestSharedStampsStrictlyIncrease(t *testing.T) {
 	}
 	s, _ = e.c.Settings()
 	s.DefaultTime = "08:00"
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	_, at3, by3, _ := e.c.SharedForSync()
 	if !at3.Equal(future.Add(time.Millisecond)) || by3 != e.st.DeviceID() {
 		t.Errorf("after a future remote stamp: %v by %s", at3, by3)
+	}
+}
+
+// settingsOutbox counts the queued pushes of the shared settings.
+func settingsOutbox(t *testing.T, e *env) int {
+	t.Helper()
+	entries, err := e.c.Outbox(-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, en := range entries {
+		if en.Kind == store.OutboxSettings {
+			n++
+		}
+	}
+	return n
+}
+
+// TestSaveSettingsStaleDraftKeepsRemoteShared: a Settings draft loaded before
+// a remote change to the shared settings landed must not re-stamp its old
+// shared values as newest. Its local-only fields are saved, the stored shared
+// values are kept, and the caller gets a note.
+func TestSaveSettingsStaleDraftKeepsRemoteShared(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*settings.Settings)
+	}{
+		{"local field only", func(s *settings.Settings) {}},
+		{"shared field too", func(s *settings.Settings) { s.LeadTimes = []time.Duration{3 * time.Minute} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			draft, _ := e.c.Settings() // the window opens
+			p := draft.Shared()
+			p.DefaultTime = "07:00"
+			remoteAt := e.now.Add(time.Minute)
+			if ok, err := e.c.ApplyRemoteShared(p, remoteAt, "ZZZZ"); err != nil || !ok {
+				t.Fatalf("remote: %v %v", ok, err)
+			}
+			draft.ShowPendingCount = !draft.ShowPendingCount
+			tc.edit(&draft)
+			note, err := e.c.SaveSettings(draft)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if note != SettingsChangedElsewhere {
+				t.Errorf("note %q, want %q", note, SettingsChangedElsewhere)
+			}
+			got, _ := e.c.Settings()
+			if !got.Shared().Equal(p) || !got.SharedUpdatedAt.Equal(remoteAt) || got.SharedUpdatedBy != "ZZZZ" {
+				t.Errorf("shared %+v at %v by %s, want the remote %+v", got.Shared(), got.SharedUpdatedAt, got.SharedUpdatedBy, p)
+			}
+			if got.ShowPendingCount != draft.ShowPendingCount {
+				t.Error("the local-only field was not saved")
+			}
+			if n := settingsOutbox(t, e); n != 0 {
+				t.Errorf("%d settings push(es) queued, want none", n)
+			}
+		})
+	}
+}
+
+// TestSaveSettingsCurrentDraftSavesShared: a draft carrying the stored stamp
+// (or a stale one whose shared values match what is stored) saves as before,
+// with no note.
+func TestSaveSettingsCurrentDraftSavesShared(t *testing.T) {
+	e := newEnv(t)
+	p, _, _, _ := e.c.SharedForSync()
+	p.DefaultTime = "07:00"
+	if ok, err := e.c.ApplyRemoteShared(p, e.now.Add(time.Minute), "ZZZZ"); err != nil || !ok {
+		t.Fatalf("remote: %v %v", ok, err)
+	}
+	draft, _ := e.c.Settings() // opened after the remote change
+	draft.LeadTimes = []time.Duration{3 * time.Minute}
+	note, err := e.c.SaveSettings(draft)
+	if err != nil || note != "" {
+		t.Fatalf("save: note %q, err %v", note, err)
+	}
+	got, _ := e.c.Settings()
+	if !got.Shared().Equal(draft.Shared()) || got.SharedUpdatedBy != e.st.DeviceID() {
+		t.Errorf("shared %+v by %s, want the draft's by this device", got.Shared(), got.SharedUpdatedBy)
+	}
+	if n := settingsOutbox(t, e); n != 1 {
+		t.Errorf("%d settings push(es) queued, want 1", n)
+	}
+
+	// A stale stamp whose shared values equal the stored ones is no conflict.
+	stale := got
+	stale.SharedUpdatedAt = got.SharedUpdatedAt.Add(-time.Hour)
+	stale.ShowPendingCount = !got.ShowPendingCount
+	if note, err := e.c.SaveSettings(stale); err != nil || note != "" {
+		t.Fatalf("stale but equal: note %q, err %v", note, err)
 	}
 }
 

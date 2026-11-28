@@ -533,22 +533,41 @@ func (c *Core) Settings() (settings.Settings, error) {
 	return c.st.LoadSettings(runtime.GOOS)
 }
 
-// SaveSettings validates and saves the settings.
-func (c *Core) SaveSettings(s settings.Settings) error {
+// SettingsChangedElsewhere is SaveSettings' note when it kept the stored
+// shared settings over a stale draft's.
+const SettingsChangedElsewhere = "Saved. The reminder and reply settings were changed on another computer while this window was open, so those changes were kept."
+
+// SaveSettings validates and saves the settings. The shared-settings stamp
+// in s is the one the caller loaded, used as an optimistic check: when the
+// stored shared settings are newer (another computer's change landed since)
+// and differ from s's, the stored ones are kept, only the local-only fields
+// are saved, and the returned note says so. Otherwise the note is "".
+func (c *Core) SaveSettings(s settings.Settings) (note string, err error) {
 	if err := s.Validate(); err != nil {
-		return err
+		return "", err
 	}
-	return c.write(func() error {
+	err = c.write(func() error {
 		// The stamp is the store's, not the caller's.
 		old, err := c.st.LoadSettings(runtime.GOOS)
 		if err != nil {
 			return err
 		}
+		stale := model.Newer(old.SharedUpdatedAt, old.SharedUpdatedBy, s.SharedUpdatedAt, s.SharedUpdatedBy)
 		s.SharedUpdatedAt, s.SharedUpdatedBy = old.SharedUpdatedAt, old.SharedUpdatedBy
 		if s.Shared().Equal(old.Shared()) {
 			return c.st.SaveSettings(s)
 		}
+		if stale {
+			// Re-stamping the draft's old shared values would revert the
+			// other computer's change everywhere.
+			note = SettingsChangedElsewhere
+			return c.st.SaveSettings(s.WithShared(old.Shared()))
+		}
 		s.SharedUpdatedAt, s.SharedUpdatedBy = nextStamp(c.now(), old.SharedUpdatedAt), c.st.DeviceID()
 		return c.st.SaveSettingsShared(s)
 	})
+	if err != nil {
+		return "", err
+	}
+	return note, nil
 }

@@ -527,6 +527,7 @@ function installSettingsDemo(): void {
       console.info("demo: saved", saved);
       hotkeyErr = s.hotkey === "Ctrl+Alt+K" ? "Ctrl+Alt+K is already used by another app" : "";
       if (hotkeyErr) throw new Error(`hotkey: ${hotkeyErr}`);
+      return "";
     },
   });
 }

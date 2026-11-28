@@ -503,7 +503,7 @@ func TestRestoreFreshDevice(t *testing.T) {
 	}
 	s, _ := a.c.Settings()
 	s.LeadTimes = []time.Duration{30 * time.Minute} // not one of the defaults
-	if err := a.c.SaveSettings(s); err != nil {
+	if _, err := a.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	clk.Add(5 * 24 * time.Hour) // both reminders are now days overdue
@@ -515,7 +515,7 @@ func TestRestoreFreshDevice(t *testing.T) {
 	c := newDevice(t, ms, clk)
 	cs, _ := c.c.Settings()
 	cs.Hotkey = "Ctrl+Alt+K"
-	if err := c.c.SaveSettings(cs); err != nil {
+	if _, err := c.c.SaveSettings(cs); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.c.EnqueueAll(); err != nil { // first connect
@@ -560,7 +560,7 @@ func TestPullOverlapIdempotent(t *testing.T) {
 	}
 	s, _ := a.c.Settings()
 	s.LeadTimes = []time.Duration{5 * time.Minute}
-	if err := a.c.SaveSettings(s); err != nil {
+	if _, err := a.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	cs := &countingSyncer{Syncer: ms}

@@ -227,7 +227,7 @@ func TestHotkeyErrorSurvivesRecordingCancel(t *testing.T) {
 	h.reg.fail["Alt+K"] = errors.New("Alt+K is already used by another app")
 	s := settings.Defaults(runtime.GOOS)
 	s.Hotkey = "Alt+K"
-	if err := h.svc.SaveSettings(s); err == nil {
+	if _, err := h.svc.SaveSettings(s); err == nil {
 		t.Fatal("want hotkey error")
 	}
 	h.svc.SetHotkeyRecording(true)
