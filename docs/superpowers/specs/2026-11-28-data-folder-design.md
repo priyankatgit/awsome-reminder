@@ -132,7 +132,7 @@ Fresh and existing-data variants:
 - Radio rows with the path in JetBrains Mono, free space in `--fg-muted`, and a single accent **Continue** button. Keyboard-first: arrows move between options, Enter continues, Esc does nothing. Lucide icons only. Tokens only. The pre-delivery checklist applies.
 - The first row reads "Standard location" in the fresh variant and "Keep it where it is" in the existing-data variant. It is selected by default in both.
 - **Next to the app** appears only when the exe's folder is writable, isn't under `Program Files`/`Program Files (x86)`, and isn't inside a macOS `.app` bundle. Its path is `<exe dir>/Data`.
-- **Browse** opens the OS folder picker (Wails dialog with directories only). The chosen folder is used as is when it's empty or already holds an `awesome.db`. Otherwise `Awesome Reminder` is appended, so picking `D:\` doesn't scatter files over the drive root. The resulting path is shown before Continue.
+- **Browse** opens the OS folder picker (Wails dialog with directories only). The chosen folder is used as is when it's empty (apart from `location.json`, `location.json.tmp` and `setup.log`, so the standard folder counts as empty) or already holds an `awesome.db`. Otherwise `Awesome Reminder` is appended, so picking `D:\` doesn't scatter files over the drive root. The resulting path is shown before Continue.
 - Checks before Continue is accepted:
   - The folder can be created and a probe file written and deleted. Otherwise: "Can't write to this folder."
   - There is enough free space for the copy plus a margin (database + attachments + voice + 50 MB). Otherwise an inline error with the numbers.
@@ -153,7 +153,7 @@ Unavailable variant:
 ```
 
 - **Retry** runs the resolver again. **Quit** exits.
-- **Choose another folder…** opens the picker. A folder holding an `awesome.db` is adopted as the new root after a probe open of the database. A folder without one asks for confirmation: "This folder has no Awesome Reminder data. Start with an empty list here?" Only an explicit yes creates a new database.
+- **Choose another folder…** opens the picker. A folder holding an `awesome.db` is adopted as the new root after a probe open of the database. A folder without one asks for confirmation: "This folder has no Awesome Reminder data. Start with an empty list here?" with the notice "Sync across machines will be off until you connect again." Only an explicit yes creates a new database. Picking the missing folder itself (the drive came back) works like **Retry**: it is never adopted, so the keychain entry stays.
 
 ### Adopting a folder (my call)
 
@@ -172,13 +172,14 @@ Unavailable variant:
 
 The source is not open by any other process: setup mode holds the single-instance lock and the main app isn't running.
 
-1. Create `<target>` and check that it's writable.
+0. Refuse while `previousDir` is set and that folder still exists: "Remove the old copy first (Settings → Data folder)." The pointer remembers only one old copy, so a second move would lose track of the first. Settings **Change…** refuses the same way before it records the move.
+1. Create `<target>` and check that it's writable. Write the marker `<target>/.awesome-move` holding the source root. A target that already holds an `awesome.db` is refused, unless the marker is there and names this source: then the database is an interrupted move's own copy (killed between the rename in step 2 and the switch), and its files are renamed aside to `awesome.db.leftover-<unix time>` (and `-wal`, `-shm`), never deleted.
 2. Database: open the source and run `VACUUM INTO '<target>/awesome.db.tmp'` (modernc sqlite). That gives a consistent snapshot with the WAL folded in. Rename it to `awesome.db` after the check in step 4.
 3. Copy `attachments/` and `sync.key`, each file written to `name.tmp` then renamed. Copy `voice/` from its current location (old builds: `<UserCacheDir>/awesome-reminder/voice`). The log isn't copied: a new one starts.
 4. Check: `store.Open` on the copy plus `PRAGMA integrity_check` returns `ok`. Every table's row count matches the source. Every attachment file exists with the same size. `sync.key` bytes are identical. Voice files match in size.
-5. Switch: write the pointer (`dataDir` = target, `previousDir` = old root, `pendingMove` cleared).
+5. Switch: write the pointer (`dataDir` = target, `previousDir` = old root, `pendingMove` cleared), then remove the marker.
 6. Delete the voice folder the copy came from (the agreed exception: it is only a download).
-7. Rename the old database files `awesome.db`, `-wal` and `-shm` to `awesome.db.moved`, `-wal.moved` and `-shm.moved` (my call). Older builds of the exe always open `<UserConfigDir>/awesome-reminder/awesome.db`. Without the rename, an old copy of the exe started by mistake would silently open the stale backup, and new tasks would split across two databases. With it, an old build shows an empty list: obvious, and nothing diverges. The backup is still complete and can be restored by renaming. The old root is otherwise untouched.
+7. Rename the old database files `awesome.db`, `-wal` and `-shm` to `awesome.db.moved`, `-wal.moved` and `-shm.moved` (my call). Older builds of the exe always open `<UserConfigDir>/awesome-reminder/awesome.db`. Without the rename, an old copy of the exe started by mistake would silently open the stale backup, and new tasks would split across two databases. With it, an old build shows an empty list: obvious, and nothing diverges. The backup is still complete and can be restored by renaming. The old root is otherwise untouched. Steps 6 and 7 are best effort after the switch: a failure is logged, not shown.
 7. If any step fails, delete the half-written target files the app created (never pre-existing ones), leave the pointer as it was, show the error with **Try again** / **Cancel**, and the app keeps using the old root.
 
 The WebView2 profile isn't copied. It only holds the list's "Done section open" flag (`localStorage`), which resets once. The old `%APPDATA%\awesome-reminder.exe` folder counts as part of the old copy.
@@ -193,7 +194,7 @@ The WebView2 profile isn't copied. It only holds the list's "Done section open" 
 ### Errors and permissions
 
 - Unwritable folder, full drive, a network warning: handled on the setup screen and in Settings as above.
-- The folder disappears between starts: the Unavailable screen.
+- The folder disappears between starts: the Unavailable screen. If it disappears between the resolver and the main app opening the database, the app refuses to start and names the folder instead of creating an empty database there.
 - Whatever the resolver decided, `ReportFatal` names the real root, so "Data folder:" in the crash dialog is correct.
 - Free space: `GetDiskFreeSpaceExW` on Windows, `statfs` on macOS and Linux, behind one `paths.FreeSpace(dir)` helper.
 
@@ -201,7 +202,8 @@ The WebView2 profile isn't copied. It only holds the list's "Done section open" 
 
 - Pointer and default root: the config dir on each OS, as today.
 - Voice moves from the cache dir into `<root>/voice` on every OS.
-- WebView2 profile: Windows only (`application.WindowsOptions.WebviewUserDataPath = <root>/webview`).
+- WebView2 profile: Windows only (`application.WindowsOptions.WebviewUserDataPath = <root>/webview`). The setup window uses its own throwaway profile under the temp folder, so it never creates the old `%APPDATA%\awesome-reminder.exe` folder or shares a live profile with the main app.
+- Closing the setup window quits on every OS (on macOS too), so no windowless process keeps the single-instance lock.
 - The relaunch uses `os.Executable()` plus `exec.Command` on all three. On macOS this runs the bundle's binary directly, which is acceptable for a tray app.
 - "Next to the app" is hidden inside a macOS `.app` bundle and in read-only locations.
 
