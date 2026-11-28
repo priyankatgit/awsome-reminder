@@ -288,3 +288,36 @@ func TestPushChangedSkipsKeychain(t *testing.T) {
 		t.Fatalf("keychain read %d times", tok.gets)
 	}
 }
+
+// With push off, the reconciler's and listener's config never reads the
+// keychain (it runs on every change); on, it carries the token.
+func TestPushConfigOffSkipsKeychain(t *testing.T) {
+	h := newHarness(t)
+	tok := &countToken{fakeToken: fakeToken{v: "tk_x"}}
+	h.svc.d.Push = &pushController{core: h.svc.d.Core, rec: &fakeRec{}, token: tok, restart: make(chan struct{}, 1)}
+	p := h.svc.d.Push
+	st, _ := h.svc.GetSettings()
+	st.PushEnabled = false
+	st.PushTopic = "ar-x"
+	if _, err := h.svc.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		p.changed()
+		cfg, on, err := p.config()
+		if err != nil || on || cfg.Token != "" {
+			t.Fatalf("off: cfg %+v, on %v, err %v", cfg, on, err)
+		}
+	}
+	if tok.gets != 0 {
+		t.Fatalf("keychain read %d times while off", tok.gets)
+	}
+	st, _ = h.svc.GetSettings()
+	st.PushEnabled = true
+	if _, err := h.svc.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, on, _ := p.config(); !on || cfg.Token != "tk_x" || tok.gets != 1 {
+		t.Fatalf("on: token %q, on %v, reads %d", cfg.Token, on, tok.gets)
+	}
+}

@@ -50,7 +50,7 @@ type pushController struct {
 	restart chan struct{} // buffered 1: reconnect (or stop) the listener
 
 	mu      sync.Mutex
-	ctlKey  string // the listener's config at the last check (pushListenKey)
+	ctlKey  string // the listener's config at the last check (listenKey)
 	waitCtl func()
 }
 
@@ -64,6 +64,7 @@ func newPushController(c *core.Core, st *store.Store, dataDir string, done func(
 		Items:    st.ListOpen,
 		Rules:    func() scheduler.Rules { return appRules(c) },
 		Config:   p.config,
+		Token:    p.tokenValue, // only for deleting pending pushes once off
 		Log:      st,
 		Now:      time.Now,
 		HTTP:     &http.Client{Timeout: pushRequestTimeout},
@@ -196,15 +197,21 @@ func (p *pushController) listenKey() (key string, ok bool) {
 }
 
 // config is the reconciler's and listener's view of the settings: on only
-// with push enabled and a topic. The token is read on each call. A settings
-// read error is returned as such, never as "off", which would delete every
-// pending push.
+// with push enabled and a topic. The token is read on each call while on,
+// never while off (the reconciler fetches it through Deps.Token only to
+// cancel what is pending). A settings read error is returned as such, never
+// as "off", which would delete every pending push.
 func (p *pushController) config() (push.Config, bool, error) {
 	s, err := p.core.Settings()
 	if err != nil {
 		return push.Config{}, false, err
 	}
-	return push.ConfigFrom(s, p.tokenValue(), time.Local), s.PushEnabled && s.PushTopic != "", nil
+	on := s.PushEnabled && s.PushTopic != ""
+	token := ""
+	if on {
+		token = p.tokenValue()
+	}
+	return push.ConfigFrom(s, token, time.Local), on, nil
 }
 
 // tokenValue is the saved access token, "" when none (or unreadable).

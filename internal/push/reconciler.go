@@ -57,13 +57,15 @@ type Log interface {
 }
 
 // Deps is what the Reconciler reads. Config returns false when push is off;
-// the Config it returns then may still carry the token, used to delete what
-// is pending. A Config error (the settings could not be read) is not "off":
-// the run is skipped and retried with back-off, and nothing is deleted.
+// its Token may then be empty (so turning off needs no keychain read), and
+// Token (optional) is called only to delete what is still pending. A Config
+// error (the settings could not be read) is not "off": the run is skipped
+// and retried with back-off, and nothing is deleted.
 type Deps struct {
 	Items    func() ([]model.Item, error) // open items
 	Rules    func() scheduler.Rules
 	Config   func() (Config, bool, error)
+	Token    func() string // the saved access token, "" when none
 	Log      Log
 	Now      func() time.Time
 	HTTP     *http.Client
@@ -515,9 +517,13 @@ func (r *Reconciler) turnOff(ctx context.Context, cfg Config, entries []store.Pu
 	if len(entries) == 0 {
 		return nil // nothing to do: no store write per Kick while off
 	}
+	token, fetched := cfg.Token, cfg.Token != ""
 	for _, e := range entries {
 		if r.pendingOnServer(e, now) {
-			err := r.deleteBoth(ctx, r.client(e.Server, e.Topic, cfg.Token), e.Seq)
+			if !fetched && r.d.Token != nil {
+				token, fetched = r.d.Token(), true
+			}
+			err := r.deleteBoth(ctx, r.client(e.Server, e.Topic, token), e.Seq)
 			if err != nil && retryable(ctx, err) {
 				return err
 			}

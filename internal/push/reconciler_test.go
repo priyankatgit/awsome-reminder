@@ -98,7 +98,9 @@ type rig struct {
 	items    []model.Item
 	cfg      Config
 	on       bool
-	cfgErr   error // Config's error (settings unreadable)
+	cfgErr   error  // Config's error (settings unreadable)
+	token    string // Deps.Token's value (the saved token)
+	tokReads int    // Deps.Token calls
 	statuses []Status
 }
 
@@ -126,6 +128,12 @@ func newRig(t *testing.T, srv *pushtest.Server, items ...model.Item) *rig {
 				return Config{}, false, g.cfgErr
 			}
 			return g.cfg, g.on, nil
+		},
+		Token: func() string {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			g.tokReads++
+			return g.token
 		},
 		Log: g.log,
 		Now: func() time.Time {
@@ -501,6 +509,34 @@ func TestTurnOffClears(t *testing.T) {
 	}
 	if err := g.r.SendTest(context.Background()); err == nil || err.Error() != "Phone push is off" {
 		t.Errorf("SendTest = %v", err)
+	}
+}
+
+// Off, Config carries no token (the keychain isn't read while off); the
+// deletes fetch it through Deps.Token, and only when there is something to
+// cancel.
+func TestTurnOffReadsTokenOnlyToDelete(t *testing.T) {
+	srv := newServer(t)
+	srv.RequireToken("tk_secret")
+	g := newRig(t, srv, reminder("01A", "check deploy", tDue))
+	g.set(func(g *rig) { g.cfg.Token, g.token = "tk_secret", "tk_secret" })
+	g.run()
+	if len(srv.Pending()) != 1 {
+		t.Fatalf("pending = %+v", srv.Pending())
+	}
+	g.set(func(g *rig) { g.on, g.cfg.Token, g.tokReads = false, "", 0 })
+	g.run()
+	if len(srv.Pending()) != 0 || g.log.len() != 0 || g.sawState("auth") {
+		t.Fatalf("pending = %d, log = %d, statuses %+v", len(srv.Pending()), g.log.len(), g.statuses)
+	}
+	g.set(func(g *rig) { g.items = append(g.items, reminder("01B", "x", tDue)) })
+	g.r.Kick()
+	g.run()
+	g.run()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.tokReads != 1 {
+		t.Errorf("token read %d times, want once (for the deletes)", g.tokReads)
 	}
 }
 
