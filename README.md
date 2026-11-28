@@ -79,7 +79,7 @@ Priority shows as a coloured dot before the item text (red High, amber Medium, b
 
 ### Voice
 
-Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself after about 2 seconds of silence (or at 30 seconds). Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
+Click the mic at the right of the capture box, or press `Ctrl+M`, and say the line: "remind me tomorrow at 5 pm to check the deploy, hashtag backend". Listening stops by itself about 2 seconds after you finish speaking (8 seconds after "new task", while you think of the next one; 8 seconds if nothing is said at all), or after 5 minutes. Press `Ctrl+M` or the stop button to stop early, and `Esc` to cancel. The text drops into the input with the normal preview so you can fix it. **Enter saves; dictation never saves on its own.**
 
 - Say "hashtag" or "hash tag" before a word to tag it (`#backend`). Spoken times such as "five p.m." and "in two hours" become `5 pm` and `in 2 hours` so the parser understands them.
 - **Everything stays on your computer.** Speech is turned into text locally by [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with the English `base.en` model. No audio or text is sent anywhere.
@@ -111,7 +111,7 @@ Dictation in the capture box (hands-free or from the mic button) can hold severa
 
 "scratch that" also works when you dictate a single task. The other commands are plain text there. A command inside a longer sentence ("please save all my notes") is just text.
 
-- **Review list.** `Enter` saves all tasks (the one in the input too). `Esc` with finished tasks asks first; `Esc` again discards them. After a spoken save or cancel the box shows "Saved 3 tasks" or "Discarded 3 tasks" with **Undo** for 5 seconds; Undo deletes what was saved and puts the tasks back in the list. In the list, `Enter` on a row edits it, and `Delete` or the **×** removes it.
+- **Review list.** `Enter` saves all tasks (the one in the input too). `Esc` with finished tasks asks first; `Esc` again discards them. After a spoken save or cancel the box shows "Saved 3 tasks" or "Discarded 3 tasks" with **Undo** for 5 seconds. After a save, Undo deletes what was saved and puts the tasks back in the list; after a cancel, Undo brings back the discarded tasks and the text that was in the input. In the list, `Enter` on a row edits it, and `Delete` or the **×** removes it.
 - **Silence keeps your words.** When the box hides because nothing more was said, the tasks stay as a draft and the next time you open the box it says "2 unsaved tasks from voice". A box opened by the wake word closes after about 15 seconds of silence once you have said something, or when you say "save all".
 - **"Hey Awesome" while the box is open is ignored.**
 
