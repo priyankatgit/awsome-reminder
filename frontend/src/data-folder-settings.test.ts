@@ -128,7 +128,7 @@ describe("data folder section", () => {
     await mount();
     await pick(check({ hasData: true }));
     expect(text()).toContain("This folder already has Awesome Reminder data.");
-    expect(text()).toContain("Sync across machines will be off until you connect again.");
+    expect(text()).not.toContain("Sync across machines will be off");
     expect(btn("Restart and move")).toBeUndefined();
     btn("Restart and use that data")!.click();
     await flush();

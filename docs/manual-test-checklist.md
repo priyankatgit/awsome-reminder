@@ -198,7 +198,7 @@ Run in the built app from a temp copy with `APPDATA` / `LOCALAPPDATA` pointed at
 | D1 | Fresh install | Empty scratch config dir. The first start shows the data folder screen with Standard location, Next to the app, Another folder…. Pick Standard: the app starts, `awesome.db` and `location.json` exist. | | | | |
 | D2 | Existing install, Keep | Scratch profile with an old `awesome.db`. The screen has "Keep it where it is" selected; Continue starts the app with the same items and nothing moved. Hey Awesome / dictation still work afterwards. | | | | |
 | D3 | Existing install, move | Same profile, choose Another folder…. Progress shows, the app restarts on the new folder with the same items; the old folder has `awesome.db.moved`; the voice folder was moved. | | | | |
-| D4 | Adopt a folder that has data | Choose a folder that already holds an `awesome.db`. Its items show, nothing is merged, and Atlas sync is off until reconnected. | | | | |
+| D4 | Adopt a folder that has data | Choose a folder that already holds an `awesome.db`. Its items show, nothing is merged, and Atlas sync keeps its saved connection. | | | | |
 | D5 | Folder unavailable | Rename or unplug the data folder and start. "Your data folder isn't available" shows; no empty database is created. Retry after restoring it starts normally; Choose another folder… and Quit work. | | | | |
 | D6 | Settings: move | Settings › Data folder › Change…: pick a new folder; the copy is checked, the app switches and the items are all there. Cancel during the copy leaves the old folder in use. | | | | |
 | D7 | Settings: Remove old copy | After D6, click Remove old copy: the old `awesome.db.moved` and attachments are deleted, the button goes away. | | | | |
