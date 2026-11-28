@@ -3,7 +3,7 @@
 import { Dialogs, Events, System, Window } from "@wailsio/runtime";
 import "../bindings/events/index.js"; // registers typed event data
 import { Service, SetupService, VoiceService } from "../bindings/awesome-reminder/internal/app/index.js";
-import type { Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
+import type { ModelInfo as VoiceModel, Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
 import type { AlertCard as GenAlertCard, DataFolderInfo, FolderOption, PushInfo as GenPushInfo, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
@@ -12,7 +12,7 @@ import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/inter
 import type { Status as GenPushStatus } from "../bindings/awesome-reminder/internal/push/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
-export type { Attachment, DataFolderInfo, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
+export type { Attachment, DataFolderInfo, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceModel, VoiceStatus, WakeStatus };
 
 /** What the setup page shows (internal/app/setup_service.go); options never null. */
 export type SetupInfo = Omit<GenSetupInfo, "options"> & { options: FolderOption[] };
@@ -167,6 +167,14 @@ export const api = {
     /** One piece of a continuous dictation; prompt is the recent text, speechMs the speech in the piece. */
     transcribeSegment: (pcm: Int16Array, prompt: string, speechMs: number): Cancellable<string> =>
       VoiceService.TranscribeSegment(pcmBase64(pcm), prompt, speechMs),
+    /** Speech models for Settings (internal/voice/models.go). */
+    models: async (): Promise<VoiceModel[]> => (await VoiceService.Models()) ?? [],
+    /** Records the choice, or downloads it in the background (progress: events.voiceStatus, status.target). */
+    setModel: (id: string): Promise<void> => VoiceService.SetModel(id),
+    cancelModelSwitch: (): Promise<void> => VoiceService.CancelModelSwitch(),
+    /** "Words I use": names and terms that bias the speech engine. */
+    words: (): Promise<string> => VoiceService.Words(),
+    setWords: (words: string): Promise<void> => VoiceService.SetWords(words),
     /** "Hey Awesome" wake word (internal/app/wake.go). */
     wakeStatus: (): Promise<WakeStatus> => VoiceService.WakeStatus(),
     /** Turning it on needs the files installed (installWake); rejects otherwise. */

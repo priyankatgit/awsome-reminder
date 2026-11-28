@@ -14,6 +14,10 @@ var (
 	annotation = regexp.MustCompile(`^(\([^)]*\)|\*[^*]*\*)$`)
 	// "5 p.m." -> "5 pm" so the capture parser understands it.
 	meridiem = regexp.MustCompile(`(?i)\b([ap])\.m\.`)
+	// "9.30 am" / "at 9.30" -> "9:30 am" / "at 9:30": whisper writes times
+	// the Indian/British way, the capture parser reads colons.
+	dotTimeMeridiem = regexp.MustCompile(`(?i)\b(\d{1,2})\.([0-5]\d)(\s*[ap]m\b)`)
+	dotTimeAfter    = regexp.MustCompile(`(?i)\b(at|by|from|until|till|before|after)\s+(\d{1,2})\.([0-5]\d)\b`)
 	// "hashtag backend" / "hash tag backend" -> "#backend".
 	spokenTag = regexp.MustCompile(`(?i)\bhash ?tag\s+([\p{L}\p{N}_-]+)`)
 )
@@ -31,6 +35,8 @@ func CleanTranscript(s string) string {
 	s = meridiem.ReplaceAllStringFunc(s, func(m string) string {
 		return strings.ToLower(m[:1]) + "m"
 	})
+	s = dotTimeMeridiem.ReplaceAllString(s, "$1:$2$3")
+	s = dotTimeAfter.ReplaceAllString(s, "$1 $2:$3")
 	s = spokenTag.ReplaceAllStringFunc(s, func(m string) string {
 		w := spokenTag.FindStringSubmatch(m)[1]
 		return "#" + strings.ToLower(w)

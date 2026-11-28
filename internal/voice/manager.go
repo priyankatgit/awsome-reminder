@@ -28,6 +28,14 @@ type Status struct {
 	Engine   string `json:"engine"`   // "bundled" | "system" | ""
 	Error    string `json:"error"`    // last install error, "" if none
 	Hint     string `json:"hint"`     // how to fix an unsupported setup
+	// Model is the active speech model id (see Models).
+	Model string `json:"model"`
+	// Target is the model a background switch is downloading ("" if none);
+	// the state stays "ready" (the old model keeps working) and
+	// Phase/Done/Total report the download.
+	Target string `json:"target"`
+	// SwitchError is why the last model switch failed ("" if it did not).
+	SwitchError string `json:"switchError"`
 }
 
 // User-facing hints (exact copy, see the Phase 1.5 plan).
@@ -37,7 +45,6 @@ const (
 )
 
 const (
-	modelFile   = "ggml-base.en.bin"
 	okFile      = ".ok"
 	statusEvery = 100 * time.Millisecond
 )
@@ -52,8 +59,8 @@ type Config struct {
 	RuntimeMissing func() []string
 	NewEngine      func(bin string, server bool, c EngineConfig) Engine
 	OnStatus       func(Status)
-	Model          *Asset // test override for ModelAsset
-	EngineAsset    *Asset // test override for EngineAsset(GOOS, GOARCH)
+	Models         []ModelSpec // test override for the Models catalogue
+	EngineAsset    *Asset      // test override for EngineAsset(GOOS, GOARCH)
 }
 
 // Manager owns the voice files, the consented install and the engine.
@@ -67,7 +74,13 @@ type Manager struct {
 	lastErr    string
 	lastEmit   time.Time
 	eng        Engine
-	engFor     string // bin the engine was made for
+	engFor     string // bin and model the engine was made for
+
+	cfg      voiceConfig // voice.json
+	swTarget string      // model a background switch downloads
+	swCancel context.CancelFunc
+	swDone   int64
+	swErr    string
 }
 
 // NewManager fills in defaults.
@@ -96,16 +109,53 @@ func NewManager(c Config) *Manager {
 			return NewCLIEngine(ec)
 		}
 	}
-	if c.Model == nil {
-		m := ModelAsset
-		c.Model = &m
+	if c.Models == nil {
+		c.Models = Models
 	}
 	if c.EngineAsset == nil {
 		if a, ok := EngineAsset(c.GOOS, c.GOARCH); ok {
 			c.EngineAsset = &a
 		}
 	}
-	return &Manager{c: c}
+	m := &Manager{c: c}
+	cfg, ok := loadVoiceConfig(c.Dir)
+	if _, known := LookupModel(c.Models, cfg.Model); !ok || !known {
+		cfg.Model = m.defaultModel()
+	}
+	if w, err := NormalizeWords(cfg.Words); err == nil {
+		cfg.Words = w
+	} else {
+		cfg.Words = ""
+	}
+	m.cfg = cfg
+	if m.modelInstalled() {
+		m.removeOtherModels()
+	}
+	return m
+}
+
+// defaultModel is the model of a device without a (valid) voice.json: Base
+// when it is installed (an existing user keeps what works), else another
+// installed model (most accurate first), else the recommended one.
+func (m *Manager) defaultModel() string {
+	if s, ok := LookupModel(m.c.Models, ModelBase); ok && m.installedSpec(s) {
+		return ModelBase
+	}
+	for i := len(m.c.Models) - 1; i >= 0; i-- {
+		if m.installedSpec(m.c.Models[i]) {
+			return m.c.Models[i].ID
+		}
+	}
+	if _, ok := LookupModel(m.c.Models, RecommendedModel); ok {
+		return RecommendedModel
+	}
+	return m.c.Models[0].ID
+}
+
+// spec is the active model.
+func (m *Manager) spec() ModelSpec {
+	s, _ := LookupModel(m.c.Models, m.cfg.Model)
+	return s
 }
 
 // setup is how this system gets an engine.
@@ -118,7 +168,11 @@ type setup struct {
 }
 
 func (m *Manager) engineDir() string { return filepath.Join(m.c.Dir, "engine-"+EngineRelease) }
-func (m *Manager) modelPath() string { return filepath.Join(m.c.Dir, "models", modelFile) }
+func (m *Manager) modelsDir() string { return filepath.Join(m.c.Dir, "models") }
+func (m *Manager) modelPath() string { return m.pathOf(m.spec()) }
+func (m *Manager) pathOf(s ModelSpec) string {
+	return filepath.Join(m.modelsDir(), s.File)
+}
 
 func (m *Manager) resolve() setup {
 	if m.c.EngineAsset != nil {
@@ -161,9 +215,25 @@ func (m *Manager) engineInstalled() bool {
 	return err == nil && string(b) == EngineRelease
 }
 
-func (m *Manager) modelInstalled() bool {
-	st, err := os.Stat(m.modelPath())
-	return err == nil && st.Size() == m.c.Model.Size
+func (m *Manager) modelInstalled() bool { return m.installedSpec(m.spec()) }
+
+func (m *Manager) installedSpec(s ModelSpec) bool {
+	st, err := os.Stat(m.pathOf(s))
+	return err == nil && st.Size() == s.Asset.Size
+}
+
+// removeOtherModels deletes the catalogue's model files other than the
+// active one (one model on disk at a time). Failures are only logged.
+func (m *Manager) removeOtherModels() {
+	keep := m.spec().File
+	for _, s := range m.c.Models {
+		if s.File == keep {
+			continue
+		}
+		if err := os.Remove(m.pathOf(s)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("voice: remove unused model %s: %v", s.File, err)
+		}
+	}
 }
 
 // Status reports the current voice state.
@@ -175,13 +245,15 @@ func (m *Manager) Status() Status {
 
 func (m *Manager) statusLocked() Status {
 	if m.installing {
-		return m.prog
+		p := m.prog
+		p.Model = m.cfg.Model
+		return p
 	}
 	s := m.resolve()
 	if s.hint != "" {
-		return Status{State: "unsupported", Hint: s.hint, Error: m.lastErr}
+		return Status{State: "unsupported", Hint: s.hint, Error: m.lastErr, Model: m.cfg.Model}
 	}
-	st := Status{Engine: "system", Error: m.lastErr}
+	st := Status{Engine: "system", Error: m.lastErr, Model: m.cfg.Model, SwitchError: m.swErr}
 	if s.bundled {
 		st.Engine = "bundled"
 		if !m.engineInstalled() {
@@ -189,13 +261,17 @@ func (m *Manager) statusLocked() Status {
 		}
 	}
 	if !m.modelInstalled() {
-		st.Download += m.c.Model.Size
+		st.Download += m.spec().Asset.Size
 	}
 	if st.Download > 0 {
 		st.State = "absent"
 	} else {
 		st.State = "ready"
 		st.Error = ""
+	}
+	if m.swTarget != "" {
+		t, _ := LookupModel(m.c.Models, m.swTarget)
+		st.Target, st.Phase, st.Done, st.Total = m.swTarget, "model", m.swDone, t.Asset.Size
 	}
 	return st
 }
@@ -222,6 +298,10 @@ func (m *Manager) Install() error {
 		m.mu.Unlock()
 		return nil
 	}
+	if m.swTarget != "" {
+		m.mu.Unlock()
+		return fmt.Errorf("voice: a speech model download is running")
+	}
 	st := m.statusLocked()
 	if st.State != "absent" {
 		m.mu.Unlock()
@@ -243,7 +323,10 @@ func (m *Manager) Install() error {
 		m.mu.Lock()
 		m.installing, m.cancel = false, nil
 		switch {
-		case err == nil, errors.Is(err, context.Canceled):
+		case err == nil:
+			m.lastErr = ""
+			m.removeOtherModels()
+		case errors.Is(err, context.Canceled):
 			m.lastErr = ""
 		default:
 			m.lastErr = installErrText(err)
@@ -297,13 +380,16 @@ func (m *Manager) install(ctx context.Context, s setup) error {
 		base += a.Size
 	}
 
-	if !m.modelInstalled() {
-		report := progress("model", m.c.Model.Size)
+	m.mu.Lock()
+	spec := m.spec() // SetModel is refused while installing
+	m.mu.Unlock()
+	if !m.installedSpec(spec) {
+		report := progress("model", spec.Asset.Size)
 		report(0)
-		if err := os.MkdirAll(filepath.Dir(m.modelPath()), 0o755); err != nil {
+		if err := os.MkdirAll(m.modelsDir(), 0o755); err != nil {
 			return err
 		}
-		if err := Download(ctx, m.c.Client, *m.c.Model, m.modelPath(), report); err != nil {
+		if err := Download(ctx, m.c.Client, spec.Asset, m.pathOf(spec), report); err != nil {
 			return err
 		}
 	}
@@ -336,7 +422,8 @@ func (m *Manager) engine() (Engine, error) {
 		return nil, fmt.Errorf("voice: not ready (%s)", st.State)
 	}
 	s := m.resolve()
-	if m.eng != nil && m.engFor == s.bin {
+	key := s.bin + "|" + m.modelPath()
+	if m.eng != nil && m.engFor == key {
 		return m.eng, nil
 	}
 	if m.eng != nil {
@@ -348,7 +435,7 @@ func (m *Manager) engine() (Engine, error) {
 		Threads: DefaultThreads(runtime.NumCPU()),
 		Env:     s.env,
 	})
-	m.engFor = s.bin
+	m.engFor = key
 	return m.eng, nil
 }
 
@@ -373,17 +460,20 @@ func (m *Manager) Transcribe(ctx context.Context, pcmB64 string) (string, error)
 }
 
 // TranscribeSegment is Transcribe for one piece of a continuous dictation:
-// prompt (recent text) biases whisper, and a short piece (speechMs of
-// speech) that is only a known silence hallucination comes back "".
-func (m *Manager) TranscribeSegment(ctx context.Context, pcmB64, prompt string, speechMs int) (string, error) {
-	raw, err := m.transcribeRaw(ctx, pcmB64, prompt)
+// recent (the text dictated so far) biases whisper, and a short piece
+// (speechMs of speech) that is only a known silence hallucination comes
+// back "".
+func (m *Manager) TranscribeSegment(ctx context.Context, pcmB64, recent string, speechMs int) (string, error) {
+	raw, err := m.transcribeRaw(ctx, pcmB64, recent)
 	if err != nil {
 		return "", err
 	}
 	return DropHallucination(CleanTranscript(raw), speechMs), nil
 }
 
-func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, prompt string) (string, error) {
+// transcribeRaw transcribes with BuildPrompt(words, recent); a transcript
+// that only echoes the fixed prompt comes back "".
+func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, recent string) (string, error) {
 	pcm, err := DecodePCM(pcmB64)
 	if err != nil {
 		return "", err
@@ -392,18 +482,25 @@ func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, prompt string) (str
 	if err != nil {
 		return "", err
 	}
+	m.mu.Lock()
+	prompt := BuildPrompt(m.cfg.Words, recent)
+	m.mu.Unlock()
 	start := time.Now()
 	raw, err := e.Transcribe(ctx, EncodeWAV(pcm), prompt)
 	if err != nil {
 		return "", err
 	}
 	log.Printf("voice: transcribed %.1f s of audio in %v", float64(len(pcm))/SampleRate, time.Since(start).Round(time.Millisecond))
+	if IsPromptEcho(CleanTranscript(raw)) {
+		return "", nil
+	}
 	return raw, nil
 }
 
-// Close cancels an install and stops the engine.
+// Close cancels an install or model switch and stops the engine.
 func (m *Manager) Close() {
 	m.CancelInstall()
+	m.CancelModelSwitch()
 	m.mu.Lock()
 	e := m.eng
 	m.mu.Unlock()

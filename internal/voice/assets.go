@@ -55,12 +55,3 @@ func EngineAsset(goos, goarch string) (Asset, bool) {
 	a, ok := engines[goos+"/"+goarch]
 	return a, ok
 }
-
-// ModelAsset is the English base model (ggml-base.en.bin) at a pinned
-// Hugging Face revision; the hash is the file's LFS SHA-256.
-var ModelAsset = Asset{
-	Name:   "English model",
-	URL:    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
-	SHA256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
-	Size:   147964211,
-}

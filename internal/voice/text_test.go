@@ -23,6 +23,10 @@ func TestCleanTranscript(t *testing.T) {
 		{"Every Monday at nine thirty standup", "Every Monday at 9:30 standup"},
 		{"Call one person about the two bugs", "Call one person about the two bugs"},
 		{"In an hour, coffee.", "In an hour coffee"},
+		{"Remind me to call Venkatesh tomorrow at 9.30 a.m. about the Aadhar update.", "Remind me to call Venkatesh tomorrow at 9:30 am about the Aadhar update"},
+		{"standup at 10.15", "standup at 10:15"},
+		{"Pay 2.50 to Ravi", "Pay 2.50 to Ravi"},
+		{"version 1.20 ships", "version 1.20 ships"},
 	}
 	for _, c := range cases {
 		if got := CleanTranscript(c.in); got != c.want {

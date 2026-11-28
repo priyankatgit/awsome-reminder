@@ -1,7 +1,8 @@
-// Settings › "Voice": the "Hey Awesome" wake word. Like the sync section it sits
-// outside the form's Save/dirty flow: its switches act at once. The pure
-// helpers and the install flow are tested; mountVoiceSection draws them.
-import { api, errorText, events, on, type VoiceStatus, type WakeStatus } from "./api";
+// Settings › "Voice": the speech model, "Words I use" and the "Hey Awesome"
+// wake word. Like the sync section it sits outside the form's Save/dirty
+// flow: its controls act at once. The pure helpers and the install flow are
+// tested; mountVoiceSection draws them.
+import { api, errorText, events, on, type VoiceModel, type VoiceStatus, type WakeStatus } from "./api";
 import { el } from "./dom";
 import { icons } from "./icons";
 
@@ -165,11 +166,185 @@ export async function runInstall(d: InstallDeps): Promise<void> {
   }
 }
 
+// ---------- Speech model and "Words I use" ----------
+
+/** The select option for a model: "Large v3 Turbo (574 MB) · Recommended". */
+export function modelOptionLabel(m: VoiceModel): string {
+  return `${m.label} (${megabytes(m.size)})${m.recommended ? " · Recommended" : ""}`;
+}
+
+/** The help line under the select for the chosen model. */
+export function modelHelp(models: VoiceModel[], id: string, voice: VoiceStatus | null): string {
+  const m = models.find((x) => x.id === id);
+  if (!m) return "";
+  if (m.installed || voice?.state !== "ready" || voice.target === id) return m.hint;
+  return `${m.hint} Choosing it downloads ${megabytes(m.size)}; dictation keeps working meanwhile.`;
+}
+
+/** Nudges toward the recommended model while another one is active; "" otherwise. */
+export function recommendTip(models: VoiceModel[], voice: VoiceStatus | null): string {
+  const rec = models.find((m) => m.recommended);
+  const active = voice?.model;
+  if (!rec || !active || active === rec.id || voice?.target === rec.id || voice?.state === "unsupported") return "";
+  return `Words often missed, especially with an Indian or other accent? ${rec.label} is much more accurate (a one-time ${megabytes(rec.size)} download).`;
+}
+
+/** Progress of a background model switch; null when none is running. */
+export function switchLine(voice: VoiceStatus | null, models: VoiceModel[]): string | null {
+  if (!voice?.target) return null;
+  const to = models.find((m) => m.id === voice.target)?.label ?? voice.target;
+  const from = models.find((m) => m.id === voice.model)?.label ?? voice.model;
+  return `Downloading ${to}… ${megabytes(voice.done)} of ${megabytes(voice.total)}. Dictation uses ${from} until it finishes.`;
+}
+
+export const WORDS_HELP =
+  "Names, places and terms you say often, separated by commas: people, your company, product names. " +
+  "They help the speech engine spell them right.";
+
+const SPEECH_TEMPLATE = `
+<div class="field">
+  <label class="field-label" for="speech-model">Speech model</label>
+  <div class="field-row">
+    <select class="input input-select" id="speech-model" aria-describedby="speech-model-help speech-model-tip speech-error"></select>
+  </div>
+  <p class="field-help" id="speech-model-help"></p>
+  <p class="field-help" id="speech-model-tip" hidden></p>
+  <div class="cap-progress" id="speech-progress" role="progressbar" aria-label="Speech model download"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span class="cap-progress-bar" id="speech-progress-bar"></span></div>
+  <div class="voice-status" id="speech-status" role="status" aria-live="polite" hidden>
+    <p class="voice-status-text" id="speech-status-text"></p>
+    <button class="btn btn-ghost" id="speech-cancel" type="button">Cancel</button>
+  </div>
+  <p class="field-error" id="speech-error" role="alert" hidden></p>
+</div>
+
+<div class="field">
+  <label class="field-label" for="speech-words">Words I use</label>
+  <div class="field-row">
+    <input class="input input-path" id="speech-words" type="text" spellcheck="false" autocomplete="off" maxlength="300"
+           placeholder="For example: Venkatesh, Pune, Jira" aria-describedby="speech-words-help speech-words-error" />
+  </div>
+  <p class="field-help" id="speech-words-help"></p>
+  <p class="field-error" id="speech-words-error" role="alert" hidden></p>
+</div>`;
+
+/** Wires the speech model select and the "Words I use" field inside host. */
+function mountSpeech(host: HTMLElement): void {
+  const $ = <T extends HTMLElement>(id: string) => host.querySelector<T>(`#${id}`)!;
+  const select = $<HTMLSelectElement>("speech-model");
+  const help = $("speech-model-help");
+  const tip = $("speech-model-tip");
+  const progress = $("speech-progress");
+  const bar = $("speech-progress-bar");
+  const statusBox = $("speech-status");
+  const statusText = $("speech-status-text");
+  const cancel = $<HTMLButtonElement>("speech-cancel");
+  const err = $("speech-error");
+  const words = $<HTMLInputElement>("speech-words");
+  const wordsErr = $("speech-words-error");
+  $("speech-words-help").textContent = WORDS_HELP;
+
+  let models: VoiceModel[] = [];
+  let voice: VoiceStatus | null = null;
+  let busy = false;
+
+  const show = (box: HTMLElement, text: string) => {
+    box.textContent = text;
+    box.hidden = text === "";
+  };
+
+  function render(): void {
+    const chosen = voice?.target || voice?.model || "";
+    if (select.options.length !== models.length) {
+      select.replaceChildren(
+        ...models.map((m) => {
+          const o = el("option");
+          o.value = m.id;
+          return o;
+        }),
+      );
+    }
+    models.forEach((m, i) => (select.options[i].textContent = modelOptionLabel(m)));
+    if (chosen) select.value = chosen;
+    select.disabled = busy || !voice || voice.state === "unsupported" || voice.state === "installing" || !!voice.target;
+    help.textContent = modelHelp(models, chosen, voice);
+    show(tip, recommendTip(models, voice));
+    const line = switchLine(voice, models);
+    statusBox.hidden = !line;
+    statusText.textContent = line ?? "";
+    progress.hidden = !line;
+    if (line && voice) {
+      const pct = voice.total > 0 ? Math.min(100, Math.round((voice.done / voice.total) * 100)) : 0;
+      progress.setAttribute("aria-valuenow", String(pct));
+      progress.setAttribute("aria-valuetext", `${pct}%`);
+      bar.style.transform = `scaleX(${pct / 100})`;
+    }
+    if (!line && voice?.switchError && err.hidden) show(err, voice.switchError);
+  }
+
+  async function refresh(): Promise<void> {
+    try {
+      [models, voice] = await Promise.all([api.voice.models(), api.voice.status()]);
+    } catch (e) {
+      show(err, errorText(e));
+    }
+    render();
+  }
+
+  select.addEventListener("change", () => {
+    const id = select.value;
+    void (async () => {
+      busy = true;
+      show(err, "");
+      render();
+      try {
+        await api.voice.setModel(id);
+      } catch (e) {
+        show(err, errorText(e));
+      } finally {
+        busy = false;
+      }
+      await refresh();
+    })();
+  });
+  cancel.addEventListener("click", () => {
+    void api.voice.cancelModelSwitch().catch((e: unknown) => show(err, errorText(e)));
+  });
+  words.addEventListener("change", () => {
+    const text = words.value;
+    void (async () => {
+      try {
+        await api.voice.setWords(text);
+        show(wordsErr, "");
+        words.value = await api.voice.words();
+      } catch (e) {
+        show(wordsErr, errorText(e));
+      }
+    })();
+  });
+
+  on<VoiceStatus>(events.voiceStatus, (s) => {
+    const switched = !!voice?.target && !s.target;
+    voice = s;
+    if (switched) void refresh(); // the installed/active flags changed
+    else render();
+  });
+  void (async () => {
+    try {
+      words.value = await api.voice.words();
+    } catch (e) {
+      show(wordsErr, errorText(e));
+    }
+  })();
+  void refresh();
+}
+
 // ---------- Section ----------
 
 const TEMPLATE = `
 <h2 class="sync-title" id="voice-title">Voice</h2>
 <p class="field-help">Voice settings apply right away.</p>
+${SPEECH_TEMPLATE}
 
 <div class="field">
   <div class="field-row field-switch">
@@ -223,6 +398,7 @@ export function mountVoiceSection(host: HTMLElement): void {
   const errBox = $("wake-error");
   $("wake-help").textContent = WAKE_HELP;
   $("wake-chime-help").textContent = CHIME_HELP;
+  mountSpeech(host);
 
   let wake: WakeStatus | null = null;
   let voice: VoiceStatus | null = null;

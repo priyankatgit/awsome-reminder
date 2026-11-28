@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { VoiceStatus, WakeStatus } from "./api";
+import type { VoiceModel, VoiceStatus, WakeStatus } from "./api";
 
 const h = vi.hoisted(() => {
   window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as never;
@@ -11,6 +11,12 @@ const h = vi.hoisted(() => {
     listeners: new Map<string, Set<(d: unknown) => void>>(),
     installWake: (async () => {}) as () => Promise<void>,
     cancelWake: (async () => {}) as () => Promise<void>,
+    models: [] as VoiceModel[],
+    setModel: [] as string[],
+    setModelErr: "",
+    cancelSwitch: 0,
+    words: "",
+    setWordsErr: "",
   };
 });
 vi.mock("./api", () => ({
@@ -27,6 +33,19 @@ vi.mock("./api", () => ({
       installWake: () => h.installWake(),
       cancelInstall: async () => {},
       cancelWakeInstall: () => h.cancelWake(),
+      models: async () => h.models,
+      setModel: async (id: string) => {
+        h.setModel.push(id);
+        if (h.setModelErr) throw new Error(h.setModelErr);
+      },
+      cancelModelSwitch: async () => {
+        h.cancelSwitch++;
+      },
+      words: async () => h.words,
+      setWords: async (w: string) => {
+        if (h.setWordsErr) throw new Error(h.setWordsErr);
+        h.words = w.split(",").map((x) => x.trim()).filter(Boolean).join(", ");
+      },
     },
   },
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
@@ -38,14 +57,34 @@ vi.mock("./api", () => ({
   },
 }));
 
-import { consentBytes, consentText, mountVoiceSection, watchWake, isNotInstalled, megabytes, runInstall, statusLine, watchDictation } from "./voice-settings";
+import {
+  consentBytes,
+  consentText,
+  isNotInstalled,
+  megabytes,
+  modelHelp,
+  modelOptionLabel,
+  mountVoiceSection,
+  recommendTip,
+  runInstall,
+  statusLine,
+  switchLine,
+  watchDictation,
+  watchWake,
+} from "./voice-settings";
 
 const wake = (o: Partial<WakeStatus> = {}): WakeStatus => ({
   state: "off", enabled: false, chime: true, phase: "", done: 0, total: 0, download: 8_300_000, error: "", hint: "", ...o,
 });
 const voice = (o: Partial<VoiceStatus> = {}): VoiceStatus => ({
-  state: "ready", phase: "", done: 0, total: 0, download: 0, engine: "bundled", error: "", hint: "", ...o,
+  state: "ready", phase: "", done: 0, total: 0, download: 0, engine: "bundled", error: "", hint: "",
+  model: "base", target: "", switchError: "", ...o,
 });
+const MODELS: VoiceModel[] = [
+  { id: "base", label: "Base", hint: "Fastest.", size: 147_964_211, recommended: false, installed: true, active: true },
+  { id: "small", label: "Small", hint: "Balanced.", size: 190_098_681, recommended: false, installed: false, active: false },
+  { id: "turbo", label: "Large v3 Turbo", hint: "Most accurate.", size: 574_041_195, recommended: true, installed: false, active: false },
+];
 
 describe("helpers", () => {
   it("formats megabytes like the capture box", () => {
@@ -197,7 +236,7 @@ describe("Wake download (installWake returns at once, progress arrives as events
     sw.dispatchEvent(new Event("change"));
     await tick();
     await tick();
-    const btn = (t: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(t))!;
+    const btn = (t: string) => [...host.querySelectorAll("#wake-consent button")].find((b) => b.textContent?.includes(t)) as HTMLButtonElement;
     btn("Download").click();
     await tick();
     await tick();
@@ -268,5 +307,113 @@ describe("watchWake", () => {
     push(wake({ state: "installing" }));
     push(wake({ state: "absent", error: "boom" }));
     await expect(w.done).rejects.toThrow("boom");
+  });
+});
+
+describe("speech model helpers", () => {
+  it("labels options with size and the recommendation", () => {
+    expect(modelOptionLabel(MODELS[0])).toBe("Base (148 MB)");
+    expect(modelOptionLabel(MODELS[2])).toBe("Large v3 Turbo (574 MB) · Recommended");
+  });
+  it("mentions the download only for a model that is not on disk while dictation is ready", () => {
+    expect(modelHelp(MODELS, "base", voice())).toBe("Fastest.");
+    expect(modelHelp(MODELS, "turbo", voice())).toBe("Most accurate. Choosing it downloads 574 MB; dictation keeps working meanwhile.");
+    expect(modelHelp(MODELS, "turbo", voice({ state: "absent" }))).toBe("Most accurate.");
+    expect(modelHelp(MODELS, "turbo", voice({ target: "turbo" }))).toBe("Most accurate.");
+    expect(modelHelp(MODELS, "nope", voice())).toBe("");
+  });
+  it("recommends the better model only while another is active", () => {
+    expect(recommendTip(MODELS, voice())).toContain("Large v3 Turbo is much more accurate");
+    expect(recommendTip(MODELS, voice())).toContain("574 MB");
+    expect(recommendTip(MODELS, voice({ model: "turbo" }))).toBe("");
+    expect(recommendTip(MODELS, voice({ target: "turbo" }))).toBe("");
+    expect(recommendTip(MODELS, voice({ state: "unsupported" }))).toBe("");
+  });
+  it("describes a running switch", () => {
+    expect(switchLine(voice(), MODELS)).toBeNull();
+    expect(switchLine(voice({ target: "turbo", done: 100_000_000, total: 574_041_195 }), MODELS)).toBe(
+      "Downloading Large v3 Turbo… 100 MB of 574 MB. Dictation uses Base until it finishes.",
+    );
+  });
+});
+
+describe("Speech model and words in the Voice section", () => {
+  function mount(v: VoiceStatus) {
+    h.voice = v;
+    h.wake = wake();
+    h.models = MODELS;
+    h.setModel = [];
+    h.setModelErr = "";
+    h.cancelSwitch = 0;
+    h.words = "Venkatesh, Pune";
+    h.setWordsErr = "";
+    const host = document.createElement("section");
+    document.body.replaceChildren(host);
+    mountVoiceSection(host);
+    const $ = <T extends HTMLElement>(id: string) => host.querySelector<T>(`#${id}`)!;
+    return { host, $ };
+  }
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("shows the models with the active one chosen, the tip and the saved words", async () => {
+    const { $ } = mount(voice());
+    await flush();
+    const sel = $<HTMLSelectElement>("speech-model");
+    expect([...sel.options].map((o) => o.textContent)).toEqual([
+      "Base (148 MB)",
+      "Small (190 MB)",
+      "Large v3 Turbo (574 MB) · Recommended",
+    ]);
+    expect(sel.value).toBe("base");
+    expect(sel.disabled).toBe(false);
+    expect($("speech-model-tip").hidden).toBe(false);
+    expect($<HTMLInputElement>("speech-words").value).toBe("Venkatesh, Pune");
+    expect($("speech-status").hidden).toBe(true);
+  });
+
+  it("choosing a model calls setModel and shows a refusal", async () => {
+    const { $ } = mount(voice());
+    await flush();
+    const sel = $<HTMLSelectElement>("speech-model");
+    h.setModelErr = "voice: wait for the download to finish";
+    sel.value = "turbo";
+    sel.dispatchEvent(new Event("change"));
+    await flush();
+    await flush();
+    expect(h.setModel).toEqual(["turbo"]);
+    expect($("speech-error").textContent).toContain("wait for the download");
+  });
+
+  it("shows switch progress with Cancel and locks the select", async () => {
+    const { $ } = mount(voice({ target: "turbo", phase: "model", done: 287_000_000, total: 574_041_195 }));
+    await flush();
+    const sel = $<HTMLSelectElement>("speech-model");
+    expect(sel.value).toBe("turbo");
+    expect(sel.disabled).toBe(true);
+    expect($("speech-status").hidden).toBe(false);
+    expect($("speech-status-text").textContent).toContain("287 MB of 574 MB");
+    expect($("speech-progress").getAttribute("aria-valuenow")).toBe("50");
+    $<HTMLButtonElement>("speech-cancel").click();
+    await flush();
+    expect(h.cancelSwitch).toBe(1);
+  });
+
+  it("saves words on change and shows the normalised list, or the error", async () => {
+    const { $ } = mount(voice());
+    await flush();
+    const input = $<HTMLInputElement>("speech-words");
+    input.value = " Shubham ,  Aadhaar,, Jira ";
+    input.dispatchEvent(new Event("change"));
+    await flush();
+    await flush();
+    expect(input.value).toBe("Shubham, Aadhaar, Jira");
+    expect($("speech-words-error").hidden).toBe(true);
+    h.setWordsErr = 'voice: keep "Words I use" under 300 characters';
+    input.value = "x".repeat(10);
+    input.dispatchEvent(new Event("change"));
+    await flush();
+    await flush();
+    expect($("speech-words-error").hidden).toBe(false);
+    expect($("speech-words-error").textContent).toContain("300 characters");
   });
 });

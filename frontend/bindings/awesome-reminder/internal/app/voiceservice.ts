@@ -24,6 +24,13 @@ export function CancelInstall(): $CancellablePromise<void> {
 }
 
 /**
+ * CancelModelSwitch stops a background model download.
+ */
+export function CancelModelSwitch(): $CancellablePromise<void> {
+    return $Call.ByID(16243559);
+}
+
+/**
  * CancelWakeInstall stops a running wake word download.
  */
 export function CancelWakeInstall(): $CancellablePromise<void> {
@@ -47,11 +54,29 @@ export function InstallWake(): $CancellablePromise<void> {
 }
 
 /**
+ * Models lists the speech models (size, hint, installed, active) for
+ * Settings.
+ */
+export function Models(): $CancellablePromise<voice$0.ModelInfo[] | null> {
+    return $Call.ByID(1236976202);
+}
+
+/**
  * SessionEnded tells the wake word a dictation session just ended, so its
  * echo does not open the box again.
  */
 export function SessionEnded(): $CancellablePromise<void> {
     return $Call.ByID(2065741672);
+}
+
+/**
+ * SetModel chooses the speech model: recorded at once when nothing is
+ * installed or the file is on disk, otherwise downloaded in the background
+ * while the old model keeps working (progress as EventVoiceStatus, see
+ * Status.target).
+ */
+export function SetModel(id: string): $CancellablePromise<void> {
+    return $Call.ByID(3250880749, id);
 }
 
 /**
@@ -67,6 +92,13 @@ export function SetWakeChime(on: boolean): $CancellablePromise<void> {
  */
 export function SetWakeEnabled(on: boolean): $CancellablePromise<void> {
     return $Call.ByID(2581707857, on);
+}
+
+/**
+ * SetWords saves the "Words I use" list (comma or line separated).
+ */
+export function SetWords(words: string): $CancellablePromise<void> {
+    return $Call.ByID(1586204537, words);
 }
 
 /**
@@ -103,4 +135,12 @@ export function WakeStatus(): $CancellablePromise<voice$0.WakeStatus> {
  */
 export function Warm(): $CancellablePromise<void> {
     return $Call.ByID(1917174453);
+}
+
+/**
+ * Words is the "Words I use" list that every transcription puts in the
+ * speech engine's prompt.
+ */
+export function Words(): $CancellablePromise<string> {
+    return $Call.ByID(3924835881);
 }

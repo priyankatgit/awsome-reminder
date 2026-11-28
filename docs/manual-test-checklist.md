@@ -222,3 +222,17 @@ Run in the built app from a temp copy with `APPDATA` / `LOCALAPPDATA` pointed at
 | D8 | Network and cloud warnings | Pick a network share, then a folder under OneDrive / Dropbox / Google Drive / iCloud: each shows a warning before the move proceeds. | | | | |
 | D9 | Older exe after a move | After D3, start the previous build against the same profile: it shows an empty list (the old database was renamed). The new build shows the items. | | | | |
 | D10 | Wake word after Keep | With the wake word on, do D2 (Keep): after the restart "Hey Awesome" still wakes and the log resolves the voice folder to the local cache path. | | | | |
+
+## Voice accuracy (speech model, "Words I use")
+
+These need the user's own voice and microphone. The design is in [voice-accuracy-design](superpowers/specs/2026-11-28-voice-accuracy-design.md).
+
+| # | Check | How | Windows 11 |
+|---|---|---|---|
+| VA1 | An existing Base install keeps working | Start the new build with the old voice folder. Settings › Voice › Speech model shows "Base (148 MB)" and the "much more accurate" tip; dictation works without a new download. | |
+| VA2 | Switch to Small in the background | Choose "Small (264 MB) · Recommended". Progress and Cancel show; dictating during the download still works (on Base). Afterwards the select shows Small, `models/` holds only `ggml-small.en-q8_0.bin`, and `voice.json` says `"small"`. | |
+| VA3 | Cancel a switch | Start a switch, click Cancel: the select returns to the old model, no `.part` file is left, dictation still works. | |
+| VA4 | Accent accuracy | Dictate 10 everyday reminders with Indian names and terms on Base, then on Small. Count the misheard words in each. Note the time each phrase takes. | |
+| VA5 | Words I use | Add 3 names that Small still gets wrong ("Words I use"); dictate them again; they are spelt as entered. Over 300 characters shows an error and keeps the old list. | |
+| VA6 | Fresh install | With an empty voice folder, the capture box offers about 273 MB (engine plus Small). | |
+| VA7 | Times | Say "remind me at nine thirty am": the line reads "9:30 am" (not "9.30"), and the parser schedules it. | |
