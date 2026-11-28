@@ -589,3 +589,115 @@ func TestWallJumped(t *testing.T) {
 		}
 	}
 }
+
+func TestNonRetryableFailureSkipsOnlyThatEntry(t *testing.T) {
+	srv := newServer(t)
+	bad, good := tDue, tDue.Add(time.Hour)
+	g := newRig(t, srv, reminder("01B", "bad", bad), reminder("01G", "good", good))
+	srv.Fail("POST", "/ar-topic/"+seqOf("01B", bad), 400, 0)
+	for i := 0; i < 2; i++ {
+		if d := g.run(); d != 0 {
+			t.Fatalf("retry %v for a client error", d)
+		}
+	}
+	p := srv.Pending()
+	if len(p) != 1 || p[0].Seq != seqOf("01G", good) {
+		t.Fatalf("pending = %+v", p)
+	}
+	if _, ok := g.log.get(seqOf("01B", bad)); ok {
+		t.Error("failed publish recorded")
+	}
+	if st := g.r.Status(); st.State != "error" || st.Scheduled != 1 {
+		t.Errorf("status = %+v", st)
+	}
+
+	// A delete failing with 400 keeps its entry; the others still go.
+	g.set(func(g *rig) { g.items = nil })
+	srv.Fail("DELETE", "/ar-topic/"+seqOf("01G", good), 400, 1)
+	g.set(func(g *rig) { g.items = []model.Item{reminder("01N", "new", good.Add(time.Hour))} })
+	g.run()
+	if _, ok := g.log.get(seqOf("01G", good)); !ok {
+		t.Error("entry dropped after its delete failed")
+	}
+	if _, ok := g.log.get(seqOf("01N", good.Add(time.Hour))); !ok {
+		t.Error("later message not scheduled after a failed delete")
+	}
+}
+
+func TestTopicChangeKeepsDismissal(t *testing.T) {
+	srv := newServer(t)
+	g := newRig(t, srv, reminder("01A", "check deploy", tDue))
+	g.run()
+	seq := seqOf("01A", tDue)
+	g.r.Dismiss([]string{seq})
+	g.r.dismissNow(context.Background())
+	g.set(func(g *rig) { g.cfg.Topic = "ar-other" })
+	n := len(srv.Requests())
+	g.run()
+	// The dismissal moves with the topic: deleted there, never published.
+	wantReqs(t, reqs(srv, n), req{"DELETE", "/ar-other/" + seq}, req{"DELETE", "/ar-other/" + seq + "s"})
+	e, ok := g.log.get(seq)
+	if !ok || e.State != store.PushDismissed || e.Topic != "ar-other" || e.SentAt.IsZero() {
+		t.Fatalf("entry = %+v %v", e, ok)
+	}
+	g.run()
+	wantReqs(t, reqs(srv, n+2))
+}
+
+func TestDismissSuccessKeepsFailedRunStatus(t *testing.T) {
+	srv := newServer(t)
+	g := newRig(t, srv, reminder("01A", "check deploy", tDue))
+	srv.Fail("POST", "", 500, 0)
+	if d := g.run(); d != 30*time.Second {
+		t.Fatalf("retry = %v", d)
+	}
+	g.r.Dismiss([]string{"arforeign"})
+	if d := g.r.dismissNow(context.Background()); d != 0 {
+		t.Errorf("dismissal scheduled a retry %v", d)
+	}
+	if st := g.r.Status(); st.State != "offline" {
+		t.Errorf("status = %+v", st)
+	}
+	if d := g.run(); d != time.Minute {
+		t.Errorf("back-off reset by a dismissal: %v", d)
+	}
+}
+
+func TestOffIdleNoStoreWrites(t *testing.T) {
+	srv := newServer(t)
+	g := newRig(t, srv)
+	g.set(func(g *rig) { g.on = false })
+	cl := &clearCounter{memLog: g.log}
+	g.r.d.Log = cl
+	g.run()
+	g.run()
+	if cl.clears != 0 {
+		t.Errorf("ClearPush called %d times with an empty log", cl.clears)
+	}
+}
+
+type clearCounter struct {
+	*memLog
+	clears int
+}
+
+func (c *clearCounter) ClearPush() error { c.clears++; return c.memLog.ClearPush() }
+
+func TestFailedDeleteKeepsLog(t *testing.T) {
+	srv := newServer(t)
+	g := newRig(t, srv, reminder("01A", "check deploy", tDue))
+	g.run()
+	seq := seqOf("01A", tDue)
+	g.set(func(g *rig) { g.items = nil })
+	srv.Fail("DELETE", "", 503, 1)
+	g.run()
+	if _, ok := g.log.get(seq); !ok {
+		t.Fatal("entry dropped although its delete failed")
+	}
+	n := len(srv.Requests())
+	g.run()
+	wantReqs(t, reqs(srv, n), req{"DELETE", "/ar-topic/" + seq}, req{"DELETE", "/ar-topic/" + seq + "s"})
+	if g.log.len() != 0 || len(srv.Pending()) != 0 {
+		t.Errorf("log = %d, pending = %d", g.log.len(), len(srv.Pending()))
+	}
+}

@@ -95,9 +95,10 @@ type Reconciler struct {
 
 	// Loop goroutine (or the tests' synchronous calls) only.
 	backoff     time.Duration
-	authStopped bool  // 401/403: wait for a Kick
-	authErr     error // the error that stopped it
-	idleOff     bool  // off and cleaned up: nothing to do until a Kick
+	authStopped bool   // 401/403: wait for a Kick
+	authErr     error  // the error that stopped it
+	idleOff     bool   // off and cleaned up: nothing to do until a Kick
+	last        result // outcome behind the current status
 }
 
 // NewReconciler creates a Reconciler; Start runs it.
@@ -242,10 +243,16 @@ func (r *Reconciler) runOnce(ctx context.Context) time.Duration {
 	return r.settle(res)
 }
 
-// dismissNow processes queued dismissals; it returns the retry delay.
+// dismissNow processes queued dismissals; it returns the retry delay. A
+// successful dismissal keeps the last run's outcome (status and back-off),
+// so it never hides a failed reconcile.
 func (r *Reconciler) dismissNow(ctx context.Context) time.Duration {
 	res := r.processDismissals(ctx)
 	if ctx.Err() != nil {
+		return 0
+	}
+	if res.err == nil && !res.off {
+		r.setStatus(r.last)
 		return 0
 	}
 	return r.settle(res)
@@ -259,6 +266,7 @@ type result struct {
 // settle updates back-off and status after a run; it returns the retry
 // delay (TempError only).
 func (r *Reconciler) settle(res result) time.Duration {
+	r.last = res
 	r.idleOff = res.off && res.err == nil
 	var retry time.Duration
 	var te *TempError
@@ -332,8 +340,10 @@ func shortReason(err error) string {
 	return clip(oneLine(strings.TrimPrefix(err.Error(), "ntfy: ")), 120)
 }
 
-// reconcile is one run (see the package spec "Reconciler"). It stops at the
-// first failed request, leaving the log as it was for that entry.
+// reconcile is one run (see the package spec "Reconciler"). A failed
+// request leaves the log as it was for that entry. TempError, 429, 401/403
+// (and a store error) stop the run; any other failure skips just that entry
+// and is reported once the rest is done.
 func (r *Reconciler) reconcile(ctx context.Context) result {
 	now := r.d.Now()
 	cfg, on := r.d.Config()
@@ -356,6 +366,16 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 	// push for one of these is left alone.
 	recent := Desired(items, rules, cfg, now.Add(-keepAfter))
 	cl := r.client(cfg.Server, cfg.Topic, cfg.Token)
+	var skipped error // first per-entry failure
+	skip := func(err error) bool {
+		if stopsRun(ctx, err) {
+			return false
+		}
+		if skipped == nil {
+			skipped = err
+		}
+		return true
+	}
 
 	logged := map[string]store.PushEntry{}
 	for _, e := range entries {
@@ -369,6 +389,16 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 			if err := r.deleteBoth(ctx, old, e.Seq); err != nil && retryable(ctx, err) {
 				return result{err: err}
 			}
+		}
+		if e.State == store.PushDismissed {
+			// Still handled: keep it on the new server/topic, where the
+			// deletes are (re)sent below, so it is never republished there.
+			e.Server, e.Topic, e.SentAt = cfg.Server, cfg.Topic, time.Time{}
+			if err := r.d.Log.PutPush(e); err != nil {
+				return result{err: err}
+			}
+			logged[e.Seq] = e
+			continue
 		}
 		if err := r.d.Log.DeletePush(e.Seq); err != nil {
 			return result{err: err}
@@ -387,6 +417,9 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 			}
 			// A dismissal whose deletes haven't gone through yet.
 			if err := r.deleteBoth(ctx, cl, e.Seq); err != nil {
+				if skip(err) {
+					continue
+				}
 				return result{err: err}
 			}
 			e.SentAt = now
@@ -402,6 +435,9 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 				continue // wanted, or old: PrunePush drops it
 			}
 			if err := r.deleteBoth(ctx, cl, e.Seq); err != nil {
+				if skip(err) {
+					continue
+				}
 				return result{err: err}
 			}
 			if err := r.d.Log.DeletePush(e.Seq); err != nil {
@@ -433,6 +469,9 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 		err := cl.Schedule(ctx, m)
 		r.count(err, 2)
 		if err != nil {
+			if skip(err) {
+				continue
+			}
 			return result{err: err}
 		}
 		if err := r.d.Log.PutPush(store.PushEntry{Seq: m.Seq, Server: cfg.Server, Topic: cfg.Topic, Hash: h,
@@ -446,12 +485,15 @@ func (r *Reconciler) reconcile(ctx context.Context) result {
 	if err := r.d.Log.PrunePush(now.Add(-keepAfter)); err != nil {
 		return result{err: err}
 	}
-	return result{}
+	return result{err: skipped}
 }
 
 // turnOff cancels everything pending and clears the log. A retryable failure
 // keeps the entries not yet cancelled for the next run.
 func (r *Reconciler) turnOff(ctx context.Context, cfg Config, entries []store.PushEntry, now time.Time) error {
+	if len(entries) == 0 {
+		return nil // nothing to do: no store write per Kick while off
+	}
 	for _, e := range entries {
 		if r.pendingOnServer(e, now) {
 			err := r.deleteBoth(ctx, r.client(e.Server, e.Topic, cfg.Token), e.Seq)
@@ -474,6 +516,12 @@ func (r *Reconciler) pendingOnServer(e store.PushEntry, now time.Time) bool {
 		return e.SentAt.IsZero()
 	}
 	return e.DeliverAt.After(now.Add(-keepAfter))
+}
+
+// stopsRun: a failure that ends the run (also ErrAuth: every other request
+// would fail the same way).
+func stopsRun(ctx context.Context, err error) bool {
+	return retryable(ctx, err) || errors.Is(err, ErrAuth)
 }
 
 // retryable: worth stopping the run for (the entry is kept and retried).
