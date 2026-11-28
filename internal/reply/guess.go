@@ -133,8 +133,10 @@ func CapQuote(text string) string {
 // double quotes, which the parser keeps as literal text, so a time, #tag,
 // !priority or repeat in the other person's message never becomes a setting
 // of the task (and the parser drops the quote marks from the saved text).
-// A " inside the quote becomes ” so it cannot end the quoted segment early.
+// A " inside the quote or the person becomes ” so it cannot end (or start)
+// the quoted segment early.
 func Line(m Meta) string {
+	owedTo := strings.ReplaceAll(m.OwedTo, `"`, "”")
 	quote := spaceRe.ReplaceAllString(strings.TrimSpace(m.Quote), " ")
 	if r := []rune(quote); len(r) > quoteRunes {
 		quote = string(r[:quoteRunes]) + "…"
@@ -143,10 +145,10 @@ func Line(m Meta) string {
 		quote = `"` + strings.ReplaceAll(quote, `"`, "”") + `"`
 	}
 	switch {
-	case m.OwedTo != "" && quote != "":
-		return "Reply to " + m.OwedTo + ": " + quote
-	case m.OwedTo != "":
-		return "Reply to " + m.OwedTo
+	case owedTo != "" && quote != "":
+		return "Reply to " + owedTo + ": " + quote
+	case owedTo != "":
+		return "Reply to " + owedTo
 	case quote != "":
 		return "Reply: " + quote
 	}

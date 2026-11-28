@@ -78,7 +78,8 @@ func (s Settings) WithShared(p Shared) Settings {
 	return s
 }
 
-// Equal reports whether p and q hold the same values.
+// Equal reports whether p and q hold the same values; the order of WorkDays
+// does not matter.
 func (p Shared) Equal(q Shared) bool {
 	if len(p.LeadTimes) != len(q.LeadTimes) {
 		return false
@@ -89,7 +90,7 @@ func (p Shared) Equal(q Shared) bool {
 		}
 	}
 	return p.DefaultTime == q.DefaultTime && p.NextWeekDay == q.NextWeekDay && p.NextWeekTime == q.NextWeekTime &&
-		slices.Equal(p.WorkDays, q.WorkDays) && p.EndOfDay == q.EndOfDay && p.EndOfDaySweep == q.EndOfDaySweep
+		slices.Equal(canonDays(p.WorkDays), canonDays(q.WorkDays)) && p.EndOfDay == q.EndOfDay && p.EndOfDaySweep == q.EndOfDaySweep
 }
 
 // wire mirrors Settings with lead times as duration strings.

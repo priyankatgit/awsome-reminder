@@ -282,17 +282,20 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
     quoteText.textContent = r.length > QUOTE_SHOWN ? `${r.slice(0, QUOTE_SHOWN).join("")}…` : flat;
   }
 
-  /** Drops the quote: it is not saved. Focus on the row's button goes back to the line. */
-  function removeQuote(): void {
+  /**
+   * Drops the quote: it is not saved. Focus on the row's button, or a click
+   * on it (macOS WebKit does not focus a clicked button), goes back to the line.
+   */
+  function removeQuote(clicked = false): void {
     if (state.quote === "") return;
-    const fromRow = quoteRow.contains(document.activeElement);
+    const fromRow = clicked || quoteRow.contains(document.activeElement);
     state = { ...state, quote: "" };
     paintQuote();
     quoteSay.textContent = "Quote removed. It will not be saved.";
     if (fromRow) backToLine();
   }
 
-  quoteRemove.addEventListener("click", () => removeQuote());
+  quoteRemove.addEventListener("click", () => removeQuote(true));
   // A clipboard quote (nothing was selected) leaves as soon as the line no
   // longer holds it: the user cleared it, and it may be something private.
   input.addEventListener("input", () => {
@@ -300,6 +303,9 @@ export function mountReplyMode(host: ReplyHost): ReplyMode {
   });
 
   function enter(p: ReplyPrefill): void {
+    // A keepText press finds the box already in reply mode when the app's
+    // reply-open flag fell out of step: keep the person, source and quote.
+    if (active && p.keepText) return;
     const was = active;
     active = true;
     closeEditor(false);

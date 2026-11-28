@@ -25,7 +25,7 @@ func envOf(vars map[string]string) func(string) string {
 }
 
 var (
-	wlPrimary = []string{"wl-paste", "--primary", "--no-newline", "--type", "text/plain"}
+	wlPrimary = []string{"wl-paste", "--primary", "--no-newline", "--type", "text"}
 	xclipPrim = []string{"xclip", "-o", "-selection", "primary"}
 	xselPrim  = []string{"xsel", "-o", "-p"}
 )
@@ -58,7 +58,7 @@ func TestLinuxClipboardCommandOrder(t *testing.T) {
 	wayland := envOf(map[string]string{"WAYLAND_DISPLAY": "wayland-0"})
 	x11 := envOf(map[string]string{"DISPLAY": ":0"})
 	all := installed("wl-paste", "xclip", "xsel")
-	wl := []string{"wl-paste", "--no-newline", "--type", "text/plain"}
+	wl := []string{"wl-paste", "--no-newline", "--type", "text"}
 	xc := []string{"xclip", "-o", "-selection", "clipboard"}
 	xs := []string{"xsel", "-o", "-b"}
 	if got, want := clipboardCommands(wayland, all), [][]string{wl, xc, xs}; !reflect.DeepEqual(got, want) {

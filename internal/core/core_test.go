@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -843,6 +844,39 @@ func TestDropReplyNeedsOpenReply(t *testing.T) {
 	}
 }
 
+// A dropped recurring reply keeps its rule, so Reopen brings it back
+// recurring; Delete then Undelete brings it back done (dropped), not open
+// with the outcome "dropped".
+func TestDropRecurringReply(t *testing.T) {
+	e := newEnv(t)
+	it := mustReply(t, e, "send the status every day at 9am", "Priya")
+	if it.RRule == "" {
+		t.Fatalf("fixture not recurring: %+v", it)
+	}
+	got, err := e.c.DropReply(it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RRule != it.RRule || got.Status != model.StatusDone || got.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("dropped: %+v", got)
+	}
+	if err := e.c.Delete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Undelete(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := e.st.Get(it.ID); back.Status != model.StatusDone || back.ReplyOutcome != model.ReplyDropped {
+		t.Fatalf("undeleted: status %q outcome %q, want done/dropped", back.Status, back.ReplyOutcome)
+	}
+	if err := e.c.Reopen(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := e.st.Get(it.ID); back.Status != model.StatusOpen || back.RRule != it.RRule || back.ReplyOutcome != "" {
+		t.Fatalf("reopened: %+v, want open with its rule", back)
+	}
+}
+
 // The panel's For field on an item another device deleted must not edit it.
 func TestSetOwedToNeedsLiveReply(t *testing.T) {
 	e := newEnv(t)
@@ -1018,8 +1052,15 @@ func TestSnoozeRepliesUntil(t *testing.T) {
 	e.c.OnChange(func() { changes++ })
 	e.now = e.now.Add(time.Minute)
 	until := time.Date(2026, 11, 26, 9, 0, 0, 0, ny)
-	if err := e.c.SnoozeRepliesUntil(until); err != nil {
+	ids, err := e.c.SnoozeRepliesUntil(until)
+	if err != nil {
 		t.Fatal(err)
+	}
+	want := []string{a.ID, b.ID}
+	slices.Sort(ids)
+	slices.Sort(want)
+	if !slices.Equal(ids, want) {
+		t.Fatalf("snoozed %v, want %v", ids, want)
 	}
 	if changes != 1 {
 		t.Fatalf("OnChange called %d times, want 1", changes)
@@ -1043,7 +1084,7 @@ func TestSnoozeRepliesUntil(t *testing.T) {
 		}
 	}
 	changes = 0
-	if err := e.c.SnoozeRepliesUntil(until); err != nil || changes != 0 {
-		t.Fatalf("err %v changes %d", err, changes)
+	if ids, err := e.c.SnoozeRepliesUntil(until); err != nil || changes != 0 || len(ids) != 0 {
+		t.Fatalf("err %v changes %d ids %v", err, changes, ids)
 	}
 }

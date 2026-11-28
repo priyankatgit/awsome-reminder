@@ -50,11 +50,12 @@ func AccessibilityTrusted() bool { return true }
 // primaryCommands are the commands that print the primary selection, in
 // the order to try them, keeping only installed tools: wl-paste first on
 // Wayland (WAYLAND_DISPLAY set), then xclip, then xsel (X11 or XWayland).
-// wl-paste asks for text/plain: without a type it prints whatever the source
-// offers first, which can be image bytes.
+// wl-paste asks for "text", which takes any text type the source offers
+// (text/plain;charset=utf-8 only, say): without a type it prints whatever
+// the source offers first, which can be image bytes.
 func primaryCommands(env func(string) string, look func(string) (string, error)) [][]string {
 	return installedCommands(env, look,
-		[]string{"wl-paste", "--primary", "--no-newline", "--type", "text/plain"},
+		[]string{"wl-paste", "--primary", "--no-newline", "--type", "text"},
 		[]string{"xclip", "-o", "-selection", "primary"},
 		[]string{"xsel", "-o", "-p"})
 }
@@ -63,7 +64,7 @@ func primaryCommands(env func(string) string, look func(string) (string, error))
 // fallback.
 func clipboardCommands(env func(string) string, look func(string) (string, error)) [][]string {
 	return installedCommands(env, look,
-		[]string{"wl-paste", "--no-newline", "--type", "text/plain"},
+		[]string{"wl-paste", "--no-newline", "--type", "text"},
 		[]string{"xclip", "-o", "-selection", "clipboard"},
 		[]string{"xsel", "-o", "-b"})
 }

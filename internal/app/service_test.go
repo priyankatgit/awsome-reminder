@@ -338,6 +338,24 @@ func TestServiceSnoozeReplies(t *testing.T) {
 	}
 }
 
+// Tomorrow pressed after midnight, before the default time, means that
+// morning, not the day after.
+func TestServiceSnoozeRepliesAfterMidnight(t *testing.T) {
+	thu := time.Date(2026, 12, 3, 0, 30, 0, 0, time.Local) // Thursday
+	h := newHarnessAt(t, func() time.Time { return thu })
+	a, err := h.svc.CaptureReply("reply to Priya", reply.Meta{OwedTo: "Priya"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.SnoozeReplies(); err != nil {
+		t.Fatal(err)
+	}
+	thu9 := time.Date(2026, 12, 3, 9, 0, 0, 0, time.Local)
+	if it, _ := h.st.Get(a.ID); it.SnoozeUntil == nil || !it.SnoozeUntil.Equal(thu9) {
+		t.Fatalf("snoozed until %v, want %v", it.SnoozeUntil, thu9)
+	}
+}
+
 func TestServiceCaptureAndDropReply(t *testing.T) {
 	h := newHarness(t)
 	it, err := h.svc.CaptureReply("deploy?", reply.Meta{OwedTo: "Priya", Source: "Teams", Quote: "can you check"})

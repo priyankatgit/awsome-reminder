@@ -379,3 +379,18 @@ func compact(ts ...time.Time) []time.Time {
 	}
 	return out
 }
+
+// NextWorkMorning is the end-of-day sweep's Tomorrow: DefaultTime today when
+// today is a working day, that is still ahead and the end of today's working
+// day is too (Tomorrow pressed after midnight), else NextWorkDay. Zero if
+// there are no working days.
+func (r Rules) NextWorkMorning(now time.Time) time.Time {
+	d := now.In(r.loc())
+	day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+	if r.workDay(day.Weekday()) && r.at(day, r.EndOfDay, 17, 30).After(now) {
+		if at := r.at(day, r.DefaultTime, 9, 0); at.After(now) {
+			return at
+		}
+	}
+	return r.NextWorkDay(now, r.DefaultTime)
+}
