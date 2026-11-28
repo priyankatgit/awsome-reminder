@@ -390,3 +390,25 @@ func TestWidenListCaps(t *testing.T) {
 		t.Fatalf("wide: %+v", f.b)
 	}
 }
+
+func TestCaptureWidthForFitsTheWorkArea(t *testing.T) {
+	for _, c := range []struct{ work, want int }{
+		{1920, captureWidth},         // plenty of room
+		{853, 853 - 2*captureMargin}, // 1280 px at 150%
+		{400, captureMinWidth},       // never unusably narrow
+		{0, captureWidth},            // unknown work area
+	} {
+		if got := captureWidthFor(c.work); got != c.want {
+			t.Errorf("captureWidthFor(%d) = %d, want %d", c.work, got, c.want)
+		}
+	}
+}
+
+func TestHeightKeeperReapplySetsCurrentHeight(t *testing.T) {
+	var got []int
+	k := &heightKeeper{height: captureHeight, set: func(h int) { got = append(got, h) }}
+	k.Reapply()
+	if len(got) != 1 || got[0] != captureHeight {
+		t.Fatalf("set calls %v, want [%d]", got, captureHeight)
+	}
+}

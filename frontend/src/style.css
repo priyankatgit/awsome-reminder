@@ -3075,7 +3075,8 @@ html[data-view="setup"] body {
    layer here is a pseudo-element or a background-image over the existing
    fills, so contrast pairs stay those in tokens.css. Ambient loops (the
    capture aurora, the High dot) are the two allowed by ruling R6; the
-   global reduced-motion rule stills them. */
+   global reduced-motion rule stills them. The toast is drawn inverted
+   (--fg fill), where a white gloss would not show, so it has none. */
 
 /* ---- Capture box: glossy black glass ---- */
 .capture {
@@ -3260,15 +3261,18 @@ kbd {
   box-shadow: inset var(--overdue-bar) 0 0 var(--danger), var(--gloss-edge);
 }
 
-/* Opening the list: headers and rows cascade in (list.ts sets --i and
-   .is-cascading for one run per window open). */
-.is-cascading .row,
-.is-cascading .sec-head {
+/* Opening the list: headers and rows cascade in. list.ts marks the elements
+   of the first view with .is-cascade and --i for one run per window open, so
+   rows added meanwhile (a refetch, search) enter as usual. */
+.row.is-cascade,
+.sec-head.is-cascade,
+.sec-sub.is-cascade {
   animation: row-cascade var(--dur-cascade) var(--ease-spring) both;
   animation-delay: calc(min(var(--i, 0), var(--stagger-max)) * var(--stagger-row));
 }
 
-.is-cascading .sec-head {
+.sec-head.is-cascade,
+.sec-sub.is-cascade {
   animation-name: head-cascade;
 }
 
@@ -3309,6 +3313,7 @@ kbd {
   inset: 0;
   border-radius: inherit;
   box-shadow: 0 0 0 var(--ripple-ring) var(--prio-high);
+  opacity: 0; /* at rest (reduced motion): no ring; the keyframes show it */
   pointer-events: none;
   animation: prio-ripple var(--dur-blink) ease-out infinite;
 }
@@ -3337,7 +3342,9 @@ kbd {
 
 /* ---- Floating surfaces: menus, toasts, alert cards, the details panel ---- */
 .menu,
-.alert-card {
+.alert-card,
+.alert-card[data-when="missed"],
+.alert-card[data-when="overdue"] {
   background-image: var(--gloss);
 }
 
@@ -3345,6 +3352,7 @@ kbd {
   box-shadow: var(--gloss-edge), var(--shadow-menu);
 }
 
-.alert-app {
+.alert-app,
+html[data-backdrop="solid"] .alert-app {
   background-image: var(--aurora-haze);
 }

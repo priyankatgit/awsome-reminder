@@ -293,21 +293,20 @@ describe("keyboard across the Waiting section", () => {
 
 describe("opening cascade", () => {
   it("cascades headers and rows in once on the first view, then clears", async () => {
-    const seen: string[] = [];
+    const marked = new Map<string, string>(); // element label -> its --i while cascading
     const mo = new MutationObserver((recs) => {
       for (const r of recs) {
         const t = r.target as HTMLElement;
-        if (t.id !== "list-sections") continue;
-        const idx = Array.from(t.querySelectorAll<HTMLElement>(".sec-head, .row")).map((e) => e.style.getPropertyValue("--i"));
-        seen.push(`${t.classList.contains("is-cascading")}|${idx.join(",")}`);
+        if (t.classList.contains("is-cascade")) marked.set(t.dataset.id ?? t.textContent ?? "", t.style.getPropertyValue("--i"));
       }
     });
     mo.observe(document.body, { attributes: true, subtree: true, attributeFilter: ["class"] });
     const root = await mount(view({ tags: [{ tag: "inbox", items: [item("a", "one"), item("b", "two")] }] }));
     await new Promise((r) => window.setTimeout(r, 10));
     mo.disconnect();
-    expect(seen[0]).toBe("true|0,1,2"); // header, then the two rows
-    expect(seen.at(-1)).toBe("false|,,");
-    expect(root.querySelector("#list-sections")!.classList.contains("is-cascading")).toBe(false);
+    expect([...marked.values()]).toEqual(["0", "1", "2"]); // header, then the two rows
+    expect([...marked.keys()].slice(1)).toEqual(["a", "b"]);
+    expect(root.querySelectorAll(".is-cascade").length).toBe(0);
+    expect(Array.from(root.querySelectorAll<HTMLElement>(".row")).map((e) => e.style.getPropertyValue("--i"))).toEqual(["", ""]);
   });
 });

@@ -141,3 +141,20 @@ describe("capture box: several typed tasks", () => {
     expect(h.log.some((l) => l.startsWith("reply:"))).toBe(true);
   });
 });
+
+describe("capture box: typed rows left behind", () => {
+  it("are not called voice leftovers when the box reopens", async () => {
+    document.body.innerHTML = "";
+    const root = document.createElement("div");
+    document.body.append(root);
+    mountCapture(root);
+    type("one");
+    press("Enter", true);
+    window.dispatchEvent(new Event("blur"));
+    h.handlers.get("capture:open")!(undefined);
+    await settle();
+    const status = document.querySelector<HTMLElement>("#cap-hint-status")!;
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toBe("1 unsaved task");
+  });
+});

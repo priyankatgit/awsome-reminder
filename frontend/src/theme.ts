@@ -11,8 +11,12 @@ export type Theme = "dark" | "light";
 export const THEME_KEY = "ar.theme";
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
+// The choice when storage can't keep it (blocked or full): this window only.
+let unsaved: ThemeChoice | null = null;
+
 /** The saved choice; anything unknown (or no storage) is the black default. */
 export function themeChoice(): ThemeChoice {
+  if (unsaved) return unsaved;
   try {
     return localStorage.getItem(THEME_KEY) === "system" ? "system" : "black";
   } catch {
@@ -41,8 +45,9 @@ export function setThemeChoice(c: ThemeChoice): void {
   try {
     if (c === "black") localStorage.removeItem(THEME_KEY);
     else localStorage.setItem(THEME_KEY, c);
+    unsaved = null;
   } catch {
-    // No storage: the choice lasts for this window only.
+    unsaved = c; // no storage: the choice lasts for this window only
   }
   applyTheme();
 }

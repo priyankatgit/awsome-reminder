@@ -13,7 +13,7 @@ Date: 28 Nov 2026. Status: built on branch `ui-black-glossy`.
 
 ## Rulings
 
-**R1 Width.** The capture window is 880 DIP wide (was 640). At the 20 px mono input that fits about 64 characters before scrolling, up from about 45. 880 DIP still fits any screen 1024 DIP wide or more.
+**R1 Width.** The capture window is 880 DIP wide (was 640). At the 20 px mono input that fits about 64 characters before scrolling, up from about 45. On a narrower work area (a 1280 px screen at 150% is 853 DIP) it narrows to leave 24 DIP on each side, never below 480 (`captureWidthFor`).
 
 **R2 Palette "Obsidian".** The dark palette is now near-black, replacing slate. These values in `tokens.css` replace the old dark ones (the light palette is unchanged):
 
@@ -33,7 +33,7 @@ The neutral grey has no blue cast, so a black surface reads as glossy rather tha
 - a 1 px inner top edge, `--gloss-edge`;
 - a deep drop shadow (floating windows only).
 
-These apply to the capture box, alert cards, the details panel, menus, toasts, primary buttons and hovered or selected list rows.
+These apply to the capture box, alert cards, the details panel, menus, keycaps, primary buttons and hovered or selected list rows. The toast is drawn inverted (`--fg` fill), so it gets no gloss. In light mode the primary button has no highlight (`--gloss-strong: none`), because white text on `--accent-fill` must stay at 5.0:1.
 
 **R4 Signature accent.** An "aurora" gradient, `--aurora` (violet `#8B5CF6` → cyan `#22D3EE` → emerald `#22C55E`), is decorative only and never carries text. It appears on:
 - the capture box top light strip;
@@ -53,7 +53,7 @@ Focus rings stay the solid `--ring`, for contrast.
 - the capture box aurora, which runs only while the box is visible;
 - the blinking dot on open High-priority rows.
 
-Both animate only `opacity`/`transform`/`background-position` on small layers, and are static under `prefers-reduced-motion`. Nothing else loops.
+Both animate only `opacity`/`transform`/`background-position` on small layers, and are static under `prefers-reduced-motion` (the ripple ring rests invisible). Nothing else loops.
 
 **R7 List motion.**
 - **Opening the list:** rows cascade in, fading up 8 px with a blur clearing, `--stagger-row` (28 ms) apart, capped at 14 rows. Section headers slide in from the left. This runs once per window open, not on re-renders.

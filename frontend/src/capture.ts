@@ -189,6 +189,7 @@ export function mountCapture(root: HTMLElement): void {
   let noteAction: (() => void | Promise<void>) | null = null;
   let leftover = false; // the box opened with rows left from a voice session
   let leftoverText = false; // ...and the input holds text from a wake session
+  let typedRows = false; // some rows were typed (Shift+Enter, a paste), not dictated
 
   // Wake mode ("Hey Awesome"): the box shows without focus and the guard
   // keeps stray typing out until the user engages (click, hotkey, Ctrl+M).
@@ -516,7 +517,7 @@ export function mountCapture(root: HTMLElement): void {
       hintStatus.textContent = `Discard ${tasks(n)}? Esc again to discard · ↵ to save`;
       hintStatus.hidden = false;
     } else if (leftover && kept > 0) {
-      hintStatus.textContent = `${kept} unsaved ${kept === 1 ? "task" : "tasks"} from voice`;
+      hintStatus.textContent = `${kept} unsaved ${kept === 1 ? "task" : "tasks"}${typedRows ? "" : " from voice"}`;
       hintStatus.hidden = false;
     } else {
       hintStatus.hidden = true;
@@ -525,7 +526,10 @@ export function mountCapture(root: HTMLElement): void {
   }
 
   function onListChange(): void {
-    if (list.items().length === 0) clearConfirm();
+    if (list.items().length === 0) {
+      clearConfirm();
+      typedRows = false;
+    }
     updateReview();
     reviewBox.scrollTop = reviewBox.scrollHeight;
   }
@@ -830,7 +834,10 @@ export function mountCapture(root: HTMLElement): void {
   function stage(): void {
     if (busy) return;
     const n = addTask();
-    if (n > 0) voiceLive.textContent = `Task ${n} added`;
+    if (n > 0) {
+      typedRows = true;
+      voiceLive.textContent = `Task ${n} added`;
+    }
     input.focus();
   }
 
@@ -865,6 +872,7 @@ export function mountCapture(root: HTMLElement): void {
     clearConfirm();
     leftover = false;
     leftoverText = false;
+    if (placed.rows.length > 0) typedRows = true;
     for (const t of placed.rows) list.add(t);
     input.value = placed.input;
     input.setSelectionRange(placed.caret, placed.caret);

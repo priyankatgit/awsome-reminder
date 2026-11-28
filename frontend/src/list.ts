@@ -162,6 +162,8 @@ export function mountList(root: HTMLElement): void {
   let selectedIndex = 0;
   let edit: EditState | null = null;
   let holds = 0; // running done animations
+  let cascading: HTMLElement[] = []; // elements in the opening cascade
+  let cascadeTimer: number | undefined;
   let rendering = false; // render() is moving nodes: ignore the blurs that causes
   let fetchSeq = 0;
   let refreshTimer: number | undefined;
@@ -300,6 +302,7 @@ export function mountList(root: HTMLElement): void {
    * leaves a fading ghost where a row went away.
    */
   function render(animate = false): void {
+    if (cascading.length > 0) endCascade();
     const before = animate && !reducedMotion() ? measure(reflowEls()) : null;
     // A plain render (typing in search) must not leave a running glide
     // translating rows by an offset measured against the old layout.
@@ -567,14 +570,24 @@ export function mountList(root: HTMLElement): void {
     if (reducedMotion()) return;
     const els = reflowEls();
     if (els.length === 0) return;
-    els.forEach((e, i) => e.style.setProperty("--i", String(i)));
-    sectionsBox.classList.add("is-cascading");
+    els.forEach((e, i) => {
+      e.style.setProperty("--i", String(i));
+      e.classList.add("is-cascade");
+    });
+    cascading = els;
     const steps = Math.min(els.length - 1, tokenNumber("--stagger-max"));
     const total = steps * motionMs("--stagger-row") + motionMs("--dur-cascade");
-    window.setTimeout(() => {
-      sectionsBox.classList.remove("is-cascading");
-      for (const e of els) e.style.removeProperty("--i");
-    }, total);
+    cascadeTimer = window.setTimeout(endCascade, total);
+  }
+
+  /** Ends the opening cascade (on time, or early so a FLIP measures true places). */
+  function endCascade(): void {
+    window.clearTimeout(cascadeTimer);
+    for (const e of cascading) {
+      e.classList.remove("is-cascade");
+      e.style.removeProperty("--i");
+    }
+    cascading = [];
   }
 
   // ---------- focus from OpenList(id) ----------

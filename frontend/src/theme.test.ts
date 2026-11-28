@@ -44,3 +44,22 @@ describe("theme", () => {
     expect(themeChoice()).toBe("black");
   });
 });
+
+describe("theme without storage", () => {
+  it("keeps the choice for this window when storage throws", () => {
+    window.matchMedia = ((q: string) => ({ matches: q.includes("light"), media: q, addEventListener() {}, removeEventListener() {} })) as never;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+    try {
+      setThemeChoice("system");
+      expect(themeChoice()).toBe("system");
+      expect(document.documentElement.dataset.theme).toBe("light");
+    } finally {
+      Storage.prototype.setItem = set;
+      setThemeChoice("black");
+    }
+    expect(themeChoice()).toBe("black");
+  });
+});

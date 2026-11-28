@@ -81,6 +81,7 @@ func RunSetup(o SetupOptions) error {
 		URL:              "/#setup",
 		InitialPosition:  application.WindowCentered,
 		BackgroundColour: pageBg,
+		Windows:          application.WindowsWindow{Theme: application.Dark},
 	})
 	// Closing the window mid-move rolls the copy back before the app exits.
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) { svc.stopMove() })
