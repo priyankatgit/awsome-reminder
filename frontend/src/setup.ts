@@ -12,6 +12,7 @@ const CONFIRM_FRESH = "confirm-fresh";
 
 const NETWORK_WARNING = "Network folders can damage the database if the connection drops.";
 const CLOUD_WARNING = "Cloud-synced folders can damage the database or create conflicting copies. Sync across machines with Atlas instead.";
+const CANCEL_WAIT_MS = 3000;
 const SAME_FOLDER = "That is already the data folder.";
 
 const STEP_LABELS: Record<string, string> = {
@@ -72,6 +73,7 @@ export function mountSetup(root: HTMLElement): void {
   let last: { kind: Kind; path: string } | null = null; // what Continue last sent, for Try again
   let chooseErr = ""; // the last rejection of choose, shown on the page we return to
   let cancelling = false;
+  let cancelTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Pieces of the current view that change in place.
   let msgs: HTMLElement | null = null;
@@ -87,6 +89,7 @@ export function mountSetup(root: HTMLElement): void {
 
   function show(v: typeof view): void {
     view = v;
+    clearTimeout(cancelTimer);
     main.replaceChildren();
     foot.replaceChildren();
     msgs = cont = otherPath = otherFree = bar = progress = meta = cancelBtn = null;
@@ -246,10 +249,19 @@ export function mountSetup(root: HTMLElement): void {
     // Adopting needs a confirm, so an unconfirmed choice that went through
     // from the existing-data page is the copy.
     if (!confirm && info?.state === "existing" && kind !== "standard") {
-      if (view !== "progress") showProgress(path);
+      // A fast failure may already have shown its error: only the pre-move pages become progress.
+      if (view === "options" || view === "confirm" || view === "loading") showProgress(path);
       return;
     }
     starting();
+  }
+
+  /** The folder is back and Go is restarting the app: a quiet page until the window closes. */
+  function showStarting(): void {
+    show("loading");
+    const h = el("h1", "setup-title", "Starting Awesome Reminder…");
+    h.setAttribute("role", "status");
+    main.append(h);
   }
 
   /** The app is restarting itself; keep the page quiet until the window closes. */
@@ -330,8 +342,16 @@ export function mountSetup(root: HTMLElement): void {
 
   function cancelMove(): void {
     cancelling = true;
-    if (cancelBtn) cancelBtn.disabled = true;
+    const btn = cancelBtn;
+    if (btn) btn.disabled = true;
     void api.setup.cancelMove().catch(() => undefined);
+    // If nothing stops (CancelMove had nothing to cancel), give the button back.
+    clearTimeout(cancelTimer);
+    cancelTimer = setTimeout(() => {
+      if (!cancelling || view !== "progress") return;
+      cancelling = false;
+      if (btn) btn.disabled = false;
+    }, CANCEL_WAIT_MS);
   }
 
   function moveFailed(text: string): void {
@@ -408,6 +428,7 @@ export function mountSetup(root: HTMLElement): void {
       return showUnavailable();
     }
     if (info.state === "unavailable") showUnavailable("Still can't reach it.");
+    else if (info.state === "ready") showStarting();
     else route(); // it is back: Go restarts the app; anything else shows its own page
   }
 

@@ -12,6 +12,8 @@ const h = vi.hoisted(() => {
     chosen: [] as [string, string, boolean][],
     onProgress: undefined as undefined | ((p: SetupProgress) => void),
     onDone: undefined as undefined | ((d: SetupDone) => void),
+    chooseHook: undefined as undefined | (() => void),
+    retryInfo: undefined as undefined | SetupInfo,
   };
 });
 vi.mock("./api", () => ({
@@ -21,12 +23,13 @@ vi.mock("./api", () => ({
       check: async () => h.check,
       choose: async (kind: string, path: string, confirm: boolean) => {
         h.chosen.push([kind, path, confirm]);
+        h.chooseHook?.();
         if (h.chooseErr && !confirm) throw new Error(h.chooseErr);
       },
       runPendingMove: async () => void h.calls.push("run"),
       cancelMove: async () => void h.calls.push("cancel"),
       abandonMove: async () => void h.calls.push("abandon"),
-      retry: async () => h.info,
+      retry: async () => h.retryInfo ?? h.info,
       quit: async () => void h.calls.push("quit"),
       onProgress: (cb: (p: SetupProgress) => void) => ((h.onProgress = cb), () => undefined),
       onDone: (cb: (d: SetupDone) => void) => ((h.onDone = cb), () => undefined),
@@ -90,7 +93,8 @@ beforeEach(() => {
   h.chosen = [];
   h.chooseErr = "";
   h.picked = "";
-  h.onProgress = h.onDone = undefined;
+  h.onProgress = h.onDone = h.chooseHook = h.retryInfo = undefined;
+  vi.useRealTimers();
 });
 
 describe("helpers", () => {
@@ -231,6 +235,26 @@ describe("a move", () => {
     expect(h.chosen.at(-1)).toEqual(["other", "E:\\Notes\\Awesome Reminder", false]);
   });
 
+  it("a failure that lands before choose resolves keeps the error page", async () => {
+    await mount(existing());
+    await browse(check());
+    h.chooseHook = () => h.onDone!({ ok: false, error: "disk full" });
+    $<HTMLButtonElement>("button[type=submit]").click();
+    await flush();
+    expect(root().textContent).toContain("Couldn't move your data");
+    expect(root().textContent).toContain("disk full");
+    expect(byText("Try again")).toBeTruthy();
+  });
+
+  it("Cancel comes back if no done event follows", async () => {
+    await startMove();
+    vi.useFakeTimers();
+    byText("Cancel").click();
+    expect(byText("Cancel").disabled).toBe(true);
+    vi.advanceTimersByTime(3100);
+    expect(byText("Cancel").disabled).toBe(false);
+  });
+
   it("Cancel while running stops the move and returns to the options", async () => {
     await startMove();
     byText("Cancel").click();
@@ -251,6 +275,22 @@ describe("unavailable", () => {
     expect(document.activeElement).toBe(byText("Retry"));
     byText("Quit").click();
     expect(h.calls).toContain("quit");
+  });
+
+  it("Retry with the folder back shows the quiet starting page", async () => {
+    await mount(unavailable());
+    h.retryInfo = info({ state: "ready" });
+    byText("Retry").click();
+    await flush();
+    expect(root().textContent).toContain("Starting Awesome Reminder");
+    expect(root().querySelector("[role=radiogroup]")).toBeNull();
+  });
+
+  it("Retry that still fails stays on the page", async () => {
+    await mount(unavailable());
+    byText("Retry").click();
+    await flush();
+    expect(root().textContent).toContain("Still can't reach it.");
   });
 
   it("confirm-fresh then Start with an empty list confirms", async () => {
