@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
@@ -27,6 +29,15 @@ type Progress struct {
 }
 
 const progressEvery = 64 << 10
+
+// moveMarker is written in the target while a move runs. It holds the source
+// root, so a database left by an interrupted move from that source can be
+// told apart from one that someone else put there.
+const moveMarker = ".awesome-move"
+
+// oldCopyMsg refuses a move while an earlier one's old copy is still kept:
+// the pointer remembers only one previous folder.
+const oldCopyMsg = "Remove the old copy first (Settings → Data folder)."
 
 // afterCopy runs after each copy step; tests use it to inject a failure.
 var afterCopy = func(step string) error { return nil }
@@ -227,11 +238,33 @@ func countRows(db *sql.DB, table string) (int64, error) {
 }
 
 // ownLeftover reports whether to's database is the unfinished result of an
-// earlier move from `from`: the pointer still asks for this move and the
-// source database has not been renamed.
+// earlier move from `from`: that move's marker is still in `to` and names
+// `from`, and the source database has not been renamed.
 func ownLeftover(from, to paths.Layout) bool {
-	loc, found, err := paths.LoadLocation()
-	return err == nil && found && loc.PendingMove != "" && paths.SameDir(loc.PendingMove, to.Root) && exists(from.DB())
+	b, err := os.ReadFile(filepath.Join(to.Root, moveMarker))
+	return err == nil && len(b) > 0 && paths.SameDir(string(b), from.Root) && exists(from.DB())
+}
+
+// setLeftoverAside renames an interrupted move's database files in `to` out
+// of the way, keeping them rather than deleting them.
+func setLeftoverAside(to paths.Layout) error {
+	stamp := fmt.Sprintf(".leftover-%d", time.Now().Unix())
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		p := to.DB() + suffix
+		if !exists(p) {
+			continue
+		}
+		if err := os.Rename(p, p+stamp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// oldCopyKept reports whether the pointer still remembers a previous data
+// folder that exists on disk.
+func oldCopyKept(loc paths.Location) bool {
+	return loc.PreviousDir != "" && exists(loc.PreviousDir)
 }
 
 // Move copies the data folder `from` into `to`, checks the copy and then
@@ -245,16 +278,21 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 	if !exists(from.DB()) {
 		return errors.New("database: the current data folder has no database")
 	}
+	loc, found, err := paths.LoadLocation()
+	if err != nil {
+		return err
+	}
+	if found && oldCopyKept(loc) {
+		return errors.New(oldCopyMsg)
+	}
 	if exists(to.DB()) {
 		if !ownLeftover(from, to) {
 			return errors.New("database: the new folder already holds a database")
 		}
 		// A previous attempt died between making the copy live and saving
 		// the pointer: the copy is ours and the source is still in place.
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			if err := os.Remove(to.DB() + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("database: %w", err)
-			}
+		if err := setLeftoverAside(to); err != nil {
+			return fmt.Errorf("database: %w", err)
 		}
 	}
 	sizes, err := Measure(from)
@@ -284,6 +322,11 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 
 	if e := m.mkdir(to.Root); e != nil {
 		return fail("database", e)
+	}
+	marker := filepath.Join(to.Root, moveMarker)
+	m.files = append(m.files, marker)
+	if err = os.WriteFile(marker, []byte(from.Root), 0o644); err != nil {
+		return fail("database", err)
 	}
 
 	// 1. Database snapshot.
@@ -352,13 +395,20 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 		return fail("switch", err)
 	}
 
-	// 7. Tidy the old copy. The switch has happened, so this is best effort.
+	// 7. Tidy up. The switch has happened, so this is best effort.
+	if e := os.Remove(marker); e != nil && !errors.Is(e, os.ErrNotExist) {
+		log.Printf("datamove: couldn't remove %s: %v", marker, e)
+	}
 	if !sameVoice {
-		_ = os.RemoveAll(from.Voice())
+		if e := os.RemoveAll(from.Voice()); e != nil {
+			log.Printf("datamove: couldn't remove the old voice folder %s: %v", from.Voice(), e)
+		}
 	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if exists(from.DB() + suffix) {
-			_ = os.Rename(from.DB()+suffix, from.DB()+suffix+".moved")
+		if p := from.DB() + suffix; exists(p) {
+			if e := os.Rename(p, p+".moved"); e != nil {
+				log.Printf("datamove: couldn't rename the old %s: %v", filepath.Base(p), e)
+			}
 		}
 	}
 	return nil

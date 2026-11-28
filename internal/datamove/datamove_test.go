@@ -257,7 +257,7 @@ func TestMoveCopiesAndSwitches(t *testing.T) {
 	if last.Done != last.Total || last.Total == 0 {
 		t.Fatalf("final progress %+v", last)
 	}
-	for _, p := range []string{dst.DB() + ".tmp", dst.DB() + ".tmp-wal", dst.DB() + "-wal"} {
+	for _, p := range []string{dst.DB() + ".tmp", dst.DB() + ".tmp-wal", dst.DB() + "-wal", filepath.Join(dst.Root, moveMarker)} {
 		if exists(p) {
 			t.Fatalf("leftover %s", p)
 		}
@@ -635,9 +635,11 @@ func TestMoveRetryAfterRenameBeforeSwitch(t *testing.T) {
 	isolate(t)
 	src := newSource(t)
 	dst := newDest(t, "dst")
-	// State left by a run killed after tmp->awesome.db, before the pointer.
-	b, _ := os.ReadFile(src.DB())
-	write(t, dst.DB(), b)
+	// State left by a run killed after tmp->awesome.db, before the pointer:
+	// the marker names the source, and the half-done copy is live.
+	write(t, filepath.Join(dst.Root, moveMarker), []byte(src.Root))
+	write(t, dst.DB(), []byte("half-done copy"))
+	write(t, dst.DB()+"-wal", []byte("wal"))
 	if err := paths.SaveLocation(paths.Location{DataDir: src.Root, PendingMove: dst.Root}); err != nil {
 		t.Fatal(err)
 	}
@@ -650,6 +652,136 @@ func TestMoveRetryAfterRenameBeforeSwitch(t *testing.T) {
 	loc, _, _ := paths.LoadLocation()
 	if loc.DataDir != dst.Root || loc.PendingMove != "" {
 		t.Fatalf("pointer %+v", loc)
+	}
+	// The leftovers are set aside, not deleted.
+	var db, wal bool
+	entries, _ := os.ReadDir(dst.Root)
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasPrefix(n, "awesome.db.leftover-") {
+			b, _ := os.ReadFile(filepath.Join(dst.Root, n))
+			db = string(b) == "half-done copy"
+		}
+		if strings.HasPrefix(n, "awesome.db-wal.leftover-") {
+			wal = true
+		}
+	}
+	if !db || !wal {
+		t.Fatalf("leftovers not set aside: %v", entries)
+	}
+	if exists(filepath.Join(dst.Root, moveMarker)) {
+		t.Fatal("marker left behind")
+	}
+}
+
+func TestMoveRefusesTargetDatabaseWithoutMarker(t *testing.T) {
+	isolate(t)
+	src := newSource(t)
+	for name, marker := range map[string]string{"no marker": "", "other source": "elsewhere"} {
+		dst := newDest(t, "dst")
+		os.MkdirAll(dst.Root, 0o755)
+		putItems(t, dst.DB(), 1)
+		if marker != "" {
+			write(t, filepath.Join(dst.Root, moveMarker), []byte(filepath.Join(t.TempDir(), marker)))
+		}
+		// The pointer asks for this move, yet the database is not ours.
+		if err := paths.SaveLocation(paths.Location{DataDir: src.Root, PendingMove: dst.Root}); err != nil {
+			t.Fatal(err)
+		}
+		before := pointerBytes(t)
+		err := Move(context.Background(), src, dst, nil)
+		if err == nil || !strings.Contains(err.Error(), "already holds a database") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		if countItems(t, dst.DB()) != 1 {
+			t.Fatalf("%s: target data was changed", name)
+		}
+		entries, _ := os.ReadDir(dst.Root)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), "leftover") {
+				t.Fatalf("%s: target database set aside: %v", name, entries)
+			}
+		}
+		if !bytes.Equal(pointerBytes(t), before) || !exists(src.DB()) {
+			t.Fatalf("%s: pointer or source changed", name)
+		}
+	}
+}
+
+func TestMoveRefusedWhileOldCopyExists(t *testing.T) {
+	isolate(t)
+	src := newSource(t)
+	dst := newDest(t, "dst")
+	old := filepath.Join(t.TempDir(), "old")
+	write(t, filepath.Join(old, "awesome.db.moved"), []byte("x"))
+	if err := paths.SaveLocation(paths.Location{DataDir: src.Root, PreviousDir: old, PendingMove: dst.Root}); err != nil {
+		t.Fatal(err)
+	}
+	before := pointerBytes(t)
+	err := Move(context.Background(), src, dst, nil)
+	if err == nil || err.Error() != oldCopyMsg {
+		t.Fatalf("err = %v", err)
+	}
+	if exists(dst.Root) || !bytes.Equal(pointerBytes(t), before) || !exists(src.DB()) {
+		t.Fatal("move started")
+	}
+	// Once the old folder is gone the move runs.
+	os.RemoveAll(old)
+	if err := Move(context.Background(), src, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	loc, _, _ := paths.LoadLocation()
+	if loc.DataDir != dst.Root || loc.PreviousDir != src.Root {
+		t.Fatalf("pointer %+v", loc)
+	}
+}
+
+func TestRequestMoveRefusedWhileOldCopyExists(t *testing.T) {
+	isolate(t)
+	cur := t.TempDir()
+	old := t.TempDir()
+	if err := paths.SaveLocation(paths.Location{DataDir: cur, PreviousDir: old}); err != nil {
+		t.Fatal(err)
+	}
+	before := pointerBytes(t)
+	if err := RequestMove("X"); err == nil || err.Error() != oldCopyMsg {
+		t.Fatalf("err = %v", err)
+	}
+	if !bytes.Equal(pointerBytes(t), before) {
+		t.Fatal("pointer changed")
+	}
+	// A previous folder that no longer exists does not block.
+	if err := paths.SaveLocation(paths.Location{DataDir: cur, PreviousDir: filepath.Join(old, "gone")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestMove("X"); err != nil {
+		t.Fatal(err)
+	}
+	if loc, _, _ := paths.LoadLocation(); loc.PendingMove != "X" {
+		t.Fatalf("pointer %+v", loc)
+	}
+}
+
+func TestTargetIgnoresPointerAndSetupLog(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "cfg")
+	for _, f := range []string{"location.json", "location.json.tmp", "setup.log"} {
+		write(t, filepath.Join(cfg, f), []byte("x"))
+	}
+	if got, err := Target(cfg); err != nil || got != cfg {
+		t.Fatalf("got %q, %v want %q", got, err, cfg)
+	}
+	withDB := filepath.Join(root, "withdb")
+	write(t, filepath.Join(withDB, "location.json"), []byte("x"))
+	write(t, filepath.Join(withDB, "awesome.db"), []byte("x"))
+	if got, err := Target(withDB); err != nil || got != withDB {
+		t.Fatalf("got %q, %v want %q", got, err, withDB)
+	}
+	other := filepath.Join(root, "other")
+	write(t, filepath.Join(other, "location.json"), []byte("x"))
+	write(t, filepath.Join(other, "notes.txt"), []byte("x"))
+	if got, err := Target(other); err != nil || got != filepath.Join(other, SubfolderName) {
+		t.Fatalf("got %q, %v", got, err)
 	}
 }
 

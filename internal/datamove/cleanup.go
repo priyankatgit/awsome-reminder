@@ -72,7 +72,7 @@ func RemoveOldCopy(loc paths.Location) error {
 	if err := os.RemoveAll(filepath.Join(prev, "attachments")); err != nil {
 		return err
 	}
-	// The old WebView2 profile lives in %APPDATA%wesome-reminder.exe; it is
+	// The old WebView2 profile lives in %APPDATA%\awesome-reminder.exe; it is
 	// the live profile while the standard folder is in use.
 	if exe := legacyExe(); exe != "" {
 		if std, err := paths.StandardRoot(); err == nil && paths.SameDir(prev, std) && !paths.SameDir(cur.DataDir, std) {

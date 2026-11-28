@@ -24,7 +24,7 @@ func TestLegacyVoiceDirUnderUserCache(t *testing.T) {
 		t.Fatalf("LegacyVoiceDir: %v", err)
 	}
 	if !strings.HasPrefix(dir, tmp) || filepath.Base(dir) != "voice" || filepath.Base(filepath.Dir(dir)) != "awesome-reminder" {
-		t.Errorf("LegacyLegacyVoiceDir = %q, want <cache>/awesome-reminder/voice under %q", dir, tmp)
+		t.Errorf("LegacyVoiceDir = %q, want <cache>/awesome-reminder/voice under %q", dir, tmp)
 	}
 	if _, err := os.Stat(dir); err == nil {
 		t.Errorf("LegacyVoiceDir must not create %q", dir)

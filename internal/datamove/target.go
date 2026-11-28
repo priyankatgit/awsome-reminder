@@ -18,8 +18,12 @@ const SpaceMargin = 50 << 20
 
 var errNotEmpty = errors.New("That folder isn't empty. Choose an empty folder or one with Awesome Reminder data.")
 
+// ignoredFiles do not make a folder "not empty": the standard folder holds the
+// pointer and the setup log whether or not it is the data folder.
+var ignoredFiles = map[string]bool{"location.json": true, "location.json.tmp": true, "setup.log": true}
+
 // usable reports whether dir can be used as a data folder as is: missing,
-// empty, or already holding a database.
+// empty (apart from ignoredFiles), or already holding a database.
 func usable(dir string) (bool, error) {
 	fi, err := os.Stat(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -38,7 +42,12 @@ func usable(dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(entries) == 0, nil
+	for _, e := range entries {
+		if !ignoredFiles[e.Name()] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Target turns the folder the user picked into the data folder to use: the

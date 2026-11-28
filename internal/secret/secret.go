@@ -119,12 +119,17 @@ func (s *store) Kind() string {
 var sysKeychain keychain = osKeychain{}
 
 // ClearKeychain removes the saved connection string from the OS keychain. A
-// missing entry is not an error. The encrypted-file fallback lives in the
+// missing entry is not an error, and neither is a keychain that can't be used
+// at all (Linux without Secret Service): like Store.Delete, it fails only when
+// the entry demonstrably survives. The encrypted-file fallback lives in the
 // data folder and is not touched.
 func ClearKeychain() error {
 	err := sysKeychain.Delete(service, account)
-	if errors.Is(err, keyring.ErrNotFound) {
+	if err == nil || errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}
-	return err
+	if v, gerr := sysKeychain.Get(service, account); gerr == nil && v != "" {
+		return err
+	}
+	return nil
 }

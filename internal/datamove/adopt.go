@@ -83,10 +83,14 @@ func KeepStandard() error {
 }
 
 // RequestMove records that the move to target should run at the next start.
+// It refuses while an earlier move's old copy is still kept.
 func RequestMove(target string) error {
 	loc, found, err := paths.LoadLocation()
 	if err != nil {
 		return err
+	}
+	if found && oldCopyKept(loc) {
+		return errors.New(oldCopyMsg)
 	}
 	if !found {
 		root, err := paths.StandardRoot()
