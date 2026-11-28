@@ -543,6 +543,11 @@ const SettingsChangedElsewhere = "Saved. The reminder and reply settings were ch
 // and differ from s's, the stored ones are kept, only the local-only fields
 // are saved, and the returned note says so. Otherwise the note is "".
 func (c *Core) SaveSettings(s settings.Settings) (note string, err error) {
+	s.PushServer = strings.TrimRight(strings.TrimSpace(s.PushServer), "/")
+	s.PushTopic = strings.TrimSpace(s.PushTopic)
+	if s.PushEnabled && s.PushTopic == "" {
+		s.PushTopic = settings.NewPushTopic()
+	}
 	if err := s.Validate(); err != nil {
 		return "", err
 	}

@@ -229,6 +229,12 @@ func (c *Core) ApplyRemoteShared(p settings.Shared, at time.Time, by string) (bo
 		if p.EndOfDay == "" {
 			p.EndOfDay, p.EndOfDaySweep = local.EndOfDay, local.EndOfDaySweep
 		}
+		// Likewise for the phone push settings (Phase 4): an empty server marks
+		// an older document, which must not switch push off or blank the topic.
+		if p.PushServer == "" {
+			p.PushEnabled, p.PushServer, p.PushTopic = local.PushEnabled, local.PushServer, local.PushTopic
+			p.PushReplies, p.PushHideText, p.PushGrace = local.PushReplies, local.PushHideText, local.PushGrace
+		}
 		if len(p.WorkDays) == 0 {
 			p.WorkDays = local.WorkDays
 		}

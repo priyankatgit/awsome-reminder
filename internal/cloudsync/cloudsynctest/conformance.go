@@ -304,7 +304,8 @@ func testSharedLWW(t *testing.T, s cloudsync.Syncer) {
 	if err != nil || got != nil {
 		t.Fatalf("empty cluster: %+v %v", got, err)
 	}
-	p := settings.Shared{LeadTimes: []time.Duration{time.Hour, 10 * time.Minute}, DefaultTime: "09:00", NextWeekDay: "monday", NextWeekTime: "08:30", WorkDays: []string{"monday", "saturday"}, EndOfDay: "16:45", EndOfDaySweep: true}
+	p := settings.Shared{LeadTimes: []time.Duration{time.Hour, 10 * time.Minute}, DefaultTime: "09:00", NextWeekDay: "monday", NextWeekTime: "08:30", WorkDays: []string{"monday", "saturday"}, EndOfDay: "16:45", EndOfDaySweep: true,
+		PushEnabled: true, PushServer: "https://ntfy.example.com/ntfy", PushTopic: "ar-abcdefghijklmnopqrstuvwxyz", PushReplies: true, PushHideText: true, PushGrace: 5 * time.Minute}
 	pushShared := func(d cloudsync.SharedDoc) {
 		t.Helper()
 		if err := s.PushShared(ctx(t), d); err != nil {

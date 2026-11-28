@@ -275,6 +275,8 @@ func (s *Syncer) PushShared(ctx context.Context, d cloudsync.SharedDoc) error {
 		"lead_times": leadsMs(d.Shared.LeadTimes), "default_time": d.Shared.DefaultTime,
 		"next_week_day": d.Shared.NextWeekDay, "next_week_time": d.Shared.NextWeekTime,
 		"work_days": slices.Clone(d.Shared.WorkDays), "end_of_day": d.Shared.EndOfDay, "end_of_day_sweep": d.Shared.EndOfDaySweep,
+		"push_enabled": d.Shared.PushEnabled, "push_server": d.Shared.PushServer, "push_topic": d.Shared.PushTopic,
+		"push_replies": d.Shared.PushReplies, "push_hide_text": d.Shared.PushHideText, "push_grace_ms": d.Shared.PushGrace.Milliseconds(),
 		"updated_at": ms(d.UpdatedAt), "updated_by": d.UpdatedBy,
 	}) {
 		s.shared[k] = v
@@ -329,6 +331,8 @@ func tmPtr(d doc, k string) *time.Time {
 	}
 	return &v
 }
+
+func i64(d doc, k string) int64 { v, _ := d[k].(int64); return v }
 
 func num(d doc, k string) int { v, _ := d[k].(int); return v }
 
@@ -441,6 +445,9 @@ func (s *Syncer) PullShared(ctx context.Context) (*cloudsync.SharedDoc, error) {
 			LeadTimes: leads(d, "lead_times"), DefaultTime: str(d, "default_time"),
 			NextWeekDay: str(d, "next_week_day"), NextWeekTime: str(d, "next_week_time"),
 			WorkDays: strs(d, "work_days"), EndOfDay: str(d, "end_of_day"), EndOfDaySweep: boolean(d, "end_of_day_sweep"),
+			PushEnabled: boolean(d, "push_enabled"), PushServer: str(d, "push_server"), PushTopic: str(d, "push_topic"),
+			PushReplies: boolean(d, "push_replies"), PushHideText: boolean(d, "push_hide_text"),
+			PushGrace: time.Duration(i64(d, "push_grace_ms")) * time.Millisecond,
 		},
 		UpdatedAt: tm(d, "updated_at"), UpdatedBy: str(d, "updated_by"),
 	}, nil

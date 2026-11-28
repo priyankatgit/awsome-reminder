@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -24,6 +25,9 @@ func TestDefaults(t *testing.T) {
 		WorkDays:         []string{"monday", "tuesday", "wednesday", "thursday", "friday"},
 		EndOfDay:         "17:30",
 		EndOfDaySweep:    true,
+		PushServer:       "https://ntfy.sh",
+		PushReplies:      true,
+		PushGrace:        2 * time.Minute,
 	}
 	if got := Defaults("windows"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
@@ -364,5 +368,93 @@ func TestSharedEqualIgnoresWorkDaysOrder(t *testing.T) {
 	q.WorkDays = []string{"monday", "tuesday"}
 	if p.Equal(q) {
 		t.Errorf("Equal true for different days")
+	}
+}
+
+func TestDefaultsPush(t *testing.T) {
+	d := Defaults("windows")
+	if d.PushEnabled || d.PushServer != "https://ntfy.sh" || d.PushTopic != "" || d.PushGrace != 2*time.Minute {
+		t.Fatalf("push defaults: %+v", d)
+	}
+}
+
+func TestValidatePush(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(s *Settings)
+		bad  bool
+	}{
+		{"defaults", func(s *Settings) {}, false},
+		{"ftp server", func(s *Settings) { s.PushServer = "ftp://x" }, true},
+		{"empty server", func(s *Settings) { s.PushServer = "" }, true},
+		{"trailing slash ok", func(s *Settings) { s.PushServer = "https://ntfy.sh/" }, false},
+		{"topic with space", func(s *Settings) { s.PushTopic = "has space" }, true},
+		{"topic 64 ok", func(s *Settings) { s.PushTopic = strings.Repeat("a", 64) }, false},
+		{"topic 65", func(s *Settings) { s.PushTopic = strings.Repeat("a", 65) }, true},
+		{"grace 3m", func(s *Settings) { s.PushGrace = 3 * time.Minute }, true},
+		{"grace 0 ok", func(s *Settings) { s.PushGrace = 0 }, false},
+		{"enabled without topic", func(s *Settings) { s.PushEnabled = true }, true},
+		{"enabled with topic", func(s *Settings) { s.PushEnabled, s.PushTopic = true, "ar-x" }, false},
+	}
+	for _, c := range cases {
+		s := Defaults("windows")
+		c.mut(&s)
+		if err := s.Validate(); (err != nil) != c.bad {
+			t.Errorf("%s: err=%v, want bad=%v", c.name, err, c.bad)
+		}
+	}
+}
+
+func TestNewPushTopic(t *testing.T) {
+	re := regexp.MustCompile(`^ar-[a-z2-7]{26}$`)
+	a, b := NewPushTopic(), NewPushTopic()
+	if !re.MatchString(a) || !re.MatchString(b) || a == b {
+		t.Fatalf("topics %q %q", a, b)
+	}
+}
+
+func TestUnmarshalOldSettingsPushDefaults(t *testing.T) {
+	var s Settings
+	old := `{"hotkey":"Ctrl+Shift+Space","leadTimes":["1h0m0s"],"defaultTime":"09:00","nextWeekDay":"monday","nextWeekTime":"09:00"}`
+	if err := json.Unmarshal([]byte(old), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.PushEnabled || s.PushServer != DefaultPushServer || s.PushGrace != 2*time.Minute || !s.PushReplies || s.PushTopic != "" {
+		t.Fatalf("push defaults: %+v", s)
+	}
+}
+
+func TestPushJSONRoundTrip(t *testing.T) {
+	s := Defaults("windows")
+	s.PushEnabled, s.PushTopic, s.PushHideText, s.PushReplies, s.PushGrace = true, "ar-abc", true, false, 10*time.Minute
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"pushGrace":"10m0s"`) {
+		t.Fatalf("grace not a duration string: %s", b)
+	}
+	var back Settings
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back, s) {
+		t.Fatalf("got %+v want %+v", back, s)
+	}
+}
+
+func TestSharedRoundTripPush(t *testing.T) {
+	s := Defaults("windows")
+	s.PushEnabled, s.PushServer, s.PushTopic, s.PushReplies, s.PushHideText, s.PushGrace =
+		true, "https://ntfy.example.com/x", "ar-abc", false, true, 5*time.Minute
+	got := Defaults("windows").WithShared(s.Shared())
+	if got.PushEnabled != true || got.PushServer != s.PushServer || got.PushTopic != "ar-abc" ||
+		got.PushReplies || !got.PushHideText || got.PushGrace != 5*time.Minute {
+		t.Fatalf("push fields lost: %+v", got)
+	}
+	o := s
+	o.PushTopic = "ar-other"
+	if s.Shared().Equal(o.Shared()) {
+		t.Fatal("Equal ignores the topic")
 	}
 }
