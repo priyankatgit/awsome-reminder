@@ -979,16 +979,23 @@ export function mountCapture(root: HTMLElement): void {
     voice.startSession(keyGuard.armed() ? "wake" : "focused");
   }
 
-  // A click in a wake-opened box engages it; a click on a bare part of the
-  // box puts the caret in the input (the window focus handler never does).
-  box.addEventListener("mousedown", (e) => {
-    if (!keyGuard.armed()) return;
-    engage();
-    const target = e.target instanceof Element ? e.target : null;
-    if (target?.closest("input, textarea, select, button, [tabindex]")) return;
-    e.preventDefault();
+  /** The caret at the end of the input. */
+  function caretToEnd(): void {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  // A click in a wake-opened box engages it. A click on a bare part of the
+  // box (the hint row, the preview) puts the caret in the input, guard or
+  // not: a real click activates the window first, so by now the focus
+  // handler may already have engaged the box.
+  box.addEventListener("mousedown", (e) => {
+    engage();
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("input, textarea, select, button, label, a, [tabindex]")) return;
+    if (document.activeElement === input) return;
+    e.preventDefault();
+    caretToEnd();
   });
 
   box.addEventListener("pointerdown", () => {
@@ -1074,8 +1081,11 @@ export function mountCapture(root: HTMLElement): void {
     // page restores it when the window takes focus; the box hides on blur,
     // so every re-entry goes through one of them (or a click in the box).
     if (keyGuard.armed() && performance.now() - wakeAt >= WAKE_FOCUS_GRACE_MS) {
-      // After the grace period a focus is the user clicking or Alt+Tabbing in.
+      // After the grace period a focus is the user clicking or Alt+Tabbing
+      // into a wake-opened box (whose input the wake left unfocused): engage
+      // and put the caret in the input, as the hotkey would.
       engage();
+      if (picker.hidden) caretToEnd();
     }
   });
 

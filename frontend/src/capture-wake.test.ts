@@ -214,7 +214,60 @@ describe("capture box wake mode", () => {
     window.dispatchEvent(new Event("focus")); // the user clicked or alt-tabbed in
     spy.mockRestore();
     expect(h.fake.calls).toContain("focusGained");
-    expect(document.activeElement).not.toBe(input()); // only the open handlers and a click place the caret
+    expect(document.activeElement).toBe(input()); // engaged: the caret goes to the input
+    expect(input().selectionStart).toBe(input().value.length);
+  });
+
+  it("a click on a bare part after the window took focus leaves the caret in the input", async () => {
+    vi.useFakeTimers();
+    try {
+      h.handlers.get("capture:wake")!(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      h.fake.host.insert("buy milk");
+      await vi.advanceTimersByTimeAsync(5000);
+      // A real click: the window is activated first, then the mousedown arrives.
+      window.dispatchEvent(new Event("focus"));
+      expect(wakeHint().hidden).toBe(true); // past the grace: the focus engaged, the guard is off
+      input().blur(); // whatever the focus did, the click must still leave a caret
+      const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      document.querySelector<HTMLElement>(".cap-field")!.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(input());
+      expect(input().selectionStart).toBe("buy milk".length);
+      expect(wakeHint().hidden).toBe(true);
+      expect(press(input(), "a").defaultPrevented).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a focus inside the grace window keeps the guard and leaves the input alone", async () => {
+    vi.useFakeTimers();
+    try {
+      h.handlers.get("capture:wake")!(undefined);
+      await vi.advanceTimersByTimeAsync(100);
+      window.dispatchEvent(new Event("focus"));
+      expect(document.activeElement).not.toBe(input());
+      expect(wakeHint().hidden).toBe(false);
+      expect(press(input(), "a").defaultPrevented).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a click on a bare part of a normal box puts the caret back in the input", () => {
+    input().blur();
+    document.querySelector<HTMLElement>("#cap-preview")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(input());
+  });
+
+  it("a click on a control keeps its own focus", () => {
+    input().blur();
+    const chip = document.querySelector<HTMLElement>(".prio-chip")!;
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    chip.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(input());
   });
 
   it("a window focus never puts the caret in the input by itself", async () => {
