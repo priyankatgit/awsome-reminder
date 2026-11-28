@@ -23,6 +23,7 @@ type Occurrence struct {
 	At     time.Time // the occurrence (due time, snooze end, nudge time, sweep time); push adds grace
 	Due    time.Time // the item's occurrence due time (zero for a reply without due / sweep)
 	People []string  // sweep only
+	Snooze bool      // At is a snooze end (a snoozed owed reply keeps Kind OccNudge)
 }
 
 // Upcoming is pure: the occurrences with At in [from, to], sorted by At, then
@@ -48,9 +49,9 @@ func Upcoming(items []model.Item, r Rules, from, to time.Time) []Occurrence {
 		if owed {
 			replies = append(replies, it)
 		}
-		add := func(kind string, at, due time.Time) {
+		add := func(kind string, at, due time.Time, snooze bool) {
 			if !at.Before(from) && !at.After(to) {
-				out = append(out, Occurrence{Kind: kind, ItemID: it.ID, At: at, Due: due})
+				out = append(out, Occurrence{Kind: kind, ItemID: it.ID, At: at, Due: due, Snooze: snooze})
 			}
 		}
 		snoozeKind := OccReminder
@@ -64,9 +65,9 @@ func Upcoming(items []model.Item, r Rules, from, to time.Time) []Occurrence {
 		if it.DueAt != nil {
 			due = *it.DueAt
 			if !snoozed.IsZero() && !snoozed.Before(due) {
-				add(snoozeKind, snoozed, due)
+				add(snoozeKind, snoozed, due, true)
 			} else {
-				add(OccReminder, due, due)
+				add(OccReminder, due, due, false)
 			}
 			if it.RRule != "" {
 				loc := recur.Loc(it.TZ, r.loc())
@@ -77,21 +78,22 @@ func Upcoming(items []model.Item, r Rules, from, to time.Time) []Occurrence {
 						break
 					}
 					cursor = next
-					if !snoozed.IsZero() && !next.After(snoozed) {
+					// next == due: the first occurrence, already added above.
+					if next.Equal(due) || (!snoozed.IsZero() && !next.After(snoozed)) {
 						continue
 					}
-					add(OccReminder, next, next)
+					add(OccReminder, next, next, false)
 				}
 			}
 		} else if owed && !snoozed.IsZero() {
-			add(OccNudge, snoozed, time.Time{})
+			add(OccNudge, snoozed, time.Time{}, true)
 		}
 		if owed {
 			nudgeTimes(it, r, snoozed, func(at time.Time) bool {
 				if at.After(to) {
 					return false
 				}
-				add(OccNudge, at, due)
+				add(OccNudge, at, due, false)
 				return true
 			})
 		}

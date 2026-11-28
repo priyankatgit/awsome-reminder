@@ -2,7 +2,9 @@ package push
 
 import (
 	"context"
+	"encoding/json"
 	"mime"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -79,11 +81,122 @@ func TestDesiredReminderGrace(t *testing.T) {
 	}
 }
 
+// The phone shows a push when it is delivered, so the date is only shown
+// when delivery (occurrence + grace) falls on another local day.
 func TestDesiredOtherDayTitle(t *testing.T) {
 	due := time.Date(2026, 11, 30, 9, 5, 0, 0, utc)
 	m := only(t, Desired([]model.Item{reminder("a", "x", due)}, tRule, cfg(), tNow))
-	if m.Title != "⏰ Mon 30 Nov 09:05 · x" {
+	if m.Title != "⏰ 09:05 · x" {
 		t.Errorf("title = %q", m.Title)
+	}
+	late := time.Date(2026, 11, 29, 23, 59, 0, 0, utc) // delivered 00:01 on the 30th
+	m = only(t, Desired([]model.Item{reminder("b", "y", late)}, tRule, cfg(), tNow))
+	if m.Title != "⏰ Sun 29 Nov 23:59 · y" {
+		t.Errorf("title = %q", m.Title)
+	}
+}
+
+// Crossing midnight must not change any message (every computer would
+// republish all of tomorrow's pushes).
+func TestDesiredStableAcrossMidnight(t *testing.T) {
+	due := time.Date(2026, 11, 29, 9, 0, 0, 0, utc)
+	items := []model.Item{reminder("a", "x", due)}
+	before := only(t, Desired(items, tRule, cfg(), time.Date(2026, 11, 28, 23, 59, 0, 0, utc)))
+	after := only(t, Desired(items, tRule, cfg(), time.Date(2026, 11, 29, 0, 1, 0, 0, utc)))
+	if Hash(before) != Hash(after) {
+		t.Errorf("message changed across midnight: %+v / %+v", before, after)
+	}
+}
+
+// A snoozed reply with a due time is pushed at the snooze end even with
+// replies off, as a reminder, under the nudge seq its card pairs with.
+func TestDesiredSnoozedReplyWithDue(t *testing.T) {
+	due := tNow.Add(time.Hour)
+	until := tNow.Add(3 * time.Hour)
+	rep := model.Item{ID: "01R", Kind: model.KindTodo, Text: "answer budget", Reply: true, OwedTo: "Priya",
+		Status: model.StatusOpen, CreatedAt: tNow.Add(-time.Hour), DueAt: &due, SnoozeUntil: &until, TZ: "UTC"}
+	var got []Message
+	for _, m := range Desired([]model.Item{rep}, tRule, cfg(), tNow) {
+		got = append(got, m)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %+v, want only the snooze end", got)
+	}
+	m := got[0]
+	if m.Seq != SeqFor("01R", scheduler.OccNudge, until) || !m.DeliverAt.Equal(until.Add(2*time.Minute)) {
+		t.Errorf("seq/deliver = %s %v", m.Seq, m.DeliverAt)
+	}
+	if m.Title != "⏰ 13:00 · answer budget" || m.Tags[0] != "alarm_clock" || len(m.Actions) != 2 {
+		t.Errorf("m = %+v", m)
+	}
+	if !strings.Contains(m.Actions[0].Body, `"occ":`+strconv.FormatInt(due.Unix(), 10)) {
+		t.Errorf("done body = %s", m.Actions[0].Body)
+	}
+	// Without a due time it stays a reply nudge (opt-in).
+	rep.DueAt = nil
+	if n := len(Desired([]model.Item{rep}, tRule, cfg(), tNow)); n != 0 {
+		t.Errorf("undated snoozed reply pushed with replies off: %d", n)
+	}
+}
+
+// The phone's snoozed re-buzz carries only Done: the Snooze action sends an
+// X-Actions header holding exactly the Done action (with the token).
+func TestDesiredSnoozeRebuzzOnlyDone(t *testing.T) {
+	for _, hide := range []bool{false, true} {
+		c := cfg()
+		c.HideText, c.Token = hide, "tk_x"
+		m := only(t, Desired([]model.Item{reminder("01A", "SECRETWORD plan", tNow.Add(time.Hour))}, tRule, c, tNow))
+		done, snooze := m.Actions[0], m.Actions[1]
+		var inner []pushtest.Action
+		if err := json.Unmarshal([]byte(snooze.Headers["X-Actions"]), &inner); err != nil {
+			t.Fatalf("hide=%v: X-Actions %q: %v", hide, snooze.Headers["X-Actions"], err)
+		}
+		if len(inner) != 1 {
+			t.Fatalf("hide=%v: inner actions %+v", hide, inner)
+		}
+		a := inner[0]
+		if a.Action != "http" || a.Label != "Done" || a.URL != done.URL || a.Method != "POST" || a.Body != done.Body ||
+			!a.Clear || a.Headers["Authorization"] != "Bearer tk_x" {
+			t.Errorf("hide=%v: inner = %+v", hide, a)
+		}
+		if hide && strings.Contains(snooze.Headers["X-Actions"], "SECRETWORD") {
+			t.Errorf("text leaked in %q", snooze.Headers["X-Actions"])
+		}
+	}
+	m := only(t, Desired([]model.Item{reminder("01A", "x", tNow.Add(time.Hour))}, tRule, cfg(), tNow))
+	if strings.Contains(m.Actions[1].Headers["X-Actions"], "Authorization") {
+		t.Errorf("Authorization without a token: %s", m.Actions[1].Headers["X-Actions"])
+	}
+
+	// End to end: publish, then press Snooze as the phone would (the
+	// action's request as the server stored it); the re-buzz has only Done.
+	srv := pushtest.New()
+	defer srv.Close()
+	c := cfg()
+	c.Server = srv.URL
+	m = only(t, Desired([]model.Item{reminder("01A", "x", tNow.Add(time.Hour))}, tRule, c, tNow))
+	if err := (Client{Server: srv.URL, Topic: c.Topic, HTTP: srv.Client()}).Schedule(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	sa := srv.Pending()[0].Actions[1]
+	req, _ := http.NewRequest(sa.Method, sa.URL, strings.NewReader(sa.Body))
+	for k, v := range sa.Headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	var rebuzz *pushtest.Message
+	for _, p := range srv.Pending() {
+		if p.Seq == m.Seq+"s" {
+			rebuzz = &p
+		}
+	}
+	if resp.StatusCode != http.StatusOK || rebuzz == nil || len(rebuzz.Actions) != 1 || rebuzz.Actions[0].Label != "Done" ||
+		rebuzz.Actions[0].Body != m.Actions[0].Body || !strings.HasPrefix(rebuzz.Title, "Snoozed · ") {
+		t.Fatalf("status %d, re-buzz %+v", resp.StatusCode, rebuzz)
 	}
 }
 

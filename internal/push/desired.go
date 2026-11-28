@@ -68,7 +68,10 @@ func Desired(items []model.Item, r scheduler.Rules, c Config, now time.Time) map
 	}
 	out := map[string]Message{}
 	for _, occ := range scheduler.Upcoming(items, r, lo.Add(-c.Grace), hi.Add(-c.Grace)) {
-		if occ.Kind != scheduler.OccReminder && !c.Replies {
+		// A snoozed reply with a due time is pushed like a reminder even
+		// with replies off (its Kind stays OccNudge, so its card pairs).
+		asReminder := occ.Kind == scheduler.OccReminder || (occ.Snooze && !occ.Due.IsZero() && !c.Replies)
+		if !asReminder && !c.Replies {
 			continue
 		}
 		deliver := occ.At.Add(c.Grace)
@@ -84,7 +87,7 @@ func Desired(items []model.Item, r scheduler.Rules, c Config, now time.Time) map
 			if !ok {
 				continue
 			}
-			m = buildItem(it, occ, c, now)
+			m = buildItem(it, occ, c, deliver, asReminder)
 			m.Seq = SeqFor(occ.ItemID, occ.Kind, occ.At)
 			m.Actions = actions(c, occ, m)
 		}
@@ -107,7 +110,8 @@ func buildSweep(occ scheduler.Occurrence, c Config) Message {
 	return Message{Title: title, Body: body, Priority: 3, Tags: []string{"speech_balloon"}}
 }
 
-func buildItem(it model.Item, occ scheduler.Occurrence, c Config, now time.Time) Message {
+// buildItem renders an item's push; asReminder picks the reminder style.
+func buildItem(it model.Item, occ scheduler.Occurrence, c Config, deliver time.Time, asReminder bool) Message {
 	loc := c.Loc
 	if l, err := time.LoadLocation(it.TZ); err == nil && it.TZ != "" {
 		loc = l
@@ -124,11 +128,14 @@ func buildItem(it model.Item, occ scheduler.Occurrence, c Config, now time.Time)
 	}
 	text = strings.TrimSpace(text)
 	var prefix string // before the text in the body
-	if occ.Kind == scheduler.OccReminder {
+	if asReminder {
 		m.Tags = []string{"alarm_clock"}
+		// The phone shows the push at delivery, so the date is only needed
+		// when delivery falls on another local day (never "now": the
+		// message must not change at midnight).
 		stamp := clock
-		ny, nm, nd := now.In(loc).Date()
-		if y, mo, d := at.Date(); y != ny || mo != nm || d != nd {
+		dy, dm, dd := deliver.In(loc).Date()
+		if y, mo, d := at.Date(); y != dy || mo != dm || d != dd {
 			stamp = at.Format("Mon 2 Jan ") + clock
 		}
 		if c.HideText {
@@ -168,18 +175,19 @@ func actions(c Config, occ scheduler.Occurrence, m Message) []Action {
 		Label: "Done", Method: "POST", URL: base.url(c.Topic + "-ctl"), Clear: true,
 		Body: fmt.Sprintf(`{"op":"done","id":%s,"occ":%d}`, jsonString(itemID), due.Unix()),
 	}
+	if c.Token != "" {
+		done.Headers = map[string]string{"Authorization": "Bearer " + c.Token}
+	}
+	// The snoozed re-buzz carries only Done (no second snooze).
+	rebuzz, _ := actionsJSON([]Action{done}) // plain strings: can't fail
 	snooze := Action{
 		Label: "Snooze 1h", Method: "POST", URL: base.url(c.Topic, m.Seq+"s"), Clear: true,
-		Body:    clip(m.Body, maxSnoozeBody),
-		Headers: map[string]string{"X-Delay": "1h", "X-Title": mime.BEncoding.Encode("UTF-8", oneLine("Snoozed · "+m.Title))},
+		Body: clip(m.Body, maxSnoozeBody),
+		Headers: map[string]string{"X-Delay": "1h", "X-Title": mime.BEncoding.Encode("UTF-8", oneLine("Snoozed · "+m.Title)),
+			"X-Actions": rebuzz},
 	}
 	if c.Token != "" {
-		for _, a := range []*Action{&done, &snooze} {
-			if a.Headers == nil {
-				a.Headers = map[string]string{}
-			}
-			a.Headers["Authorization"] = "Bearer " + c.Token
-		}
+		snooze.Headers["Authorization"] = "Bearer " + c.Token
 	}
 	return []Action{done, snooze}
 }

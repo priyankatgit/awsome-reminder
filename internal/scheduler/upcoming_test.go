@@ -41,6 +41,13 @@ func TestUpcoming(t *testing.T) {
 
 	lateReply := reply("l", nov(25, 17, 45))
 
+	dailyLater := rem("e", nov(25, 17, 0), created) // due inside the window
+	dailyLater.RRule, dailyLater.TZ = "FREQ=DAILY", "UTC"
+
+	snoozedDueReply := reply("p", upNow)
+	snoozedDueReply.DueAt = ptrT(nov(25, 15, 0))
+	snoozedDueReply.SnoozeUntil = ptrT(nov(25, 16, 0))
+
 	atFrom := rem("f", upNow, created)
 	atTo := rem("g", nov(26, 10, 0), created)
 	afterTo := rem("h", nov(26, 10, 0).Add(time.Second), created)
@@ -67,8 +74,12 @@ func TestUpcoming(t *testing.T) {
 			[]Occurrence{rem1("a", nov(25, 17, 0))}},
 		{"daily recurring", []model.Item{daily}, upRules(false), upNow.Add(71 * time.Hour),
 			[]Occurrence{rem1("d", nov(26, 9, 0)), rem1("d", nov(27, 9, 0)), rem1("d", nov(28, 9, 0))}},
+		{"daily recurring due in the window lists it once", []model.Item{dailyLater}, upRules(false), upNow.Add(71 * time.Hour),
+			[]Occurrence{rem1("e", nov(25, 17, 0)), rem1("e", nov(26, 17, 0)), rem1("e", nov(27, 17, 0))}},
 		{"snooze replaces due time", []model.Item{snoozed}, upRules(false), upNow.Add(71 * time.Hour),
-			[]Occurrence{{Kind: OccReminder, ItemID: "s", At: nov(25, 18, 0), Due: nov(25, 17, 0)}}},
+			[]Occurrence{{Kind: OccReminder, ItemID: "s", At: nov(25, 18, 0), Due: nov(25, 17, 0), Snooze: true}}},
+		{"snoozed reply with a due time is a snooze nudge", []model.Item{snoozedDueReply}, upRules(false), nov(25, 23, 0),
+			[]Occurrence{{Kind: OccNudge, ItemID: "p", At: nov(25, 16, 0), Due: nov(25, 15, 0), Snooze: true}}},
 		{"done and undated todo", []model.Item{done, todo}, upRules(false), upNow.Add(71 * time.Hour), nil},
 		{"reply nudges", []model.Item{r1}, upRules(false), sat10,
 			[]Occurrence{nudge("r", nov(25, 12, 0)), nudge("r", nov(26, 9, 0)), nudge("r", nov(27, 9, 0))}},
@@ -79,7 +90,7 @@ func TestUpcoming(t *testing.T) {
 				nudge("r", nov(27, 9, 0)), sweepAt(nov(27, 17, 30), "Priya"),
 			}},
 		{"snoozed reply comes back as a nudge", []model.Item{snoozedReply}, upRules(false), sat10,
-			[]Occurrence{nudge("q", nov(26, 11, 0)), nudge("q", nov(27, 9, 0))}},
+			[]Occurrence{{Kind: OccNudge, ItemID: "q", At: nov(26, 11, 0), Snooze: true}, nudge("q", nov(27, 9, 0))}},
 		{"no sweep for replies saved after it", []model.Item{lateReply}, upRules(true), nov(26, 12, 0),
 			[]Occurrence{nudge("l", nov(25, 19, 45)), nudge("l", nov(26, 9, 0))}},
 		{"window bounds", []model.Item{afterTo, atTo, atFrom}, upRules(false), nov(26, 10, 0),
