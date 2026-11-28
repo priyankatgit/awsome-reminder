@@ -32,9 +32,10 @@ vi.mock("./api", () => ({
     resizeCapture: async () => {},
     withDue: async (input: string) => input,
     deleteItem: async () => {},
+    voice: { wakeStatus: async () => ({ state: "off", enabled: false, chime: true }) },
   },
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
-  events: { captureOpen: "capture:open", replyOpen: "reply:open" },
+  events: { captureOpen: "capture:open", replyOpen: "reply:open", captureWake: "capture:wake", wakeStatus: "voice:wake-status" },
   on: (name: string, fn: (data: unknown) => void) => {
     h.handlers.set(name, fn);
     return () => {};

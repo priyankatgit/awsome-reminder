@@ -1,18 +1,24 @@
 // Capture box (#capture): one-line input with a live parse preview.
 // Layout and behaviour follow the "Capture box" section of the UI guide.
-import { api, errorText, events, on, type Preview, type ReplyPrefill } from "./api";
+import { api, errorText, events, on, type Preview, type ReplyPrefill, type WakeStatus } from "./api";
 import { el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
+import { KeyGuard } from "./key-guard";
 import { canAnimate, easing, pop, ring, tokenNumber } from "./motion";
 import { priorityLabel, setPriorityToken, type Priority } from "./priority";
 import { mountReplyMode } from "./reply-mode";
 import { ReviewList, saveSequential } from "./review-list";
-import { mountVoice } from "./voice";
+import { mountVoice, playChime } from "./voice";
+import type { SessionMode } from "./voice-segment";
+import type { SessionEnd } from "./voice-session";
 
 const PREVIEW_DEBOUNCE_MS = 80;
 const NOTE_MS = 5000; // the Saved/Discarded note with Undo
 const CONFIRM_MS = 3000; // the discard confirm after the first Esc
 const SESSION_TEXT_CHARS = 200; // recent dictation passed as the whisper prompt
+// A window focus this soon after a wake show is the OS focusing the shown
+// box (where it cannot show without focus), not the user engaging.
+const WAKE_FOCUS_GRACE_MS = 500;
 
 const tasks = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
@@ -92,6 +98,7 @@ const TEMPLATE = `
         <canvas class="cap-wave" id="cap-wave" aria-hidden="true"></canvas>
         <span class="cap-timer" id="cap-timer">0:00</span>
       </span>
+      <span class="cap-wake-hint" id="cap-wake-hint" hidden></span>
       <span class="cap-voice-multi">“new task” next</span>
       <span class="cap-voice-multi">“save all” done</span>
       <span class="cap-voice-single">auto-stops after a pause</span>
@@ -122,6 +129,7 @@ export function mountCapture(root: HTMLElement): void {
   const hintSave = root.querySelector<HTMLElement>("#cap-hint-save")!;
   const voiceSave = root.querySelector<HTMLElement>("#cap-voice-save")!;
   const voiceSaveText = root.querySelector<HTMLElement>("#cap-voice-save-text")!;
+  const wakeHint = root.querySelector<HTMLElement>("#cap-wake-hint")!;
   noteUndo.innerHTML = `${icons.undo}<span>Undo</span>`;
 
   // The preview row keeps the reminder badge and its announcement across
@@ -174,6 +182,15 @@ export function mountCapture(root: HTMLElement): void {
   let noteTimer: number | undefined; // the Saved/Discarded note is showing
   let noteAction: (() => void | Promise<void>) | null = null;
   let leftover = false; // the box opened with rows left from a voice session
+  let leftoverText = false; // ...and the input holds text from a wake session
+
+  // Wake mode ("Hey Awesome"): the box shows without focus and the guard
+  // keeps stray typing out until the user engages (click, hotkey, Ctrl+M).
+  const keyGuard = new KeyGuard();
+  let wakeAt = -Infinity; // performance.now() of the last wake show
+  let wakeGen = 0; // bumped by every hide: a wake still starting gives up
+  let wakeDraft = false; // a wake session hid the box with its draft kept
+  let wakeChime = true; // WakeStatus.chime, kept current by events.wakeStatus
 
   function setLead(name: IconName): void {
     leadIcon = name;
@@ -190,6 +207,36 @@ export function mountCapture(root: HTMLElement): void {
   function showError(msg: string): void {
     errorRow.textContent = msg;
     errorRow.hidden = msg === "";
+  }
+
+  /** The wake hint: "Click or press <hotkey> to type", keycaps for the hotkey. */
+  function renderWakeHint(hotkey: string): void {
+    const parts: (Node | string)[] = [hotkey ? "Click or press " : "Click to type"];
+    if (hotkey) {
+      hotkey.split("+").forEach((k, i) => {
+        if (i > 0) parts.push(el("span", "keycap-plus", "+"));
+        parts.push(el("kbd", undefined, k));
+      });
+      parts.push(" to type");
+    }
+    wakeHint.replaceChildren(...parts);
+  }
+
+  function armGuard(): void {
+    keyGuard.arm();
+    wakeHint.hidden = false;
+  }
+
+  function releaseGuard(): void {
+    keyGuard.release();
+    wakeHint.hidden = true;
+  }
+
+  /** The user engaged with a wake-opened box: typing and focused rules from now on. */
+  function engage(): void {
+    if (!keyGuard.armed()) return;
+    releaseGuard();
+    voice.focusGained();
   }
 
   /** Restarts a one-shot CSS animation class and drops it when it ends. */
@@ -329,6 +376,7 @@ export function mountCapture(root: HTMLElement): void {
     clearConfirm();
     hideNote();
     leftover = false;
+    leftoverText = false;
     showError("");
     closePicker(false);
     if (input.value.trim() === "") {
@@ -398,6 +446,8 @@ export function mountCapture(root: HTMLElement): void {
    * kept so open() can cancel it if the box is reopened meanwhile.
    */
   function hide(): void {
+    wakeGen++;
+    releaseGuard();
     voice.cancel();
     endDraft = true;
     box.classList.add("is-hidden");
@@ -409,8 +459,12 @@ export function mountCapture(root: HTMLElement): void {
     }, motionMs("--dur-exit"));
   }
 
-  function open(): void {
+  /** The hotkey (and a wake, with focus false: the input is left unfocused). */
+  function open(focus = true): void {
     window.clearTimeout(hideTimer); // a save/Esc hide still pending must not hide the new box
+    const fromWake = wakeDraft;
+    wakeDraft = false;
+    const live = box.dataset.voice === "listening" || box.dataset.voice === "transcribing";
     // Keep a draft left by blur; drop one already saved or dismissed, and a
     // reply draft (the capture hotkey always opens a normal box).
     reset(!endDraft && !reply.active);
@@ -418,9 +472,13 @@ export function mountCapture(root: HTMLElement): void {
     box.classList.remove("is-hidden", "is-entering");
     void box.offsetWidth; // restart the enter animation
     box.classList.add("is-entering");
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    leftover = !reply.active && list.items().length > 0;
+    if (focus) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    // Text and rows a session left behind; not the rows of one still running.
+    leftoverText = !live && fromWake && !reply.active && input.value.trim() !== "";
+    leftover = !live && !reply.active && (list.items().length > 0 || leftoverText);
     updateReview();
     if (input.value.trim() !== "") void runPreview();
   }
@@ -436,7 +494,8 @@ export function mountCapture(root: HTMLElement): void {
   function updateReview(): void {
     const rows = reply.active ? 0 : list.items().length;
     reviewBox.hidden = rows === 0;
-    if (rows === 0) leftover = false;
+    const kept = rows + (leftoverText && input.value.trim() !== "" ? 1 : 0); // left by a session
+    if (kept === 0) leftover = false;
     const n = reply.active ? 0 : pending();
     hintSave.textContent = n > 1 ? `save ${n}` : "save";
     // The listening hint row shows it too, only when Enter would save several.
@@ -445,8 +504,8 @@ export function mountCapture(root: HTMLElement): void {
     if (confirmTimer !== undefined && rows > 0) {
       hintStatus.textContent = `Discard ${tasks(n)}? Esc again to discard · ↵ to save`;
       hintStatus.hidden = false;
-    } else if (leftover && rows > 0) {
-      hintStatus.textContent = `${rows} unsaved ${rows === 1 ? "task" : "tasks"} from voice`;
+    } else if (leftover && kept > 0) {
+      hintStatus.textContent = `${kept} unsaved ${kept === 1 ? "task" : "tasks"} from voice`;
       hintStatus.hidden = false;
     } else {
       hintStatus.hidden = true;
@@ -546,6 +605,7 @@ export function mountCapture(root: HTMLElement): void {
     if (reply.active || text === "") return 0;
     clearConfirm();
     leftover = false;
+    leftoverText = false;
     input.value = "";
     list.add(text);
     void runPreview();
@@ -826,13 +886,95 @@ export function mountCapture(root: HTMLElement): void {
     multi: () => !reply.active,
     sessionText,
     showNote: (text: string) => showNote(text),
+    sessionEnded: wakeEnded,
   });
+
+  /**
+   * A session ended. One the user never engaged with (still "wake") hides
+   * the box and keeps whatever it left as the draft: a quiet wake leaves
+   * nothing and hides with no error; text or rows show up on the next open
+   * as "N unsaved tasks from voice". A spoken save or cancel of something
+   * keeps the box for its Undo note (the save or discard runs right after
+   * this), which hides it when it ends; a mic error stays to be read.
+   */
+  function wakeEnded(mode: SessionMode, end: SessionEnd | null): void {
+    if (mode !== "wake") return;
+    if ((end === "save" || end === "cancel") && pending() > 0) return;
+    if (end === "abort") return;
+    hideKeepingDraft();
+  }
+
+  /** Hides like a blur does: the draft stays for the next open. */
+  function hideKeepingDraft(): void {
+    wakeGen++;
+    releaseGuard();
+    voice.cancel();
+    closePicker(false);
+    wakeDraft = !reply.active && pending() > 0;
+    box.classList.add("is-hidden");
+    window.clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => void api.hideCapture(), motionMs("--dur-exit"));
+  }
+
+  /**
+   * "Hey Awesome": Go showed the box without focus. Open it as the hotkey
+   * would (a hidden reply draft gives way to a normal box), keep the
+   * keyboard out until the user engages, chime, then listen in wake mode.
+   */
+  async function openForWake(): Promise<void> {
+    open(false);
+    input.blur(); // the page may still have it focused from the last open
+    armGuard();
+    wakeAt = performance.now();
+    const gen = ++wakeGen;
+    // Nothing is awaited before the chime: every step here delays the mic
+    // (the wake-to-listening budget is 500 ms). The hint row shows only once
+    // listening, by when the hotkey text has arrived.
+    void api
+      .getSettings()
+      .then((st) => renderWakeHint(st.hotkey))
+      .catch(() => renderWakeHint(""));
+    if (wakeChime) {
+      try {
+        await playChime();
+      } catch (err) {
+        // The recorder meets the same block and reports it as a mic error.
+        console.warn("wake chime:", err);
+      }
+      if (gen !== wakeGen) return;
+    }
+    voice.startSession(keyGuard.armed() ? "wake" : "focused");
+  }
+
+  box.addEventListener("mousedown", engage);
 
   box.addEventListener("pointerdown", () => {
     if (confirmTimer === undefined) return;
     clearConfirm();
     updateReview();
   });
+
+  // The key guard runs first (capture phase), so a blocked key reaches
+  // neither the input's own handler (Enter saves, Tab opens the picker) nor
+  // the shortcuts below.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!keyGuard.armed()) return;
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
+        // Ctrl+M engages; it does not stop the session the user is joining.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        engage();
+        input.focus();
+        return;
+      }
+      if (keyGuard.allows(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
+    true,
+  );
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" && confirmTimer !== undefined) {
@@ -855,6 +997,12 @@ export function mountCapture(root: HTMLElement): void {
     }
     if (e.key !== "Escape") return;
     e.preventDefault();
+    if (keyGuard.armed()) {
+      // A wake the user never engaged with: stop listening and hide; what
+      // was dictated stays as the draft.
+      hideKeepingDraft();
+      return;
+    }
     if (voice.escape()) return;
     if (!picker.hidden) closePicker(true);
     else if (busy) return;
@@ -869,12 +1017,21 @@ export function mountCapture(root: HTMLElement): void {
   // half-typed thought survives; the box starts invisible on the next show
   // and open() restores it with the caret at the end.
   window.addEventListener("blur", () => {
+    wakeGen++;
+    releaseGuard();
     box.classList.add("is-hidden");
     closePicker(false);
     voice.cancel(); // never keep the mic open behind a hidden box
   });
   window.addEventListener("focus", () => {
     box.classList.remove("is-hidden");
+    if (keyGuard.armed()) {
+      // A wake show never focuses the box on Windows, so a focus there means
+      // the user clicked or Alt+Tabbed into it. Elsewhere the OS may focus
+      // the box as it shows it: not engagement within the grace period.
+      if (performance.now() - wakeAt < WAKE_FOCUS_GRACE_MS) return;
+      engage();
+    }
     if (!picker.hidden) return;
     // Go focuses the window after reply:open: keep an open person editor.
     if (reply.editing) reply.editPerson();
@@ -920,7 +1077,24 @@ export function mountCapture(root: HTMLElement): void {
     void runPreview();
   }
 
-  on(events.captureOpen, open);
+  on(events.captureOpen, () => {
+    // The hotkey on a wake-opened box: focused rules, keep listening. Also
+    // when an Esc already hid it, so a session still draining does not hide
+    // the box the user just opened.
+    releaseGuard();
+    voice.focusGained();
+    open();
+  });
+  on(events.captureWake, () => void openForWake());
+  on<WakeStatus>(events.wakeStatus, (st) => {
+    wakeChime = st.chime;
+  });
+  void api.voice
+    .wakeStatus()
+    .then((st) => {
+      wakeChime = st.chime;
+    })
+    .catch(() => undefined);
   on<ReplyPrefill>(events.replyOpen, openReply);
   renderPreview(null);
   input.focus();

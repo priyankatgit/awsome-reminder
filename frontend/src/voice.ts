@@ -7,7 +7,7 @@ import { api, errorText, events, on, type Cancellable, type VoiceStatus } from "
 import { el } from "./dom";
 import { icons } from "./icons";
 import { Segmenter, type PcmSegment, type SessionMode } from "./voice-segment";
-import { VoiceSession, type SessionHost, type SessionPhase } from "./voice-session";
+import { VoiceSession, type SessionEnd, type SessionHost, type SessionPhase } from "./voice-session";
 
 const TARGET_RATE = 16000;
 const LEVEL_WINDOW_MS = 33; // one RMS level (and one VAD step) per ~frame
@@ -19,6 +19,15 @@ const SPEECH_OVER_FLOOR = 3;
 const INITIAL_FLOOR_RMS = 0.003;
 const READY_NOTE_MS = 2500;
 const TICK_MS = 250; // timer refresh and session end check
+// Chromium leaves resume() pending while autoplay is blocked: give up then.
+const RESUME_WAIT_MS = 500;
+const CHIME_NOTES = [660, 880]; // Hz, one after the other
+const CHIME_NOTE_S = 0.07;
+const CHIME_FADE_S = 0.01;
+const CHIME_GAIN = 0.15;
+const WAKE_LABEL = "Listening — say your task";
+const WAKE_NOT_READY = "Dictation isn't set up. Click here, then press Ctrl+M to set it up.";
+const WAKE_INSTALLING = "Voice is still downloading. Try again when it's ready.";
 
 export type StopReason = "user" | "silence" | "limit" | "nothing";
 
@@ -56,6 +65,62 @@ function toInt16(f: Float32Array): Int16Array {
     out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
   return out;
+}
+
+/**
+ * Resumes ctx and checks that it runs. A wake opens the box with no user
+ * gesture, and Chromium (WebView2) or WebKit may keep an AudioContext
+ * suspended then, which silences the chime and the recorder alike (spec
+ * "Audio without a user gesture"). Rejects if it is not running.
+ */
+async function resumeAudio(ctx: AudioContext): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    ctx.resume(),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, RESUME_WAIT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (ctx.state !== "running") throw new Error(`audio is ${ctx.state} (no user gesture yet?)`);
+}
+
+/**
+ * The wake chime: two soft sine notes (660 Hz then 880 Hz, 70 ms each, 10 ms
+ * fades, gain 0.15), made with WebAudio so there is no asset. Resolves when
+ * it has played. Without ctx it makes its own AudioContext and closes it
+ * (without waiting for the close: the mic opens right after).
+ */
+export async function playChime(ctx?: AudioContext): Promise<void> {
+  const ac = ctx ?? new AudioContext();
+  try {
+    await resumeAudio(ac);
+    const t0 = ac.currentTime;
+    let last: OscillatorNode | undefined;
+    CHIME_NOTES.forEach((hz, i) => {
+      const start = t0 + i * CHIME_NOTE_S;
+      const end = start + CHIME_NOTE_S;
+      const gain = ac.createGain();
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(CHIME_GAIN, start + CHIME_FADE_S);
+      gain.gain.setValueAtTime(CHIME_GAIN, end - CHIME_FADE_S);
+      gain.gain.linearRampToValueAtTime(0, end);
+      gain.connect(ac.destination);
+      const osc = ac.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      osc.connect(gain);
+      osc.start(start);
+      osc.stop(end);
+      last = osc;
+    });
+    await new Promise<void>((resolve) => {
+      if (last) last.onended = () => resolve();
+      else resolve();
+    });
+  } finally {
+    if (!ctx) void ac.close().catch(() => undefined);
+  }
 }
 
 /** What to tell the user when the mic cannot be opened. */
@@ -121,6 +186,9 @@ export class Recorder {
         this.ctx = new AudioContext();
       }
       this.rate = this.ctx.sampleRate;
+      // A wake starts this without a user gesture: a suspended context would
+      // deliver no audio at all, so fail here with the mic error instead.
+      await resumeAudio(this.ctx);
       const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: "application/javascript" }));
       try {
         await this.ctx.audioWorklet.addModule(url);
@@ -345,6 +413,11 @@ export interface VoiceHost {
   sessionText(): string;
   /** A short status note with no Undo ("Stopped after 5 minutes"). */
   showNote(text: string): void;
+  /**
+   * A session is over (its last segment landed). mode is the mode it ended
+   * in: a wake session the user engaged with (focusGained) ends "focused".
+   */
+  sessionEnded(mode: SessionMode, end: SessionEnd | null): void;
 }
 
 export interface VoiceControl {
@@ -544,7 +617,11 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     if (gen !== hiddenGen) return; // the box was blurred or hidden meanwhile
     if (!st || session || (state !== "idle" && state !== "ready-note")) return;
     if (st.state !== "ready") {
-      if (mode === "wake") return; // no setup panel behind an unfocused box
+      if (mode === "wake") {
+        // No setup panel behind an unfocused box: say why nothing listens.
+        host.showError(st.state === "installing" ? WAKE_INSTALLING : WAKE_NOT_READY);
+        return;
+      }
       setState(st.state === "installing" ? "installing" : "consent");
       renderPanel();
       return;
@@ -572,6 +649,7 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     session = s;
     host.box.dataset.dictation = host.multi() ? "multi" : "single";
     setState("listening");
+    if (mode === "wake") listenLabel.replaceChildren(WAKE_LABEL);
     announce("Listening");
     try {
       await rec.start(
@@ -583,7 +661,7 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
       if (session !== s) return;
       s.abort();
       host.showError(micErrorText(err));
-      if (mode === "focused") host.input.focus();
+      if (s.sessionMode() === "focused") host.input.focus();
       return;
     }
     if (session !== s || s.state() !== "listening") return;
@@ -610,6 +688,7 @@ export function mountVoice(root: HTMLElement, host: VoiceHost): VoiceControl {
     const active = document.activeElement;
     const inBox = active !== null && active !== document.body && active !== mic && host.box.contains(active);
     if (s.sessionMode() === "focused" && end !== "blur" && end !== "abort" && !inBox) host.input.focus();
+    host.sessionEnded(s.sessionMode(), end);
   }
 
   /** Stops listening (Ctrl+M, the stop button, Enter) and waits for the queue. */

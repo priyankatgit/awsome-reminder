@@ -1698,7 +1698,8 @@ legend.field-label {
 .cap-voice[hidden],
 .cap-progress[hidden],
 .cap-busy[hidden],
-.cap-voice-save[hidden] {
+.cap-voice-save[hidden],
+.cap-wake-hint[hidden] {
   display: none;
 }
 

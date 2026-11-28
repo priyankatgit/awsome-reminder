@@ -538,8 +538,12 @@ describe("VoiceSession", () => {
 describe("mountVoice wiring", () => {
   const node = () => ({ connect: (n: unknown) => n, disconnect() {} });
   class FakeContext {
+    static resumesTo = "running";
     sampleRate = 16000;
-    state = "running";
+    state = "suspended";
+    resume = async () => {
+      this.state = FakeContext.resumesTo;
+    };
     destination = {};
     audioWorklet = { addModule: async () => {} };
     createMediaStreamSource = node;
@@ -556,7 +560,7 @@ describe("mountVoice wiring", () => {
   }
 
   let root: HTMLElement;
-  let host: VoiceHost & { errors: string[]; inserted: string[] };
+  let host: VoiceHost & { errors: string[]; inserted: string[]; ends: string[] };
 
   function mount() {
     document.body.innerHTML = `
@@ -577,6 +581,7 @@ describe("mountVoice wiring", () => {
       input,
       errors: [],
       inserted: [],
+      ends: [],
       insert(t) {
         host.inserted.push(t);
         input.value = `${input.value} ${t}`.trim();
@@ -592,6 +597,9 @@ describe("mountVoice wiring", () => {
       multi: () => true,
       sessionText: () => input.value,
       showNote() {},
+      sessionEnded(mode, end) {
+        host.ends.push(`${mode}:${end}`);
+      },
     };
     return mountVoice(root, host);
   }
@@ -608,6 +616,7 @@ describe("mountVoice wiring", () => {
   });
 
   function stubAudio() {
+    FakeContext.resumesTo = "running";
     m.getUserMedia = 0;
     m.taps = [];
     vi.stubGlobal("AudioContext", FakeContext);
@@ -666,5 +675,54 @@ describe("mountVoice wiring", () => {
     expect(host.errors).toContain("Couldn't transcribe the last bit: cancelled");
     expect(m.ended).toBe(1);
     await ctl.finish(); // nothing left to wait for
+  });
+
+  it("a wake session shows its own listening label and reports how it ended", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "ready" });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(ctl.state()).toBe("listening");
+    expect(root.querySelector("#cap-listen-label")!.textContent).toBe("Listening — say your task");
+    ctl.escape();
+    await settle();
+    expect(host.ends).toEqual(["wake:escape"]);
+  });
+
+  it("a wake session the user engaged with ends as focused", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "ready" });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    ctl.focusGained();
+    ctl.escape();
+    await settle();
+    expect(host.ends).toEqual(["focused:escape"]);
+  });
+
+  it("an audio context that stays suspended fails as a mic error", async () => {
+    stubAudio();
+    FakeContext.resumesTo = "suspended"; // autoplay blocked: no user gesture
+    m.status = () => Promise.resolve({ state: "ready" });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(ctl.state()).toBe("idle");
+    expect(host.errors).toEqual(["Could not start the microphone: audio is suspended (no user gesture yet?)"]);
+    expect(host.ends).toEqual(["wake:abort"]);
+  });
+
+  it("a wake without dictation installed says so instead of the setup panel", async () => {
+    stubAudio();
+    m.status = () => Promise.resolve({ state: "absent" });
+    const ctl = mount();
+    ctl.startSession("wake");
+    await settle();
+    expect(ctl.state()).toBe("idle");
+    expect(root.querySelector<HTMLElement>("#cap-voice")!.hidden).toBe(true);
+    expect(host.errors).toEqual(["Dictation isn't set up. Click here, then press Ctrl+M to set it up."]);
+    expect(m.getUserMedia).toBe(0);
   });
 });
