@@ -171,7 +171,7 @@ function toDraft(s: Settings): Draft {
     pushEnabled: s.pushEnabled ?? false,
     pushServer: s.pushServer ?? PUSH_SERVER,
     pushTopic: s.pushTopic ?? "",
-    pushReplies: s.pushReplies ?? true,
+    pushReplies: s.pushReplies ?? false,
     pushHideText: s.pushHideText ?? false,
     pushGrace: pushGraceSec(s.pushGrace),
   };

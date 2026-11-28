@@ -116,8 +116,9 @@ describe("Replies settings", () => {
   });
 
   it("saves the push fields through the form, grace as a Go duration", async () => {
+    // Missing push fields take the Go defaults (replies off).
     const r = await mount();
-    expect(h.pushForm.get()).toMatchObject({ enabled: false, server: "https://ntfy.sh", replies: true, graceSec: 120 });
+    expect(h.pushForm.get()).toMatchObject({ enabled: false, server: "https://ntfy.sh", replies: false, graceSec: 120 });
     expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(true);
     h.pushForm.patch({ enabled: true, graceSec: 300, hideText: true });
     expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(false);
