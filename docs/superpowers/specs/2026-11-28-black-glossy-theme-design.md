@@ -84,15 +84,15 @@ Both animate only `opacity`/`transform`/`background-position` on small layers, a
 - The hint row shows `Ctrl+↵ save & open list`.
 
 **R11 Undo for a typed batch.**
-- When Enter saves more than one task, the box doesn't hide straight away. It flashes, then shows the "Saved N tasks · Undo" note for 5 s (Ctrl+Z works too), the same as a spoken "save all".
+- When Enter saves more than one task, the box doesn't hide straight away. It flashes, then shows the "Saved N tasks · Undo" note for 5 s (Ctrl+Z works too while the input is empty; once you type the next task it is the text undo again), the same as a spoken "save all".
 - Undo deletes the batch and puts the tasks back in the review list.
 - The box hides when the note ends, unless you have started typing the next task.
 - A single task saves and hides as before. Ctrl+Enter skips the note, because the list has its own Undo.
 
 **R12 The blink settles.**
-- The High-priority dot blinks for `--dur-blink-active` (10 s) after the list window opens or gets focus again.
+- The High-priority dot blinks for `--dur-blink-active` (9.6 s, six whole blinks, so it stops at full brightness) after the list window opens or gets focus again.
 - After that it rests, with its glow but no blink and no ripple (`.list-app.is-calm`). An open list therefore never pulses all day.
-- Coming back to the window (focus) starts a new 10 s spell.
+- Coming back to the window (focus) starts a new spell.
 
 ## Not changed
 Keyboard behaviour, the parser, the alert window's size logic, the font choices, the light palette and the voice code.

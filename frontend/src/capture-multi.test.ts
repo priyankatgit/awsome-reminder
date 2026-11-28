@@ -189,6 +189,42 @@ describe("capture box: saving a typed batch", () => {
     expect(h.log.filter((l) => l.startsWith("delete:"))).toEqual(["delete:id-one", "delete:id-two"]);
   });
 
+  const ctrlZ = () => {
+    const e = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    input().dispatchEvent(e);
+    return e;
+  };
+
+  it("Ctrl+Z in the next task being typed is the input's own undo", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    type("three");
+    ctrlZ();
+    await settle();
+    // (Earlier tests' boxes still listen on document; check this batch only.)
+    expect(h.log).not.toContain("delete:id-one");
+    expect(rows()).toEqual([]);
+    expect(note().hidden).toBe(false);
+  });
+
+  it("saving the next task drops the old batch's Undo, so Ctrl+Z can't strand the box", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    type("three");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(true));
+    input().value = "";
+    ctrlZ();
+    await vi.waitFor(() => expect(document.querySelector("#capture")!.classList.contains("is-hidden")).toBe(true));
+    expect(h.log).not.toContain("delete:id-one");
+  });
+
   it("Enter on a single task still saves and hides", async () => {
     type("solo");
     press("Enter");

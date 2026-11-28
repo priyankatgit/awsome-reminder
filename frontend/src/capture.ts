@@ -191,6 +191,8 @@ export function mountCapture(root: HTMLElement): void {
   let leftover = false; // the box opened with rows left from a voice session
   let leftoverText = false; // ...and the input holds text from a wake session
   let typedRows = false; // some rows were typed (Shift+Enter, a paste), not dictated
+  let savedSeq = 0; // counts completed saves (Ctrl+Enter after a spoken "save all")
+  let lastSavedId = "";
 
   // Wake mode ("Hey Awesome"): the box shows without focus and the guard
   // keeps stray typing out until the user engages (click, hotkey, Ctrl+M).
@@ -581,7 +583,7 @@ export function mountCapture(root: HTMLElement): void {
       hideNote();
       // A spoken save/discard left the box open for the note; close it now
       // unless something new is going on.
-      if (undo && !busy && pending() === 0 && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
+      if (undo && !busy && pending() === 0 && picker.hidden && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
     }, NOTE_MS);
   }
 
@@ -595,7 +597,7 @@ export function mountCapture(root: HTMLElement): void {
 
   async function runUndo(): Promise<void> {
     const act = noteAction;
-    if (!act) return;
+    if (!act || busy) return; // a save in flight (or its fly-away) owns the box
     hideNote();
     window.clearTimeout(hideTimer);
     await act();
@@ -685,7 +687,15 @@ export function mountCapture(root: HTMLElement): void {
    */
   async function submit(openList = false): Promise<void> {
     if (busy) return;
+    const before = savedSeq;
     if (box.dataset.voice === "listening" || box.dataset.voice === "transcribing") await voice.finish();
+    if (openList && savedSeq !== before && pending() === 0 && lastSavedId) {
+      // A spoken "save all" in the last bit saved everything: still go to the list.
+      hideNote();
+      hide();
+      void api.openList(lastSavedId);
+      return;
+    }
     await save(false, openList);
   }
 
@@ -737,6 +747,8 @@ export function mountCapture(root: HTMLElement): void {
       return;
     }
     dropSaved(rows.length);
+    savedSeq++;
+    lastSavedId = r.saved.at(-1)?.id ?? "";
     // A spoken save, or Enter on a typed batch: keep the box open for the
     // Undo note (a batch is easy to get wrong); it hides when the note ends,
     // unless a new task is started meanwhile. Ctrl+Enter goes to the list,
@@ -785,6 +797,7 @@ export function mountCapture(root: HTMLElement): void {
    * (Ctrl+Enter) the list then opens on that item.
    */
   function finishSave(openId?: string): void {
+    hideNote(); // an earlier batch's Undo must not cancel this hide
     endDraft = true;
     flash.classList.add("is-on");
     window.clearTimeout(hideTimer);
@@ -1092,9 +1105,10 @@ export function mountCapture(root: HTMLElement): void {
       clearConfirm();
       updateReview();
     }
-    if (noteAction && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
+    if (noteAction && input.value === "" && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
       // Ctrl+Z undoes the Saved/Discarded note from anywhere in the box,
-      // the input included (instead of the input's own text undo).
+      // the empty input included. Once the next task is being typed, Ctrl+Z
+      // is the input's own text undo again (the Undo button still works).
       e.preventDefault();
       void runUndo();
       return;
