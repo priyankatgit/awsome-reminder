@@ -22,6 +22,7 @@ html[data-panel="open"] .toast {
   max-width: 100%;
   border-left: var(--hairline) solid var(--border);
   background: var(--surface);
+  background-image: var(--gloss); /* Obsidian gloss */
   transform: translateX(100%);
   transition: transform var(--dur-panel-exit) var(--ease-exit);
 }
