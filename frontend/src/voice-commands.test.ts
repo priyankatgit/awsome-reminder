@@ -38,6 +38,8 @@ describe("parseSegment", () => {
     ["reply mode cancel is text", "never mind", [t("never mind")], { multi: false }],
     ["curly apostrophe save", "Buy milk. That’s all.", [t("Buy milk"), SAVE]],
     ["ellipsis character save", "Save all…", [SAVE]],
+    ["ellipsis ends a sentence", "Buy milk… Save all.", [t("Buy milk"), SAVE]],
+    ["ellipsis between text sentences", "Buy milk… then eggs", [t("Buy milk… then eggs")]],
     ["curly quotes around a save", "“Save all.”", [SAVE]],
     ["left curly quote in a save", "‘Thats it’", [SAVE]],
     // An unengaged wake box: chatter that ends "that's it" stays text.

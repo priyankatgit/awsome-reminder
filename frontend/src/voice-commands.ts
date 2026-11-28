@@ -15,7 +15,7 @@ const CANCEL = ["cancel", "cancel all", "never mind"];
 
 // Curly quotes and the ellipsis character count as punctuation when matching.
 const PUNCT = /[.,!?;:"'‘’“”…]/g;
-const EDGE_PUNCT = /^[\s.,!?;:"']+|[\s.,!?;:"']+$/g;
+const EDGE_PUNCT = /^[\s.,!?;:"'…]+|[\s.,!?;:"'…]+$/g;
 
 const norm = (w: string): string => w.toLowerCase().replace(PUNCT, "");
 const words = (s: string): string[] => s.split(/\s+/).filter(Boolean);
@@ -75,7 +75,8 @@ export function parseSegment(text: string, opts: ParseOptions = {}): Op[] {
   const save = opts.strictSave ? STRICT_SAVE : SAVE;
 
   // The last sentence (or the whole segment) may be a command.
-  const sentences = [...text.matchAll(/[^.?!]+[.?!]*/g)].filter((m) => norm(m[0]).trim() !== "");
+  // The ellipsis character ends a sentence like . ? ! do.
+  const sentences = [...text.matchAll(/[^.?!…]+[.?!…]*/g)].filter((m) => norm(m[0]).trim() !== "");
   const last = sentences[sentences.length - 1];
   let command: Op | null = null;
   let body = text;

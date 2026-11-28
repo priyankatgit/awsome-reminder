@@ -114,17 +114,20 @@ func (g *Gate) remember(block []int16) {
 	g.ringN = min(g.ringN+len(block), len(g.ring))
 }
 
-// zeroLimitMs of nothing but exact-zero samples means the mic delivers no
-// sound. Windows hands a microphone blocked in privacy settings (or muted)
-// to desktop apps as digital silence, not as an error; a real room, even a
-// quiet one, is never exactly zero for this long.
+// zeroLimitMs of nothing but exact-zero samples since the helper started
+// means the mic delivers no sound. Windows hands a microphone blocked in
+// privacy settings (or muted) to desktop apps as digital silence from the
+// first block, not as an error. A mic that ever produced a non-zero sample
+// is working (a noise-gated or virtual mic may go exactly silent later) and
+// never trips it.
 const zeroLimitMs = 10000
 
-// ZeroWatch tells when the mic has delivered only exact-zero blocks for
-// zeroLimitMs.
+// ZeroWatch tells when the mic has delivered only exact zeros, from its
+// first block, for zeroLimitMs.
 type ZeroWatch struct {
-	limit int // samples
-	run   int // samples in a row, in all-zero blocks
+	limit int  // samples
+	run   int  // samples seen, all zero so far
+	heard bool // a non-zero sample was seen: never trips
 }
 
 // NewZeroWatch returns a watch for audio at rate samples per second.
@@ -132,13 +135,17 @@ func NewZeroWatch(rate int) *ZeroWatch {
 	return &ZeroWatch{limit: rate * zeroLimitMs / 1000}
 }
 
-// Push takes the next block and reports whether the blocks of the last
-// zeroLimitMs (or more) were all exactly zero. A block with any non-zero
-// sample starts the count over; an empty block changes nothing.
+// Push takes the next block and reports whether every sample since the
+// start, zeroLimitMs of them or more, was exactly zero. Once any non-zero
+// sample has been seen it reports false for good; an empty block changes
+// nothing.
 func (z *ZeroWatch) Push(block []int16) bool {
+	if z.heard {
+		return false
+	}
 	for _, s := range block {
 		if s != 0 {
-			z.run = 0
+			z.heard = true
 			return false
 		}
 	}

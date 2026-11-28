@@ -3,12 +3,18 @@
 // ends by the rules of its mode. No audio or Wails APIs here, so it is tested
 // with fakes; voice.ts wires it to the Recorder and the capture box.
 import { parseSegment } from "./voice-commands";
-import { endReason, SegmentQueue, type EndReason, type PcmSegment, type SessionMode } from "./voice-segment";
+import { CUT_SILENCE_MS, endReason, SegmentQueue, type EndReason, type PcmSegment, type SessionMode } from "./voice-segment";
 
 export const NOTHING_HEARD = "Didn't catch that. Try again closer to the mic.";
 export const LIMIT_NOTE = "Stopped after 5 minutes";
 /** A segment not transcribed by then is cancelled and counts as failed. */
 export const SEGMENT_TIMEOUT_MS = 30000;
+/**
+ * Speech this recent may still be open in the recorder (not yet cut into a
+ * segment): the cut comes after CUT_SILENCE_MS of quiet, judged per ~33 ms
+ * level window.
+ */
+const OPEN_SPEECH_MS = CUT_SILENCE_MS + 33;
 const FAIL_PREFIX = "Couldn't transcribe the last bit: ";
 const PROMPT_TAIL = " new task";
 
@@ -130,6 +136,9 @@ export class VoiceSession {
     // A segment still in flight may hold a "new task" that extends the wait,
     // or (in a wake session) the first words.
     if ((why === "silence" || why === "quiet-wake") && this.pending > 0) return null;
+    // In a wake session, speech the recorder has not cut yet may be the
+    // user's first words: wait for the cut (then the pending hold applies).
+    if ((why === "silence" || why === "quiet-wake") && wake && this.speechOpen()) return null;
     if (why === "limit") this.host.showNote(LIMIT_NOTE);
     // The box hides at the unengaged cap: nothing is saved behind it.
     if (why === "wake-limit") this.blurred = true;
@@ -137,6 +146,11 @@ export class VoiceSession {
     this.stop(why, why === "silence" || why === "limit");
     void this.drain();
     return why;
+  }
+
+  /** Whether the recorder may hold speech not yet cut into a segment. */
+  private speechOpen(): boolean {
+    return this.rec.heardSpeech && this.deps.now() - this.rec.lastSpeechAt() < OPEN_SPEECH_MS;
   }
 
   /** The box got focus: a wake session follows the focused rules from now on. */

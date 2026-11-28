@@ -467,29 +467,67 @@ describe("VoiceSession", () => {
   });
 
   describe("an unengaged wake session", () => {
-    it("mic level with no words ends at the 6 s quiet rule", async () => {
+    it("mic level with no words never quiet-wakes; the 60 s cap ends it", async () => {
       const t = setup({ mode: "wake" });
       // Continuous speech by level; every segment transcribes to nothing.
-      for (let i = 1; i <= 5; i++) {
+      for (let i = 1; i < 60; i++) {
         t.at(i * 1000, 0);
         t.s.segment(seg(i));
         t.tx.say(i, i % 2 ? "" : "  ");
         await settle();
-        expect(t.s.tick()).toBeNull();
+        expect(t.s.tick(), `at ${i}s`).toBeNull();
       }
-      t.at(6000, 0);
+      t.at(60000, 0);
+      expect(t.s.tick()).toBe("wake-limit");
+      await settle();
+      expect(t.host.calls).toEqual([]);
+      expect(t.host.errors).toEqual([]);
+      expect(t.s.endedBy()).toBe("wake-limit");
+    });
+
+    it("segments with no words end at the 6 s quiet rule once the mic is quiet", async () => {
+      const t = setup({ mode: "wake" });
+      for (let i = 1; i <= 4; i++) {
+        t.at(i * 1000, 0);
+        t.s.segment(seg(i));
+        t.tx.say(i, "");
+        await settle();
+      }
+      t.at(6000, 1500); // the last speech window was at 4.5 s
       expect(t.s.tick()).toBe("quiet-wake");
       await settle();
       expect(t.host.calls).toEqual([]);
       expect(t.host.errors).toEqual([]);
-      expect(t.s.endedBy()).toBe("quiet-wake");
+    });
+
+    it("first words still open in the recorder at 6 s are kept, not dropped", async () => {
+      const t = setup({ mode: "wake" });
+      t.at(3000, 0);
+      t.rec.tail = seg(1); // speaking since 3 s; no pause yet, so no segment
+      t.at(6000, 0);
+      expect(t.s.tick()).toBeNull();
+      expect(t.rec.cancelled).toBe(0);
+      expect(t.rec.stopped).toBe(0);
+      t.at(6700, 700);
+      expect(t.s.tick()).toBeNull(); // within the 700 ms cut plus a level window
+      // The pause cuts the segment; while it transcribes the pending hold applies.
+      t.rec.tail = null;
+      t.s.segment(seg(1));
+      t.at(6800, 800);
+      expect(t.s.tick()).toBeNull();
+      t.tx.say(1, "buy milk");
+      await settle();
+      expect(t.host.input).toBe("buy milk");
+      expect(t.s.tick()).toBeNull(); // words heard: now the 15 s rule
+      expect(t.rec.cancelled).toBe(0);
+      expect(t.s.state()).toBe("listening");
     });
 
     it("the quiet rule waits for a segment still in flight", async () => {
       const t = setup({ mode: "wake" });
       t.at(5000, 0);
       t.s.segment(seg(1));
-      t.at(6500, 0);
+      t.at(6500, 1000);
       expect(t.s.tick()).toBeNull(); // it may hold the first words
       t.tx.say(1, "buy milk");
       await settle();
@@ -497,7 +535,7 @@ describe("VoiceSession", () => {
       expect(t.host.input).toBe("buy milk");
     });
 
-    it("15 s after the last words it ends, even with sound going on", async () => {
+    it("15 s after the last words it ends, once the sound stops", async () => {
       const t = setup({ mode: "wake" });
       t.at(2000, 0);
       t.s.segment(seg(1));
@@ -509,7 +547,10 @@ describe("VoiceSession", () => {
       await settle();
       expect(t.s.tick()).toBeNull();
       t.at(17000, 0);
+      expect(t.s.tick()).toBeNull(); // speech may be open in the recorder
+      t.at(17800, 800);
       expect(t.s.tick()).toBe("silence");
+      expect(t.rec.stopped).toBe(1); // the open audio is flushed and kept
     });
 
     it("chatter that keeps producing words ends at 60 s with nothing saved", async () => {

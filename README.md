@@ -136,7 +136,7 @@ Dictation in the capture box (hands-free or from the mic button) can hold severa
 **Known limits.**
 
 - Words said in the same breath as "Hey Awesome" may be cut off. Pause for the chime.
-- On Windows, a microphone blocked in privacy settings (or muted) delivers silence rather than an error. The listener notices after 10 seconds of exact silence and, after three tries, Settings › Voice shows the error with where to allow the microphone and **Try again**.
+- On Windows, a microphone blocked in privacy settings (or muted) delivers silence rather than an error. The listener notices when the microphone has delivered nothing but exact silence for its first 10 seconds and, after three tries, Settings › Voice shows the error with where to allow the microphone and **Try again**.
 - After you plug or unplug a headset or change the default microphone, switch the wake word off and on again. (Sleep and resume are handled: the listener restarts by itself.)
 - The wake word is English only and has been tuned with synthetic speech so far. Missed and false wakes with real voices are not measured yet; see the [checklist](docs/manual-test-checklist.md).
 - Where the system gives the wake-opened box keyboard focus anyway (Wayland), typing is ignored until you click the box or press the hotkey, so stray keys cannot land in it.
