@@ -249,3 +249,21 @@ func TestDeleteOnUnavailableKeychainSucceeds(t *testing.T) {
 		t.Fatal("key file remains")
 	}
 }
+
+func TestClearKeychain(t *testing.T) {
+	old := sysKeychain
+	t.Cleanup(func() { sysKeychain = old })
+
+	kc := &fakeKeychain{val: "x", set: true}
+	sysKeychain = kc
+	if err := ClearKeychain(); err != nil || kc.set {
+		t.Fatalf("clear present entry: err=%v set=%v", err, kc.set)
+	}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("missing entry must not be an error: %v", err)
+	}
+	sysKeychain = &fakeKeychain{err: dbusErr}
+	if err := ClearKeychain(); !errors.Is(err, dbusErr) {
+		t.Fatalf("other errors must surface, got %v", err)
+	}
+}

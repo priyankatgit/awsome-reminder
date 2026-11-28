@@ -114,3 +114,17 @@ func (s *store) Kind() string {
 		return "Secret Service"
 	}
 }
+
+// sysKeychain is the keychain ClearKeychain acts on, swappable for tests.
+var sysKeychain keychain = osKeychain{}
+
+// ClearKeychain removes the saved connection string from the OS keychain. A
+// missing entry is not an error. The encrypted-file fallback lives in the
+// data folder and is not touched.
+func ClearKeychain() error {
+	err := sysKeychain.Delete(service, account)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
+}
