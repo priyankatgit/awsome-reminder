@@ -150,7 +150,7 @@ func (r *Reconciler) SendTest(ctx context.Context) error {
 		return errors.New("Phone push is off")
 	}
 	r.rollDay(r.d.Now(), cfg.Loc)
-	err := r.client(cfg.Server, cfg.Topic, cfg.Token).SendNow(ctx, "Awesome Reminder", "Test push: phone notifications work.")
+	err := r.client(cfg.Server, cfg.Topic, cfg.Token).SendNow(ctx, "Awesome Reminder", "Test notification — phone push works.")
 	r.count(err, 1)
 	r.mu.Lock()
 	r.status.SentToday = r.sent

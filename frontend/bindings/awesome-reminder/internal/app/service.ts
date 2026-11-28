@@ -60,14 +60,17 @@ export function Delete(id: string): $CancellablePromise<void> {
 }
 
 /**
- * DismissAlert removes one card; the window hides when none are left.
+ * DismissAlert removes one card; the window hides when none are left. The
+ * card's phone push is cancelled when the card counts as handling the item
+ * (pushSeq).
  */
 export function DismissAlert(key: string): $CancellablePromise<void> {
     return $Call.ByID(364701302, key);
 }
 
 /**
- * DismissAlerts removes every card and hides the alert window.
+ * DismissAlerts removes every card and hides the alert window, cancelling
+ * the phone pushes of the cards that count, like DismissAlert.
  */
 export function DismissAlerts(): $CancellablePromise<void> {
     return $Call.ByID(1029577183);
@@ -154,6 +157,43 @@ export function PendingAlerts(): $CancellablePromise<$models.AlertCard[] | null>
  */
 export function Preview(input: string): $CancellablePromise<core$0.Preview> {
     return $Call.ByID(2092891144, input);
+}
+
+/**
+ * PushForgetToken deletes the saved access token.
+ */
+export function PushForgetToken(): $CancellablePromise<void> {
+    return $Call.ByID(23171590);
+}
+
+/**
+ * PushInfo returns the push status, the token's presence and the subscribe
+ * link with its QR code.
+ */
+export function PushInfo(): $CancellablePromise<$models.PushInfo> {
+    return $Call.ByID(1047831492);
+}
+
+/**
+ * PushNewTopic saves a fresh secret topic and returns the saved settings.
+ * The reconciler moves pending pushes to it on the change.
+ */
+export function PushNewTopic(): $CancellablePromise<settings$0.Settings> {
+    return $Call.ByID(3267936961);
+}
+
+/**
+ * PushSetToken saves the ntfy access token (trimmed) and applies it.
+ */
+export function PushSetToken(token: string): $CancellablePromise<void> {
+    return $Call.ByID(128969037, token);
+}
+
+/**
+ * PushTest sends an immediate test push with the saved settings.
+ */
+export function PushTest(): $CancellablePromise<void> {
+    return $Call.ByID(3338916956);
 }
 
 /**

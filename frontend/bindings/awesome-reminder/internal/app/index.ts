@@ -10,6 +10,7 @@ export {
 
 export type {
     AlertCard,
+    PushInfo,
     ReplyPrefill,
     Status,
     SyncInfo

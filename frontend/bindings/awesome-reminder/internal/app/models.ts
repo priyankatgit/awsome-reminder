@@ -3,6 +3,9 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as push$0 from "../push/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as time$0 from "../../../time/models.js";
 
 /**
@@ -67,6 +70,29 @@ export interface AlertCard {
      * a sweep: who replies are owed to; never nil
      */
     "people": string[] | null;
+}
+
+/**
+ * PushInfo is Settings › Phone push's view of push.
+ */
+export interface PushInfo {
+    "status": push$0.Status;
+    "hasToken": boolean;
+
+    /**
+     * where the token lives (secret.Store.Kind)
+     */
+    "tokenStore": string;
+
+    /**
+     * <server>/<topic>; "" when no topic
+     */
+    "subscribeUrl": string;
+
+    /**
+     * PNG data URL of SubscribeURL; "" when none
+     */
+    "qr": string;
 }
 
 /**

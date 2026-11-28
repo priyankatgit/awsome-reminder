@@ -22,6 +22,7 @@ import (
 	"awesome-reminder/internal/grab"
 	"awesome-reminder/internal/hotkey"
 	"awesome-reminder/internal/paths"
+	"awesome-reminder/internal/push"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/secret"
 	"awesome-reminder/internal/settings"
@@ -191,6 +192,10 @@ func Run(opts Options) error {
 		// not touch the store.
 		OnApplied: func(a []core.Applied) { go svc.remoteApplied(a) },
 	})
+	// Phone push (off by default: nothing touches the network until enabled).
+	pushCtl := newPushController(c, st, filepath.Dir(dbPath),
+		func(id string) { svc.dropItemAlerts(id) },
+		func(s push.Status) { emit(EventPushStatus, s) })
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the
 	// export (deferred after exp.Close and st.Close, so it runs before them).
@@ -199,6 +204,7 @@ func Run(opts Options) error {
 	defer func() {
 		cancel()
 		sched.Wait()
+		pushCtl.wait() // the reconciler and the control listener
 		syncCtl.Stop() // joins the opener and the engine's cycle in flight
 		badges.Stop()  // joins a refresh in flight, closes the taskbar window
 	}()
@@ -236,6 +242,7 @@ func Run(opts Options) error {
 		Emit:          func(name string, data any) { emit(name, data) },
 		OpenURL:       app.Browser.OpenURL,
 		Sync:          syncCtl,
+		Push:          pushCtl,
 	})
 	app.RegisterService(application.NewService(svc))
 	// Recurring reminders not marked done move on to their latest occurrence
@@ -253,6 +260,7 @@ func Run(opts Options) error {
 		emit(EventItemsChanged)
 		badges.Changed() // also on a settings save
 		syncCtl.Kick()
+		pushCtl.changed()
 	})
 
 	tray = app.SystemTray.New()
@@ -297,6 +305,7 @@ func Run(opts Options) error {
 		sweepAttachments(c)
 		sched.Start(ctx)
 		syncCtl.Start(ctx)
+		pushCtl.start(ctx)
 		// Bring the export up to date with the database at startup (it may
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()

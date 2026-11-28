@@ -148,6 +148,7 @@ func (s *Service) dropItemAlerts(id string) {
 // snooze changed, or its occurrence moved (dropStaleCards). An edit that
 // leaves the occurrence alone, e.g. of the text, keeps them.
 func (s *Service) remoteApplied(applied []core.Applied) {
+	s.d.Push.kick()
 	for _, a := range applied {
 		switch {
 		case a.After.Status != model.StatusOpen:
@@ -209,19 +210,32 @@ func cloneCards(cards []AlertCard) []AlertCard {
 	return append([]AlertCard{}, cards...)
 }
 
-// DismissAlert removes one card; the window hides when none are left.
+// DismissAlert removes one card; the window hides when none are left. The
+// card's phone push is cancelled when the card counts as handling the item
+// (pushSeq).
 func (s *Service) DismissAlert(key string) {
-	s.removeAlerts(func(c AlertCard) bool { return c.Key == key }, true)
+	var gone []AlertCard
+	s.removeAlerts(func(c AlertCard) bool {
+		if c.Key != key {
+			return false
+		}
+		gone = append(gone, c)
+		return true
+	}, true)
+	s.d.Push.dismiss(gone)
 }
 
-// DismissAlerts removes every card and hides the alert window.
+// DismissAlerts removes every card and hides the alert window, cancelling
+// the phone pushes of the cards that count, like DismissAlert.
 func (s *Service) DismissAlerts() {
 	q := &s.alerts
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	gone := q.cards
 	q.cards = nil
 	s.d.Windows.DismissAlerts()
 	s.emitAlertsLocked()
+	q.mu.Unlock()
+	s.d.Push.dismiss(gone)
 }
 
 // ResizeAlerts sets the alert window's height (CSS pixels) to fit its cards.
