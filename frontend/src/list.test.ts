@@ -310,3 +310,16 @@ describe("opening cascade", () => {
     expect(Array.from(root.querySelectorAll<HTMLElement>(".row")).map((e) => e.style.getPropertyValue("--i"))).toEqual(["", ""]);
   });
 });
+
+describe("High-priority blink", () => {
+  it("rests after the active spell and wakes again on focus", async () => {
+    const root = await mount(view({ tags: [{ tag: "inbox", items: [item("a", "urgent", { priority: "high" })] }] }));
+    const app = root.querySelector<HTMLElement>(".list-app")!;
+    await new Promise((r) => window.setTimeout(r, 5)); // jsdom has no tokens: the spell is 0 ms
+    expect(app.classList.contains("is-calm")).toBe(true);
+    window.dispatchEvent(new Event("focus"));
+    expect(app.classList.contains("is-calm")).toBe(false);
+    await new Promise((r) => window.setTimeout(r, 5));
+    expect(app.classList.contains("is-calm")).toBe(true);
+  });
+});

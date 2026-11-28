@@ -29,7 +29,12 @@ vi.mock("./api", () => ({
       return { id: "r", text: input };
     },
     getSettings: async () => ({ defaultTime: "09:00", workDays: ["monday"] }),
-    hideCapture: async () => {},
+    hideCapture: async () => {
+      h.log.push("hide");
+    },
+    openList: async (id: string) => {
+      h.log.push(`open:${id}`);
+    },
     resizeCapture: async () => {},
     withDue: async (input: string) => input,
     deleteItem: async (id: string) => {
@@ -98,7 +103,7 @@ describe("capture box: several typed tasks", () => {
     press("Enter");
     await settle();
     await settle();
-    expect(h.log).toEqual(["capture:call Sam tomorrow 5pm", "capture:buy milk"]);
+    expect(h.log.filter((l) => l.startsWith("capture:"))).toEqual(["capture:call Sam tomorrow 5pm", "capture:buy milk"]);
     expect(rows()).toEqual([]);
   });
 
@@ -156,5 +161,85 @@ describe("capture box: typed rows left behind", () => {
     const status = document.querySelector<HTMLElement>("#cap-hint-status")!;
     expect(status.hidden).toBe(false);
     expect(status.textContent).toBe("1 unsaved task");
+  });
+});
+
+describe("capture box: saving a typed batch", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    const root = document.createElement("div");
+    document.body.append(root);
+    h.log = [];
+    mountCapture(root);
+  });
+
+  const note = () => document.querySelector<HTMLElement>("#cap-note")!;
+
+  it("Enter on a batch keeps the box open with Saved N and Undo", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    expect(document.querySelector("#cap-note-text")!.textContent).toBe("Saved 2 tasks");
+    // (h.log may hold "hide" from earlier tests' boxes; check this box.)
+    expect(document.querySelector("#capture")!.classList.contains("is-hidden")).toBe(false);
+    (document.querySelector("#cap-note-undo") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(rows()).toEqual(["one", "two"]));
+    expect(h.log.filter((l) => l.startsWith("delete:"))).toEqual(["delete:id-one", "delete:id-two"]);
+  });
+
+  const ctrlZ = () => {
+    const e = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    input().dispatchEvent(e);
+    return e;
+  };
+
+  it("Ctrl+Z in the next task being typed is the input's own undo", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    type("three");
+    ctrlZ();
+    await settle();
+    // (Earlier tests' boxes still listen on document; check this batch only.)
+    expect(h.log).not.toContain("delete:id-one");
+    expect(rows()).toEqual([]);
+    expect(note().hidden).toBe(false);
+  });
+
+  it("saving the next task drops the old batch's Undo, so Ctrl+Z can't strand the box", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    type("three");
+    press("Enter");
+    await vi.waitFor(() => expect(note().hidden).toBe(true));
+    input().value = "";
+    ctrlZ();
+    await vi.waitFor(() => expect(document.querySelector("#capture")!.classList.contains("is-hidden")).toBe(true));
+    expect(h.log).not.toContain("delete:id-one");
+  });
+
+  it("Enter on a single task still saves and hides", async () => {
+    type("solo");
+    press("Enter");
+    await vi.waitFor(() => expect(document.querySelector("#capture")!.classList.contains("is-hidden")).toBe(true));
+    expect(note().hidden).toBe(true);
+  });
+
+  it("Ctrl+Enter saves everything, hides and opens the list on the last task", async () => {
+    type("one");
+    press("Enter", true);
+    type("two");
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(h.log).toContain("open:id-two"));
+    expect(h.log.filter((l) => l.startsWith("capture:"))).toEqual(["capture:one", "capture:two"]);
+    expect(document.querySelector("#capture")!.classList.contains("is-hidden")).toBe(true);
+    expect(note().hidden).toBe(true);
   });
 });

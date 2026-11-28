@@ -461,6 +461,7 @@
   --cascade-offset: 8px;
   --cascade-blur: 4px;
   --dur-blink: 1600ms;
+  --dur-blink-active: 9600ms; /* 6 whole --dur-blink cycles, so it rests at full opacity; then glow only */
   --blink-dim: 0.35;
   --ripple-scale: 2.6;
   --ripple-ring: 1.5px;

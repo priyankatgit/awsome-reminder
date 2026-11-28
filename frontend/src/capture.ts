@@ -1,6 +1,6 @@
 // Capture box (#capture): one-line input with a live parse preview.
 // Layout and behaviour follow the "Capture box" section of the UI guide.
-import { api, errorText, events, on, type Preview, type ReplyPrefill, type WakeStatus } from "./api";
+import { api, errorText, events, on, type Item, type Preview, type ReplyPrefill, type WakeStatus } from "./api";
 import { el, motionMs, tagChip } from "./dom";
 import { icons, type IconName } from "./icons";
 import { KeyGuard } from "./key-guard";
@@ -92,6 +92,7 @@ const TEMPLATE = `
       <span class="cap-hint-status" id="cap-hint-status" role="status" aria-live="polite" hidden></span>
       <span><kbd>↵</kbd> <span id="cap-hint-save">save</span></span>
       <span><kbd>Shift</kbd><span class="keycap-plus">+</span><kbd>↵</kbd> add another</span>
+      <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>↵</kbd> save &amp; open list</span>
       <span><kbd>Tab</kbd> time</span>
       <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> dictate</span>
       <span><kbd>Esc</kbd> close</span>
@@ -190,6 +191,8 @@ export function mountCapture(root: HTMLElement): void {
   let leftover = false; // the box opened with rows left from a voice session
   let leftoverText = false; // ...and the input holds text from a wake session
   let typedRows = false; // some rows were typed (Shift+Enter, a paste), not dictated
+  let savedSeq = 0; // counts completed saves (Ctrl+Enter after a spoken "save all")
+  let lastSavedId = "";
 
   // Wake mode ("Hey Awesome"): the box shows without focus and the guard
   // keeps stray typing out until the user engages (click, hotkey, Ctrl+M).
@@ -580,7 +583,7 @@ export function mountCapture(root: HTMLElement): void {
       hideNote();
       // A spoken save/discard left the box open for the note; close it now
       // unless something new is going on.
-      if (undo && !busy && pending() === 0 && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
+      if (undo && !busy && pending() === 0 && picker.hidden && box.dataset.voice !== "listening" && box.dataset.voice !== "transcribing") hide();
     }, NOTE_MS);
   }
 
@@ -594,7 +597,7 @@ export function mountCapture(root: HTMLElement): void {
 
   async function runUndo(): Promise<void> {
     const act = noteAction;
-    if (!act) return;
+    if (!act || busy) return; // a save in flight (or its fly-away) owns the box
     hideNote();
     window.clearTimeout(hideTimer);
     await act();
@@ -678,28 +681,40 @@ export function mountCapture(root: HTMLElement): void {
     await save(spoken);
   }
 
-  /** Enter: while dictating, stop and wait for pending segments first. */
-  async function submit(): Promise<void> {
+  /**
+   * Enter: while dictating, stop and wait for pending segments first.
+   * Ctrl+Enter (openList) also opens the list on the last saved task.
+   */
+  async function submit(openList = false): Promise<void> {
     if (busy) return;
+    const before = savedSeq;
     if (box.dataset.voice === "listening" || box.dataset.voice === "transcribing") await voice.finish();
-    await save();
+    if (openList && savedSeq !== before && pending() === 0 && lastSavedId) {
+      // A spoken "save all" in the last bit saved everything: still go to the list.
+      hideNote();
+      hide();
+      void api.openList(lastSavedId);
+      return;
+    }
+    await save(false, openList);
   }
 
-  async function save(spoken = false): Promise<void> {
+  async function save(spoken = false, openList = false): Promise<void> {
     if (busy) return;
     if (reply.active) {
       if (input.value.trim() === "") return;
       busy = true;
       showError("");
+      let saved: Item;
       try {
-        await api.captureReply(input.value, reply.meta());
+        saved = await api.captureReply(input.value, reply.meta());
       } catch (err) {
         busy = false;
         const msg = errorText(err);
         showError(msg.includes("empty input") ? "Add some text to save" : msg);
         return;
       }
-      finishSave();
+      finishSave(openList ? saved.id : undefined);
       return;
     }
     const rows = list.items();
@@ -732,7 +747,13 @@ export function mountCapture(root: HTMLElement): void {
       return;
     }
     dropSaved(rows.length);
-    if (spoken) {
+    savedSeq++;
+    lastSavedId = r.saved.at(-1)?.id ?? "";
+    // A spoken save, or Enter on a typed batch: keep the box open for the
+    // Undo note (a batch is easy to get wrong); it hides when the note ends,
+    // unless a new task is started meanwhile. Ctrl+Enter goes to the list,
+    // which has its own Undo.
+    if (spoken || (texts.length > 1 && !openList)) {
       // Keep the box open for the Undo note; it hides when the note ends.
       busy = false;
       const ids = r.saved.map((it) => it.id);
@@ -744,7 +765,7 @@ export function mountCapture(root: HTMLElement): void {
       showNote(`Saved ${tasks(ids.length)}`, () => undoSaved(ids, texts));
       return;
     }
-    finishSave();
+    finishSave(openList ? r.saved.at(-1)?.id : undefined);
   }
 
   /** Removes the saved prefix; rows added while the save ran stay. */
@@ -771,15 +792,22 @@ export function mountCapture(root: HTMLElement): void {
     updateReview();
   }
 
-  /** Enter's save: flash, fly the typed line away, hide. */
-  function finishSave(): void {
+  /**
+   * Enter's save: flash, fly the typed line away, hide. With openId
+   * (Ctrl+Enter) the list then opens on that item.
+   */
+  function finishSave(openId?: string): void {
+    hideNote(); // an earlier batch's Undo must not cancel this hide
     endDraft = true;
     flash.classList.add("is-on");
     window.clearTimeout(hideTimer);
     // Saved already; now the line flies off and the box fades over the
     // flight's last --dur-exit, so the window hides as the line arrives.
     const wait = flyAway() ? Math.max(motionMs("--dur-fly") - motionMs("--dur-exit"), 0) : motionMs("--dur-flash");
-    hideTimer = window.setTimeout(hide, wait);
+    hideTimer = window.setTimeout(() => {
+      hide();
+      if (openId !== undefined) void api.openList(openId);
+    }, wait);
   }
 
   async function openPicker(): Promise<void> {
@@ -848,7 +876,7 @@ export function mountCapture(root: HTMLElement): void {
       stage();
     } else if (e.key === "Enter") {
       e.preventDefault();
-      void submit();
+      void submit(e.ctrlKey || e.metaKey);
     } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       void openPicker();
@@ -1077,9 +1105,10 @@ export function mountCapture(root: HTMLElement): void {
       clearConfirm();
       updateReview();
     }
-    if (noteAction && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
+    if (noteAction && input.value === "" && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
       // Ctrl+Z undoes the Saved/Discarded note from anywhere in the box,
-      // the input included (instead of the input's own text undo).
+      // the empty input included. Once the next task is being typed, Ctrl+Z
+      // is the input's own text undo again (the Undo button still works).
       e.preventDefault();
       void runUndo();
       return;
