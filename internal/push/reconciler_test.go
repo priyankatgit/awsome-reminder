@@ -105,6 +105,13 @@ type rig struct {
 func newRig(t *testing.T, srv *pushtest.Server, items ...model.Item) *rig {
 	g := &rig{t: t, srv: srv, log: newMemLog(), now: tNow, items: items, on: true}
 	g.cfg = Config{Server: srv.URL, Topic: "ar-topic", Grace: 2 * time.Minute, Loc: utc}
+	// The server resolves X-Delay durations on the simulated clock (the
+	// latest rig's; rigs sharing a server keep their clocks together).
+	srv.Now = func() time.Time {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return g.now
+	}
 	g.r = NewReconciler(Deps{
 		Items: func() ([]model.Item, error) {
 			g.mu.Lock()

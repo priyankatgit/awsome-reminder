@@ -4,7 +4,10 @@
 // publishing with the sequence ID in the path (POST /<topic>/<seq>) lets
 // DELETE /<topic>/<seq> cancel the pending scheduled message; a sequence ID
 // sent in the X-Sequence-ID header can't be cancelled, so it is never used;
-// publishing one seq twice delivers both, so Schedule deletes first.
+// publishing one seq twice delivers both, so Schedule deletes first;
+// X-Delay must be a duration such as "120s" (an absolute Unix timestamp or
+// RFC 3339 time is rejected with 400), which also makes a skewed local clock
+// harmless.
 //
 // Nothing here logs. Errors never contain the token, the topic or bodies.
 package push
@@ -63,10 +66,15 @@ type Action struct {
 // CtlMessage is a message on the control topic (<topic>-ctl).
 type CtlMessage struct{ ID, Message string }
 
-// Client talks to one ntfy server and topic. HTTP nil uses a default client.
+// minDelay is ntfy's shortest X-Delay.
+const minDelay = 10 * time.Second
+
+// Client talks to one ntfy server and topic. HTTP nil uses a default client;
+// Now nil uses time.Now (it turns DeliverAt into a relative X-Delay).
 type Client struct {
 	Server, Topic, Token string
 	HTTP                 *http.Client
+	Now                  func() time.Time
 
 	streamIdle time.Duration // tests; 0 means the streamIdle constant
 }
@@ -89,7 +97,7 @@ func (c Client) Schedule(ctx context.Context, m Message) error {
 		setText(h, "X-Tags", strings.Join(m.Tags, ","))
 	}
 	if !m.DeliverAt.IsZero() {
-		h.Set("X-Delay", strconv.FormatInt(m.DeliverAt.Unix(), 10))
+		h.Set("X-Delay", c.delay(m.DeliverAt))
 	}
 	if len(m.Actions) > 0 {
 		a, err := actionsJSON(m.Actions)
@@ -104,6 +112,22 @@ func (c Client) Schedule(ctx context.Context, m Message) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// delay is the X-Delay for delivery at t: whole seconds from now, rounded
+// up, at least minDelay.
+func (c Client) delay(t time.Time) string {
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	d := t.Sub(now())
+	secs := int64(d / time.Second)
+	if d%time.Second > 0 {
+		secs++
+	}
+	secs = max(secs, int64(minDelay/time.Second))
+	return strconv.FormatInt(secs, 10) + "s"
 }
 
 // Delete cancels pending messages with seq. Not found is success.

@@ -611,7 +611,7 @@ func (r *Reconciler) processDismissals(ctx context.Context) result {
 }
 
 func (r *Reconciler) client(server, topic, token string) Client {
-	return Client{Server: server, Topic: topic, Token: token, HTTP: r.d.HTTP}
+	return Client{Server: server, Topic: topic, Token: token, HTTP: r.d.HTTP, Now: r.d.Now}
 }
 
 // deleteBoth cancels seq and its phone-snoozed twin seq+"s".

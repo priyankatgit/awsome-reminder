@@ -24,8 +24,13 @@ func newClient(s *pushtest.Server) Client {
 func TestScheduleDeleteThenPost(t *testing.T) {
 	s := pushtest.New()
 	defer s.Close()
+	// The local clock runs 3 minutes fast: the relative delay still lands
+	// an hour after the server's now.
+	srvNow := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return srvNow }
 	c := newClient(s)
-	at := time.Now().Add(time.Hour).Truncate(time.Second)
+	c.Now = func() time.Time { return srvNow.Add(3 * time.Minute) }
+	at := srvNow.Add(3*time.Minute + time.Hour)
 
 	m := Message{Seq: "arseq1", DeliverAt: at, Title: "first", Body: "one", Priority: 4, Tags: []string{"alarm_clock"}}
 	if err := c.Schedule(context.Background(), m); err != nil {
@@ -40,7 +45,7 @@ func TestScheduleDeleteThenPost(t *testing.T) {
 	if len(p) != 1 || p[0].Body != "two" || p[0].Seq != "arseq1" || p[0].Topic != testTopic {
 		t.Fatalf("pending = %+v, want one with body two", p)
 	}
-	if !p[0].DeliverAt.Equal(at) || p[0].Priority != 4 || strings.Join(p[0].Tags, ",") != "alarm_clock" || p[0].Title != "first" {
+	if !p[0].DeliverAt.Equal(srvNow.Add(time.Hour)) || p[0].Priority != 4 || strings.Join(p[0].Tags, ",") != "alarm_clock" || p[0].Title != "first" {
 		t.Fatalf("pending fields = %+v", p[0])
 	}
 
@@ -60,15 +65,15 @@ func TestScheduleDeleteThenPost(t *testing.T) {
 			t.Errorf("%s carries X-Sequence-ID", r.Method)
 		}
 	}
-	if got, want := reqs[1].Header.Get("X-Delay"), strconv.FormatInt(at.Unix(), 10); got != want {
-		t.Fatalf("X-Delay = %q, want %q", got, want)
+	if got := reqs[1].Header.Get("X-Delay"); got != "3600s" {
+		t.Fatalf("X-Delay = %q, want 3600s", got)
 	}
 
 	// Delivered only once due.
-	if d := s.Deliver(at.Add(-time.Second)); len(d) != 0 {
+	if d := s.Deliver(srvNow.Add(time.Hour - time.Second)); len(d) != 0 {
 		t.Fatalf("delivered early: %+v", d)
 	}
-	if d := s.Deliver(at); len(d) != 1 || d[0].Body != "two" {
+	if d := s.Deliver(srvNow.Add(time.Hour)); len(d) != 1 || d[0].Body != "two" {
 		t.Fatalf("delivered = %+v", d)
 	}
 }
@@ -77,10 +82,9 @@ func TestFakeKeepsBothWithoutDelete(t *testing.T) {
 	// Models ntfy.sh: two path-form publishes of one seq both stay pending.
 	s := pushtest.New()
 	defer s.Close()
-	at := time.Now().Add(time.Hour).Unix()
 	for i := 0; i < 2; i++ {
 		req, _ := http.NewRequest("POST", s.URL+"/"+testTopic+"/dup", strings.NewReader("x"))
-		req.Header.Set("X-Delay", strconv.FormatInt(at, 10))
+		req.Header.Set("X-Delay", "1h")
 		resp, err := s.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +96,7 @@ func TestFakeKeepsBothWithoutDelete(t *testing.T) {
 	}
 	// Header-form sequence IDs can't be cancelled.
 	req, _ := http.NewRequest("POST", s.URL+"/"+testTopic, strings.NewReader("h"))
-	req.Header.Set("X-Delay", strconv.FormatInt(at, 10))
+	req.Header.Set("X-Delay", "1h")
 	req.Header.Set("X-Sequence-ID", "hdr")
 	resp, err := s.Client().Do(req)
 	if err != nil {
@@ -108,6 +112,56 @@ func TestFakeKeepsBothWithoutDelete(t *testing.T) {
 	}
 	if p := s.Pending(); len(p) != 1 || p[0].Body != "h" {
 		t.Fatalf("pending = %+v, want only the header-form message", p)
+	}
+}
+
+// X-Delay is whole seconds from the client's now, rounded up, at least
+// ntfy's 10 s.
+func TestScheduleDelayIsRelative(t *testing.T) {
+	s := pushtest.New()
+	defer s.Close()
+	now := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	c := newClient(s)
+	c.Now = func() time.Time { return now }
+	for _, tc := range []struct {
+		at   time.Time
+		want string
+	}{
+		{now.Add(2 * time.Minute), "120s"},
+		{now.Add(2*time.Minute + 300*time.Millisecond), "121s"},
+		{now.Add(3 * time.Second), "10s"},
+		{now.Add(-time.Minute), "10s"},
+		{now.Add(71 * time.Hour), "255600s"},
+	} {
+		if err := c.Schedule(context.Background(), Message{Seq: "d", DeliverAt: tc.at, Body: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		reqs := s.Requests()
+		if got := reqs[len(reqs)-1].Header.Get("X-Delay"); got != tc.want {
+			t.Errorf("DeliverAt now%+v: X-Delay = %q, want %q", tc.at.Sub(now), got, tc.want)
+		}
+	}
+}
+
+// The fake rejects what ntfy.sh rejects: absolute delays and ones under 10 s.
+func TestFakeRejectsAbsoluteDelay(t *testing.T) {
+	s := pushtest.New()
+	defer s.Close()
+	at := time.Now().Add(time.Hour)
+	for _, d := range []string{strconv.FormatInt(at.Unix(), 10), at.UTC().Format(time.RFC3339), "5s", "soon"} {
+		req, _ := http.NewRequest("POST", s.URL+"/"+testTopic+"/abs", strings.NewReader("x"))
+		req.Header.Set("X-Delay", d)
+		resp, err := s.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("X-Delay %q: status %d, want 400", d, resp.StatusCode)
+		}
+	}
+	if p := s.Pending(); len(p) != 0 {
+		t.Fatalf("pending = %+v", p)
 	}
 }
 

@@ -1,7 +1,10 @@
 // Package pushtest is a fake ntfy server for tests. It models the behaviour
 // verified against ntfy.sh (2026-11-28):
 //
-//   - POST /<topic>/<seq> (path form) with X-Delay stores a pending message;
+//   - POST /<topic>/<seq> (path form) with X-Delay stores a pending message.
+//     X-Delay must be a duration of at least 10 s ("120s", "1h"), taken
+//     relative to Server.Now; an absolute Unix timestamp or RFC 3339 time is
+//     rejected with 400, as ntfy.sh does;
 //     DELETE /<topic>/<seq> removes every pending message with that seq.
 //   - Publishing the same seq twice keeps both (no replace).
 //   - A sequence ID sent in the X-Sequence-ID header can't be cancelled.
@@ -74,7 +77,7 @@ type failRule struct {
 type Server struct {
 	*httptest.Server
 
-	// Now resolves relative X-Delay values such as "1h" (default time.Now).
+	// Now resolves X-Delay durations such as "1h" (default time.Now).
 	// Set it before use.
 	Now func() time.Time
 
@@ -302,14 +305,14 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, topic, seq stri
 		}
 	}
 	if d := r.Header.Get("X-Delay"); d != "" {
-		if n, err := strconv.ParseInt(d, 10, 64); err == nil {
-			m.DeliverAt = time.Unix(n, 0)
-		} else if dur, err := time.ParseDuration(d); err == nil {
-			m.DeliverAt = s.Now().Add(dur).Truncate(time.Second)
-		} else {
+		// Like ntfy.sh: only a duration (at least 10 s), relative to the
+		// server's clock; a Unix timestamp or RFC 3339 time is a 400.
+		dur, err := time.ParseDuration(d)
+		if err != nil || dur < 10*time.Second {
 			httpError(w, http.StatusBadRequest)
 			return
 		}
+		m.DeliverAt = s.Now().Add(dur).Truncate(time.Second)
 	}
 	s.mu.Lock()
 	s.nextID++
