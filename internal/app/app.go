@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -45,6 +46,8 @@ type Options struct {
 	// template image.
 	TrayIconLight, TrayIconDark, TrayIconTemplate []byte
 	Logger                                        *slog.Logger
+	DataDir                                       string   // resolved data folder (required)
+	Args                                          []string // launch args (os.Args[1:] minus restart plumbing)
 }
 
 // setTrayIcons picks the tray image for the platform: a template image on
@@ -64,19 +67,25 @@ func setTrayIcons(tray *application.SystemTray, o Options) {
 // Run opens the store, wires core, scheduler, exporter and hotkey to the
 // Wails application and blocks until the app quits.
 func Run(opts Options) error {
-	setAppUserModelID() // before any window exists (Windows taskbar button)
-	dbPath, err := paths.DBPath()
-	if err != nil {
-		return fmt.Errorf("db path: %w", err)
+	if opts.DataDir == "" {
+		return errors.New("no data folder given")
 	}
-	st, err := store.Open(dbPath)
+	lay, err := paths.NewLayout(opts.DataDir)
+	if err != nil {
+		return fmt.Errorf("data folder: %w", err)
+	}
+	if err := os.MkdirAll(lay.Root, 0o755); err != nil {
+		return fmt.Errorf("data folder: %w", err)
+	}
+	setAppUserModelID() // before any window exists (Windows taskbar button)
+	st, err := store.Open(lay.DB())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
 
 	c := core.New(st, time.Now, time.Local)
-	c.SetAttachmentDir(filepath.Join(filepath.Dir(dbPath), "attachments")) // DBPath lives in DataDir
+	c.SetAttachmentDir(lay.Attachments())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -119,6 +128,7 @@ func Run(opts Options) error {
 		},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
+			WebviewUserDataPath:           lay.Webview(),
 			// WebView2 memory (Task 12b, measured on the idle app with the
 			// capture window pre-created): --disable-gpu replaces the GPU
 			// process's hardware compositor with software compositing
@@ -178,7 +188,7 @@ func Run(opts Options) error {
 	// never at the caller's pace: Start returns at once.
 	syncCtl := newSyncController(syncDeps{
 		Core:     c,
-		Secret:   secret.New(filepath.Dir(dbPath), st),
+		Secret:   secret.New(lay.Root, st),
 		Open:     atlasOpen,
 		Host:     atlas.Host,
 		Classify: atlasClassify,
@@ -241,7 +251,7 @@ func Run(opts Options) error {
 	// Recurring reminders not marked done move on to their latest occurrence
 	// before each plan (ruling R15); the scheduler wakes at the next one.
 	sched.SetBeforePlan(svc.advanceRecurring)
-	vs := registerVoice(app, win)
+	vs := registerVoice(app, win, lay.Voice())
 	win.onAlertsClosed = svc.alertsClosed
 	// A settings window closed while recording a hotkey must not leave the
 	// global hotkey released.
@@ -301,7 +311,7 @@ func Run(opts Options) error {
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()
 		launches.Ready()
-		if a := parseLaunch(os.Args[1:]); a != launchNone {
+		if a := parseLaunch(opts.Args); a != launchNone {
 			go launch(a)
 		}
 	})

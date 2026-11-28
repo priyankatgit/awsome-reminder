@@ -16,15 +16,3 @@ func LegacyVoiceDir() (string, error) {
 	}
 	return filepath.Join(base, appDirName, "voice"), nil
 }
-
-// VoiceDir is LegacyVoiceDir, creating the directory if missing.
-func VoiceDir() (string, error) {
-	dir, err := LegacyVoiceDir()
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	return dir, nil
-}

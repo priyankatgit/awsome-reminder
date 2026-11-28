@@ -8,7 +8,6 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"awesome-reminder/internal/paths"
 	"awesome-reminder/internal/voice"
 )
 
@@ -64,9 +63,8 @@ func (v *VoiceService) ServiceShutdown() error {
 
 // registerVoice binds VoiceService to app and starts the wake word if it is
 // on and installed. A wake opens win's capture box without focus.
-func registerVoice(app *application.App, win *wailsWindows) *VoiceService {
-	dir, err := paths.VoiceDir()
-	if err != nil {
+func registerVoice(app *application.App, win *wailsWindows, dir string) *VoiceService {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("voice dir: %v", err)
 		dir = filepath.Join(os.TempDir(), "awesome-reminder-voice")
 	}
