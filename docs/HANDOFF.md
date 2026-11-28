@@ -17,6 +17,7 @@ Start here in a new session. Repo: `github.com/priyankatgit/awsome-reminder`. Ma
 | Phase 3: "Hey Awesome" wake word (sherpa-onnx), multi-task dictation, review list | `800ecf4` | `specs/2026-11-28-hands-free-voice-design.md`, `plans/2026-11-28-phase3-hands-free-voice.md` |
 | Data folder: first-run choice, move/adopt, unavailable screen, Settings section | `4bf6cfb`, `1221d6c` | `specs/2026-11-28-data-folder-design.md`, `plans/2026-11-28-data-folder.md` |
 | Phase 4: ntfy phone push, scheduled ahead on the server, Done/Snooze from the phone | `3297395` | `specs/2026-11-28-phone-push-ntfy-design.md`, `plans/2026-11-28-phase4-phone-push.md` |
+| Voice accuracy: speech model choice (Base / Small, recommended / Large v3 Turbo), beam search, vocabulary prompt, "Words I use" | see `git log --grep "voice accuracy"` | `specs/2026-11-28-voice-accuracy-design.md`, `plans/2026-11-28-voice-accuracy.md` |
 
 The UI rules are in `docs/superpowers/specs/2026-11-27-ui-design-guide.md`; follow them for any UI work.
 
@@ -35,6 +36,7 @@ All of these are listed in `docs/manual-test-checklist.md` with "needs human" or
 - **Phase 4, P1–P10:** a real phone with the ntfy app; pushes while the computer is closed; Done and Snooze from the phone.
 - **Phase 2:** sync between two machines (a single machine against real Atlas is already verified).
 - **Data folder:** the first run on the user's real profile (adopting or moving the existing `%APPDATA%` data).
+- **Voice accuracy, VA1–VA7:** the user's own voice, comparing Base and Small, and switching models in Settings.
 - **Earlier visual checks:** pinning the taskbar button, the row-to-panel morph at the default 900 px window, how the alert window shrinks.
 - **Not runnable here:** the macOS and Linux builds (the macOS grab and Dock code has never been compiled, since there's no Mac), and `go test -race` (it needs cgo/gcc, which this machine doesn't have).
 - **Clean-up:** two "Atlas sync test" items may still be in the user's Atlas `items` collection.
@@ -59,6 +61,8 @@ These are also saved as memory files:
 - **Phase 4 test topics:** the same keychain caveat applies to the ntfy token and topic.
 - **Line endings:** working copies are CRLF (`core.autocrlf=true`), so `gofmt -l` flags files. Check the committed content instead (`git show :file | gofmt -l`).
 - **Leftover worktrees:** about 11 under `.claude/worktrees/` are from finished work (all merged), and can be removed with `git worktree remove` once you've confirmed they have no uncommitted changes.
+
+- **GPU speech engine:** the laptop has an NVIDIA T600; a CUDA build of whisper.cpp would make Large v3 Turbo usable (it takes about 20 s per phrase on the CPU). See ruling 12 of the voice accuracy spec.
 
 ## Next ideas (not planned)
 

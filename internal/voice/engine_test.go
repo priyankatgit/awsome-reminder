@@ -117,6 +117,20 @@ func fakeServer() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"text": r.FormValue("prompt")})
 			return
 		}
+		if os.Getenv("FAKE_ECHO_PARAMS") == "1" {
+			var fields []string
+			for _, k := range []string{"language", "beam_size", "best_of", "temperature", "temperature_inc", "no_speech_thold", "suppress_nst"} {
+				fields = append(fields, k+"="+r.FormValue(k))
+			}
+			launch := []string{"-l=" + argAfter("-l"), "-bs=" + argAfter("-bs"), "-bo=" + argAfter("-bo")}
+			for _, a := range os.Args {
+				if a == "-sns" {
+					launch = append(launch, "-sns")
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"text": strings.Join(fields, " ") + " | " + strings.Join(launch, " ")})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"text": " hello world"})
 	})
 	_ = http.ListenAndServe(argAfter("--host")+":"+argAfter("--port"), mux)
@@ -339,5 +353,16 @@ func TestCLIEngineSendsPrompt(t *testing.T) {
 	got, err = e.Transcribe(context.Background(), testWAV, "")
 	if err != nil || strings.TrimSpace(got) != "" {
 		t.Errorf("empty prompt: %q, %v", got, err)
+	}
+}
+
+func TestServerEngineDecodingParams(t *testing.T) {
+	c, _ := fakeConfig(t, "server", "FAKE_ECHO_PARAMS=1")
+	e := NewServerEngine(c)
+	defer e.Close()
+	got, err := e.Transcribe(context.Background(), testWAV, "")
+	want := "language=en beam_size=5 best_of=5 temperature=0 temperature_inc=0.2 no_speech_thold=0.6 suppress_nst=true | -l=en -bs=5 -bo=5 -sns"
+	if err != nil || got != want {
+		t.Errorf("params = %q, %v; want %q", got, err, want)
 	}
 }

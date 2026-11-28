@@ -23,6 +23,19 @@ func TestCleanTranscript(t *testing.T) {
 		{"Every Monday at nine thirty standup", "Every Monday at 9:30 standup"},
 		{"Call one person about the two bugs", "Call one person about the two bugs"},
 		{"In an hour, coffee.", "In an hour coffee"},
+		{"Remind me to call Venkatesh tomorrow at 9.30 a.m. about the Aadhar update.", "Remind me to call Venkatesh tomorrow at 9:30 am about the Aadhar update"},
+		{"standup at 10.15", "standup at 10:15"},
+		{"Pay 2.50 to Ravi", "Pay 2.50 to Ravi"},
+		{"version 1.20 ships", "version 1.20 ships"},
+		{"Buy apples at 2.50 each", "Buy apples at 2.50 each"},
+		{"Increase SIP by 1.50 lakh", "Increase SIP by 1.50 lakh"},
+		{"sell at 3.25% interest", "sell at 3.25% interest"},
+		{"sell at 3.25 % interest", "sell at 3.25 % interest"},
+		{"call at 45.30", "call at 45.30"},
+		{"score 99.30 am", "score 99.30 am"},
+		{"meet at 18.45 tomorrow", "meet at 18:45 tomorrow"},
+		{"meet at 9.30", "meet at 9:30"},
+		{"call Ravi at 9.30 a.m", "call Ravi at 9:30 am"},
 	}
 	for _, c := range cases {
 		if got := CleanTranscript(c.in); got != c.want {

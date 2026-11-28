@@ -39,6 +39,26 @@ func (v *VoiceService) Install() error { return v.m.Install() }
 // CancelInstall stops a running download.
 func (v *VoiceService) CancelInstall() { v.m.CancelInstall() }
 
+// Models lists the speech models (size, hint, installed, active) for
+// Settings.
+func (v *VoiceService) Models() []voice.ModelInfo { return v.m.Models() }
+
+// SetModel chooses the speech model: recorded at once when nothing is
+// installed or the file is on disk, otherwise downloaded in the background
+// while the old model keeps working (progress as EventVoiceStatus, see
+// Status.target).
+func (v *VoiceService) SetModel(id string) error { return v.m.SetModel(id) }
+
+// CancelModelSwitch stops a background model download.
+func (v *VoiceService) CancelModelSwitch() { v.m.CancelModelSwitch() }
+
+// Words is the "Words I use" list that every transcription puts in the
+// speech engine's prompt.
+func (v *VoiceService) Words() string { return v.m.Words() }
+
+// SetWords saves the "Words I use" list (comma or line separated).
+func (v *VoiceService) SetWords(words string) error { return v.m.SetWords(words) }
+
 // Warm starts the speech engine while the user speaks.
 func (v *VoiceService) Warm(ctx context.Context) error { return v.m.Warm(ctx) }
 

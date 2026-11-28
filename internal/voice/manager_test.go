@@ -39,6 +39,7 @@ func (s *stubEngine) Running() bool { return false }
 func (s *stubEngine) Close()        {}
 
 type fixture struct {
+	url      string
 	cfg      Config
 	engine   *stubEngine
 	server   *bool
@@ -69,6 +70,8 @@ func newFixture(t *testing.T, goos string, modelBody []byte, servedModel []byte)
 			_, _ = w.Write(zipBytes)
 		case "/model":
 			_, _ = w.Write(servedModel)
+		case "/turbo":
+			_, _ = w.Write(turboBody)
 		default:
 			http.NotFound(w, r)
 		}
@@ -92,15 +95,32 @@ func newFixture(t *testing.T, goos string, modelBody []byte, servedModel []byte)
 			f.statuses = append(f.statuses, s)
 			f.mu.Unlock()
 		},
-		Model: &Asset{Name: "English model", URL: srv.URL + "/model", SHA256: sha(modelBody), Size: int64(len(modelBody))},
+		Models: []ModelSpec{{ID: ModelBase, Label: "Base", File: "ggml-base.en.bin",
+			Asset: Asset{Name: "English model", URL: srv.URL + "/model", SHA256: sha(modelBody), Size: int64(len(modelBody))}}},
 	}
+	f.url = srv.URL
 	if goos == "windows" {
 		f.cfg.EngineAsset = &Asset{Name: "speech engine", URL: srv.URL + "/engine", SHA256: sha(zipBytes), Size: int64(len(zipBytes)), Archive: "zip"}
 	}
 	return f
 }
 
-var modelBody = []byte(strings.Repeat("model!", 50_000))
+var (
+	modelBody = []byte(strings.Repeat("model!", 50_000))
+	turboBody = []byte(strings.Repeat("turbo!!", 60_000))
+)
+
+// modelSize is the size of the fixture's Base model.
+func (f *fixture) modelSize() int64 { return f.cfg.Models[0].Asset.Size }
+
+// addSmall adds the (recommended) Small entry served at /turbo (or at path).
+func (f *fixture) addSmall(path string) {
+	if path == "" {
+		path = "/turbo"
+	}
+	f.cfg.Models = append(f.cfg.Models, ModelSpec{ID: ModelSmall, Label: "Small", File: "ggml-small.en-q8_0.bin",
+		Asset: Asset{Name: "English model (Small)", URL: f.url + path, SHA256: sha(turboBody), Size: int64(len(turboBody))}})
+}
 
 func waitState(t *testing.T, m *Manager, state string) Status {
 	t.Helper()
@@ -116,7 +136,7 @@ func TestStatusAbsentOffersDownload(t *testing.T) {
 	f := newFixture(t, "windows", modelBody, nil)
 	m := NewManager(f.cfg)
 	st := m.Status()
-	want := f.cfg.EngineAsset.Size + f.cfg.Model.Size
+	want := f.cfg.EngineAsset.Size + f.modelSize()
 	if st.State != "absent" || st.Download != want || st.Engine != "bundled" {
 		t.Errorf("status = %+v, want absent/bundled with download %d", st, want)
 	}
@@ -145,14 +165,14 @@ func TestInstallThenReady(t *testing.T) {
 			t.Errorf("progress went back: %d after %d", s.Done, lastDone)
 		}
 		lastDone = s.Done
-		if s.Total != f.cfg.EngineAsset.Size+f.cfg.Model.Size {
+		if s.Total != f.cfg.EngineAsset.Size+f.modelSize() {
 			t.Errorf("total = %d", s.Total)
 		}
 	}
 	if strings.Join(phases, ",") != "engine,model" {
 		t.Errorf("phases = %v, want engine,model", phases)
 	}
-	if lastDone != f.cfg.EngineAsset.Size+f.cfg.Model.Size {
+	if lastDone != f.cfg.EngineAsset.Size+f.modelSize() {
 		t.Errorf("last done = %d, want total", lastDone)
 	}
 	if final.State != "ready" {
@@ -182,8 +202,8 @@ func TestInstallFailureReportsError(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.cfg.Dir, "models", "ggml-base.en.bin")); !os.IsNotExist(err) {
 		t.Error("no model file may be left after a failed download")
 	}
-	if st.Download != f.cfg.Model.Size {
-		t.Errorf("download = %d, want only the model left (%d)", st.Download, f.cfg.Model.Size)
+	if st.Download != f.modelSize() {
+		t.Errorf("download = %d, want only the model left (%d)", st.Download, f.modelSize())
 	}
 }
 
@@ -235,7 +255,7 @@ func TestSystemCLIEngine(t *testing.T) {
 	}
 	m := NewManager(f.cfg)
 	st := m.Status()
-	if st.State != "absent" || st.Download != f.cfg.Model.Size || st.Engine != "system" {
+	if st.State != "absent" || st.Download != f.modelSize() || st.Engine != "system" {
 		t.Fatalf("status = %+v", st)
 	}
 	if err := m.Install(); err != nil {
@@ -311,8 +331,8 @@ func TestTranscribeSegmentFilters(t *testing.T) {
 	if err != nil || got != "" {
 		t.Errorf("short segment = %q, %v; want empty", got, err)
 	}
-	if f.engine.prompt != "buy milk" {
-		t.Errorf("prompt = %q", f.engine.prompt)
+	if !strings.HasPrefix(f.engine.prompt, promptSentences[0]) || !strings.HasSuffix(f.engine.prompt, " buy milk") {
+		t.Errorf("prompt = %q, want the fixed passage then the recent text", f.engine.prompt)
 	}
 	got, err = m.TranscribeSegment(context.Background(), pcm, "", 2000)
 	if err != nil || got != "Thank you" {

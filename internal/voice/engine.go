@@ -51,6 +51,27 @@ const (
 	statusDLLNotFound = 0xC0000135
 )
 
+// Decoding (whisper-server b5454; see the voice accuracy spec): beam
+// search, temperature fallback on, non-speech tokens suppressed, English
+// forced (the multilingual Large v3 Turbo must not drift into Hindi).
+const (
+	beamSize = 5
+	bestOf   = 5
+)
+
+// decodeFields are sent with every /inference request. The server starts
+// each request from its launch defaults, so these restate the launch flags
+// and pin the rest.
+var decodeFields = [][2]string{
+	{"language", "en"},
+	{"beam_size", strconv.Itoa(beamSize)},
+	{"best_of", strconv.Itoa(bestOf)},
+	{"temperature", "0"},
+	{"temperature_inc", "0.2"},
+	{"no_speech_thold", "0.6"},
+	{"suppress_nst", "true"},
+}
+
 // ErrRuntimeMissing means the engine could not load a system library (on
 // Windows: the Visual C++ runtime).
 var ErrRuntimeMissing = errors.New("voice: the speech engine is missing a system library; install the Microsoft Visual C++ Redistributable (x64)")
@@ -159,6 +180,9 @@ func (s *ServerEngine) startLocked() (*serverProc, error) {
 		"-l", "en",
 		"-nt",
 		"--no-gpu",
+		"-bs", strconv.Itoa(beamSize),
+		"-bo", strconv.Itoa(bestOf),
+		"-sns",
 	)
 	p := &serverProc{
 		cmd:    cmd,
@@ -319,7 +343,9 @@ func (s *ServerEngine) Transcribe(ctx context.Context, wav []byte, prompt string
 		return "", err
 	}
 	_ = mw.WriteField("response_format", "json")
-	_ = mw.WriteField("temperature", "0")
+	for _, f := range decodeFields {
+		_ = mw.WriteField(f[0], f[1])
+	}
 	if prompt != "" {
 		_ = mw.WriteField("prompt", prompt)
 	}
