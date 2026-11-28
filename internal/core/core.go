@@ -295,26 +295,75 @@ func (c *Core) Done(id string) (model.Item, error) {
 // rather than the overdue one. A zero through is plain Done.
 func (c *Core) DoneThrough(id string, through time.Time) (model.Item, error) {
 	return c.mutate(id, func(it *model.Item, now time.Time) error {
-		done := now
-		it.DoneAt, it.SnoozeUntil = &done, nil
-		if it.RRule != "" && it.DueAt != nil {
-			after := now
-			if through.After(after) {
-				after = through
-			}
-			next, err := recur.Next(it.RRule, *it.DueAt, after, c.itemLoc(*it))
-			if err != nil {
-				return err
-			}
-			it.DueAt = &next
-			return nil
-		}
-		it.Status = model.StatusDone
-		if it.Reply {
-			it.ReplyOutcome = model.ReplyReplied
-		}
-		return nil
+		return c.doneThrough(it, now, through)
 	})
+}
+
+// doneThrough applies DoneThrough to it. Callers hold opMu.
+func (c *Core) doneThrough(it *model.Item, now, through time.Time) error {
+	done := now
+	it.DoneAt, it.SnoozeUntil = &done, nil
+	if it.RRule != "" && it.DueAt != nil {
+		after := now
+		if through.After(after) {
+			after = through
+		}
+		next, err := recur.Next(it.RRule, *it.DueAt, after, c.itemLoc(*it))
+		if err != nil {
+			return err
+		}
+		it.DueAt = &next
+		return nil
+	}
+	it.Status = model.StatusDone
+	if it.Reply {
+		it.ReplyOutcome = model.ReplyReplied
+	}
+	return nil
+}
+
+// DoneOccurrence is Done for a reply from elsewhere (a phone) about the
+// occurrence due at occ, compared in whole seconds. It applies, as
+// DoneThrough(id, occ), only when the item is open and occ is still a live
+// occurrence: the item has no due time (a reply accepts any occ), occ is its
+// due time, or the item recurs and occ is a later occurrence of its rule
+// that is not in the future (this computer has not advanced it yet, e.g. it
+// was asleep). Any other occ means the item was already moved on here
+// (advance, edit, snooze to a new due) and the reply is stale; completing a
+// later occurrence for it would be wrong. A missing or closed item, or a
+// stale occ, returns false and no error, and changes nothing.
+func (c *Core) DoneOccurrence(id string, occ time.Time) (applied bool, err error) {
+	_, err = c.mutate(id, func(it *model.Item, now time.Time) error {
+		if it.Status != model.StatusOpen || !c.liveOccurrence(*it, occ, now) {
+			return errUnchanged
+		}
+		applied = true
+		return c.doneThrough(it, now, occ)
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+// liveOccurrence reports whether occ (whole seconds) may still be completed
+// on it; see DoneOccurrence.
+func (c *Core) liveOccurrence(it model.Item, occ, now time.Time) bool {
+	if it.DueAt == nil {
+		return true
+	}
+	due := it.DueAt.Unix()
+	switch {
+	case occ.Unix() == due:
+		return true
+	case it.RRule == "" || occ.Unix() < due || occ.After(now):
+		return false
+	}
+	next, err := recur.Next(it.RRule, *it.DueAt, occ.Add(-time.Second), c.itemLoc(it))
+	return err == nil && next.Unix() == occ.Unix()
 }
 
 // AdvanceRecurring keeps recurring reminders reminding when they are not
@@ -543,6 +592,11 @@ const SettingsChangedElsewhere = "Saved. The reminder and reply settings were ch
 // and differ from s's, the stored ones are kept, only the local-only fields
 // are saved, and the returned note says so. Otherwise the note is "".
 func (c *Core) SaveSettings(s settings.Settings) (note string, err error) {
+	s.PushServer = strings.TrimRight(strings.TrimSpace(s.PushServer), "/")
+	s.PushTopic = strings.TrimSpace(s.PushTopic)
+	if s.PushEnabled && s.PushTopic == "" {
+		s.PushTopic = settings.NewPushTopic()
+	}
 	if err := s.Validate(); err != nil {
 		return "", err
 	}

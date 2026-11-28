@@ -2781,6 +2781,18 @@ legend.field-label {
   font-weight: var(--weight-medium);
 }
 
+/* ===== Settings: Phone push section (push-settings.ts) ===== */
+.push-qr {
+  width: calc(var(--space-6) * 5);
+  height: calc(var(--space-6) * 5);
+  image-rendering: pixelated;
+  border-radius: var(--radius-chip);
+}
+
+.push-qr[hidden] {
+  display: none;
+}
+
 /* ===== Settings: Voice section (voice-settings.ts) ===== */
 .settings-voice .field-help[hidden],
 .settings-voice .voice-consent[hidden],

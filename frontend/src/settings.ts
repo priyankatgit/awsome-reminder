@@ -5,6 +5,7 @@
 import { api, errorText, isMac, isWindows, type Settings } from "./api";
 import { el, keycaps } from "./dom";
 import { icons } from "./icons";
+import { mountPushSection, type PushForm } from "./push-settings";
 import { mountDataFolderSection } from "./data-folder-settings";
 import { mountSyncSection } from "./sync-settings";
 import { mountVoiceSection } from "./voice-settings";
@@ -133,6 +134,23 @@ interface Draft {
   // Go owns the shared-settings stamp; it is carried through untouched.
   sharedUpdatedAt?: number;
   sharedUpdatedBy?: string;
+  // Phone push (synced); the grace is in seconds.
+  pushEnabled: boolean;
+  pushServer: string;
+  pushTopic: string;
+  pushReplies: boolean;
+  pushHideText: boolean;
+  pushGrace: number;
+}
+
+/** Defaults for settings saved before Phone push (internal/settings Defaults). */
+const PUSH_SERVER = "https://ntfy.sh";
+const PUSH_GRACE = 2 * MIN;
+
+/** Grace in seconds; the default when missing or unparseable. */
+function pushGraceSec(g: string | undefined): number {
+  const n = g === undefined ? NaN : parseGoDuration(g);
+  return Number.isNaN(n) ? PUSH_GRACE : n;
 }
 
 function toDraft(s: Settings): Draft {
@@ -151,6 +169,12 @@ function toDraft(s: Settings): Draft {
     endOfDaySweep: s.endOfDaySweep,
     sharedUpdatedAt: s.sharedUpdatedAt,
     sharedUpdatedBy: s.sharedUpdatedBy,
+    pushEnabled: s.pushEnabled ?? false,
+    pushServer: s.pushServer ?? PUSH_SERVER,
+    pushTopic: s.pushTopic ?? "",
+    pushReplies: s.pushReplies ?? false,
+    pushHideText: s.pushHideText ?? false,
+    pushGrace: pushGraceSec(s.pushGrace),
   };
 }
 
@@ -170,6 +194,12 @@ function toSettings(d: Draft): Settings {
     endOfDaySweep: d.endOfDaySweep,
     sharedUpdatedAt: d.sharedUpdatedAt,
     sharedUpdatedBy: d.sharedUpdatedBy,
+    pushEnabled: d.pushEnabled,
+    pushServer: d.pushServer.trim(),
+    pushTopic: d.pushTopic.trim(),
+    pushReplies: d.pushReplies,
+    pushHideText: d.pushHideText,
+    pushGrace: goDuration(d.pushGrace),
   };
 }
 
@@ -188,6 +218,12 @@ function withStoredShared(d: Draft, stored: Draft): Draft {
     workDays: [...stored.workDays],
     endOfDay: stored.endOfDay,
     endOfDaySweep: stored.endOfDaySweep,
+    pushEnabled: stored.pushEnabled,
+    pushServer: stored.pushServer,
+    pushTopic: stored.pushTopic,
+    pushReplies: stored.pushReplies,
+    pushHideText: stored.pushHideText,
+    pushGrace: stored.pushGrace,
     sharedUpdatedAt: stored.sharedUpdatedAt,
     sharedUpdatedBy: stored.sharedUpdatedBy,
   };
@@ -372,6 +408,7 @@ const TEMPLATE = `
       </div>
     </form>
     <section class="settings-sync" id="sync-section"></section>
+    <section class="settings-sync settings-push" id="push-section"></section>
     <section class="settings-sync settings-voice" id="voice-section"></section>
     <section class="settings-sync settings-data-folder" id="data-folder-section"></section>
   </main>
@@ -524,6 +561,43 @@ export function mountSettings(root: HTMLElement): void {
     leadAdd.placeholder = full ? "5 of 5" : "+ add";
   }
 
+  // Phone push: its form fields live in the draft, so Save and the dirty
+  // check cover them; its buttons act at once (push-settings.ts).
+  const pushForm: PushForm = {
+    get: () =>
+      draft && {
+        enabled: draft.pushEnabled,
+        server: draft.pushServer,
+        topic: draft.pushTopic,
+        replies: draft.pushReplies,
+        hideText: draft.pushHideText,
+        graceSec: draft.pushGrace,
+      },
+    patch: (p) => {
+      if (!draft) return;
+      if (p.enabled !== undefined) draft.pushEnabled = p.enabled;
+      if (p.server !== undefined) draft.pushServer = p.server;
+      if (p.topic !== undefined) draft.pushTopic = p.topic;
+      if (p.replies !== undefined) draft.pushReplies = p.replies;
+      if (p.hideText !== undefined) draft.pushHideText = p.hideText;
+      if (p.graceSec !== undefined) draft.pushGrace = p.graceSec;
+      setError("form", "");
+      changed();
+    },
+    // Go saved a new topic (and re-stamped the shared settings): both copies take it.
+    adoptSaved: (s) => {
+      const stored = toDraft(s);
+      for (const d of [saved, draft]) {
+        if (!d) continue;
+        d.pushTopic = stored.pushTopic;
+        d.sharedUpdatedAt = stored.sharedUpdatedAt;
+        d.sharedUpdatedBy = stored.sharedUpdatedBy;
+      }
+      changed();
+    },
+  };
+  const push = mountPushSection($("push-section"), pushForm);
+
   function fill(): void {
     if (!draft) return;
     renderHotkey();
@@ -537,6 +611,7 @@ export function mountSettings(root: HTMLElement): void {
     exportPath.value = draft.exportPath;
     autostart.checked = draft.autostart;
     pendingCount.checked = draft.showPendingCount;
+    push.render();
   }
 
   function dirty(): boolean {
@@ -797,6 +872,8 @@ export function mountSettings(root: HTMLElement): void {
         // Keep the draft; the next save may then be checked as stale.
       }
       saved = { ...draft, leads: [...draft.leads] };
+      // A first enable gets its topic from Go on save: show it and its QR.
+      void push.refresh();
       await refreshStatus();
     }
     saving = false;

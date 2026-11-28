@@ -235,7 +235,7 @@ func sweep(replies []model.Item, r Rules, now time.Time, notified func(string) b
 				return nil, false, at
 			}
 		case !notified(key):
-			silent := !slices.ContainsFunc(replies, func(it model.Item) bool { return it.CreatedAt.Before(at) })
+			silent := !sweepShows(replies, at)
 			return &candidate{
 				alert: Alert{Key: key, DueAt: at, Kind: KindSweep, People: people(replies),
 					Missed: now.Sub(at) > missedAfter},
@@ -244,6 +244,12 @@ func sweep(replies []model.Item, r Rules, now time.Time, notified func(string) b
 		}
 	}
 	return nil, false, r.nextWorkDay(now, r.EndOfDay, 17, 30)
+}
+
+// sweepShows reports whether a sweep at at lists anything: some open reply
+// was saved before it. One that lists nothing is silent.
+func sweepShows(replies []model.Item, at time.Time) bool {
+	return slices.ContainsFunc(replies, func(it model.Item) bool { return it.CreatedAt.Before(at) })
 }
 
 // people lists who the replies are owed to, once each (matched trimmed and
@@ -318,32 +324,42 @@ func (r Rules) nextWorkDay(now time.Time, clock string, hh, mm int) time.Time {
 // nudges returns the times of an open reply's latest nudge at or before now
 // and of its first nudge after now (either may be missing), leaving out the
 // ones before CreatedAt or at or before snoozed (zero if not snoozed).
+func nudges(it model.Item, r Rules, now, snoozed time.Time) []time.Time {
+	var last, next time.Time
+	nudgeTimes(it, r, snoozed, func(at time.Time) bool {
+		if at.After(now) {
+			next = at
+			return false
+		}
+		last = at
+		return true
+	})
+	return compact(last, next)
+}
+
+// nudgeTimes calls yield with each nudge time of an open reply in order,
+// leaving out the ones before CreatedAt or at or before snoozed (zero if not
+// snoozed), until yield returns false or there are no more.
 //
 // Without a due time the first nudge is CreatedAt+2h on any day; with one,
 // the item's normal alerts come first. Then it is nudged at DefaultTime on
 // each working day after the date of that first nudge (or of the due time).
 // Dates and wall-clock times are in r.Loc.
-func nudges(it model.Item, r Rules, now, snoozed time.Time) []time.Time {
+func nudgeTimes(it model.Item, r Rules, snoozed time.Time, yield func(time.Time) bool) {
 	loc := r.loc()
-
-	var last time.Time
-	keep := func(at time.Time) bool { // false once past now; then at is the next nudge
+	emit := func(at time.Time) bool { // false to stop
 		if at.Before(it.CreatedAt) || (!snoozed.IsZero() && !at.After(snoozed)) {
 			return true
 		}
-		if at.After(now) {
-			return false
-		}
-		last = at
-		return true
+		return yield(at)
 	}
 	var base time.Time // the date the working-day nudges follow
 	if it.DueAt != nil {
 		base = it.DueAt.In(loc)
 	} else {
 		first := it.CreatedAt.Add(firstNudge)
-		if !keep(first) {
-			return compact(last, first)
+		if !emit(first) {
+			return
 		}
 		base = first.In(loc)
 	}
@@ -360,11 +376,10 @@ func nudges(it model.Item, r Rules, now, snoozed time.Time) []time.Time {
 			}
 		}
 		if !found { // no working days: nothing after the first nudge
-			return compact(last, time.Time{})
+			return
 		}
-		at := r.at(day, r.DefaultTime, 9, 0)
-		if !keep(at) {
-			return compact(last, at)
+		if !emit(r.at(day, r.DefaultTime, 9, 0)) {
+			return
 		}
 	}
 }

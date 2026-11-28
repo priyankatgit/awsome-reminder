@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/oklog/ulid/v2 v2.1.2
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/teambition/rrule-go v1.8.2
 	github.com/wailsapp/wails/v3 v3.1.0
 	github.com/zalando/go-keyring v0.2.8

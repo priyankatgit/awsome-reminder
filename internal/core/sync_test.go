@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
@@ -717,5 +718,43 @@ func TestApplyRemoteReplyKeepsSweep(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("sweep did not fire: %+v", fire)
+	}
+}
+
+// Settings from an older device carry no push fields: they must not switch push
+// off or blank the topic here.
+func TestApplyRemoteSharedKeepsPushFromOldDoc(t *testing.T) {
+	e := newEnv(t)
+	s, _ := e.c.Settings()
+	s.PushEnabled, s.PushTopic, s.PushHideText = true, "ar-keepme", true
+	if _, err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	remote := s.Shared()
+	remote.PushEnabled, remote.PushServer, remote.PushTopic, remote.PushReplies, remote.PushHideText, remote.PushGrace = false, "", "", false, false, 0
+	remote.DefaultTime = "07:15"
+	ok, err := e.c.ApplyRemoteShared(remote, e.now.Add(time.Hour), "dev-old")
+	if err != nil || !ok {
+		t.Fatalf("applied=%v err=%v", ok, err)
+	}
+	got, _ := e.c.Settings()
+	if got.DefaultTime != "07:15" {
+		t.Fatalf("other fields not applied: %q", got.DefaultTime)
+	}
+	if !got.PushEnabled || got.PushTopic != "ar-keepme" || !got.PushHideText || got.PushServer != settings.DefaultPushServer || got.PushGrace != s.PushGrace {
+		t.Fatalf("push fields lost: %+v", got)
+	}
+}
+
+func TestCoreSaveSettingsFillsTopic(t *testing.T) {
+	e := newEnv(t)
+	s, _ := e.c.Settings()
+	s.PushEnabled, s.PushTopic, s.PushServer = true, "", " https://ntfy.sh/ "
+	if _, err := e.c.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.c.Settings()
+	if !regexp.MustCompile(`^ar-[a-z2-7]{26}$`).MatchString(got.PushTopic) || got.PushServer != "https://ntfy.sh" {
+		t.Fatalf("topic %q server %q", got.PushTopic, got.PushServer)
 	}
 }

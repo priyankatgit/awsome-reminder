@@ -5,24 +5,22 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 const (
-	metaKey  = "sync_uri_enc"
-	keyFile  = "sync.key"
 	prefix   = "v1:"
 	keyBytes = 32
 )
 
-var aad = []byte("awesome-reminder atlas-uri v1")
+func (s *store) errUnreadable() error {
+	return fmt.Errorf("the saved %s can't be read; paste it again", s.n().noun)
+}
 
-var errUnreadable = errors.New("the saved connection string can't be read; paste it again")
-
-func (s *store) keyPath() string { return filepath.Join(s.dataDir, keyFile) }
+func (s *store) keyPath() string { return filepath.Join(s.dataDir, s.n().keyFile) }
 
 // loadKey reads the key file, creating it when create is set and it is absent.
 func (s *store) loadKey(create bool) ([]byte, error) {
@@ -31,7 +29,7 @@ func (s *store) loadKey(create bool) ([]byte, error) {
 		return b, nil
 	}
 	if !create {
-		return nil, errUnreadable
+		return nil, s.errUnreadable()
 	}
 	key := make([]byte, keyBytes)
 	if _, err := rand.Read(key); err != nil {
@@ -67,12 +65,12 @@ func (s *store) fileSet(v string) error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
-	sealed := gcm.Seal(nonce, nonce, []byte(v), aad) // nonce ‖ ciphertext
-	return s.meta.SetMeta(metaKey, prefix+base64.StdEncoding.EncodeToString(sealed))
+	sealed := gcm.Seal(nonce, nonce, []byte(v), s.n().aad) // nonce ‖ ciphertext
+	return s.meta.SetMeta(s.n().metaKey, prefix+base64.StdEncoding.EncodeToString(sealed))
 }
 
 func (s *store) fileGet() (string, error) {
-	enc, ok, err := s.meta.Meta(metaKey)
+	enc, ok, err := s.meta.Meta(s.n().metaKey)
 	if err != nil {
 		return "", err
 	}
@@ -80,11 +78,11 @@ func (s *store) fileGet() (string, error) {
 		return "", ErrNotFound
 	}
 	if !strings.HasPrefix(enc, prefix) {
-		return "", errUnreadable
+		return "", s.errUnreadable()
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(enc, prefix))
 	if err != nil {
-		return "", errUnreadable
+		return "", s.errUnreadable()
 	}
 	key, err := s.loadKey(false)
 	if err != nil {
@@ -92,18 +90,18 @@ func (s *store) fileGet() (string, error) {
 	}
 	gcm, err := newGCM(key)
 	if err != nil || len(raw) < gcm.NonceSize() {
-		return "", errUnreadable
+		return "", s.errUnreadable()
 	}
 	n := gcm.NonceSize()
-	pt, err := gcm.Open(nil, raw[:n], raw[n:], aad)
+	pt, err := gcm.Open(nil, raw[:n], raw[n:], s.n().aad)
 	if err != nil {
-		return "", errUnreadable
+		return "", s.errUnreadable()
 	}
 	return string(pt), nil
 }
 
 func (s *store) fileDelete() error {
-	if err := s.meta.DeleteMeta(metaKey); err != nil {
+	if err := s.meta.DeleteMeta(s.n().metaKey); err != nil {
 		return err
 	}
 	if err := os.Remove(s.keyPath()); err != nil && !os.IsNotExist(err) {

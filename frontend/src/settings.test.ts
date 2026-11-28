@@ -11,6 +11,7 @@ const h = vi.hoisted(() => {
     loads: 0,
     recording: [] as boolean[],
     status: { hotkeyErr: "", replyHotkeyErr: "" },
+    pushForm: undefined as unknown as { get(): unknown; patch(p: Record<string, unknown>): void },
   };
 });
 vi.mock("./api", () => ({
@@ -47,6 +48,12 @@ vi.mock("./api", () => ({
 }));
 vi.mock("./sync-settings", () => ({ mountSyncSection: () => {} }));
 vi.mock("./voice-settings", () => ({ mountVoiceSection: () => {} }));
+vi.mock("./push-settings", () => ({
+  mountPushSection: (_h: HTMLElement, form: never) => {
+    h.pushForm = form;
+    return { render() {}, refresh: async () => {} };
+  },
+}));
 vi.mock("./data-folder-settings", () => ({ mountDataFolderSection: () => {} }));
 import { mountSettings } from "./settings";
 
@@ -107,6 +114,19 @@ describe("Replies settings", () => {
       endOfDay: "18:15",
       endOfDaySweep: false,
     });
+  });
+
+  it("saves the push fields through the form, grace as a Go duration", async () => {
+    // Missing push fields take the Go defaults (replies off).
+    const r = await mount();
+    expect(h.pushForm.get()).toMatchObject({ enabled: false, server: "https://ntfy.sh", replies: false, graceSec: 120 });
+    expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(true);
+    h.pushForm.patch({ enabled: true, graceSec: 300, hideText: true });
+    expect(q<HTMLButtonElement>(r, "#settings-save").disabled).toBe(false);
+    q<HTMLFormElement>(r, "#settings-form").requestSubmit();
+    await tick();
+    await tick();
+    expect(h.saved[0]).toMatchObject({ pushEnabled: true, pushGrace: "5m0s", pushHideText: true, pushServer: "https://ntfy.sh", pushTopic: "" });
   });
 
   it("keeps work days in Monday..Sunday order", async () => {

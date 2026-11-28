@@ -347,14 +347,17 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 		return fail("database", err)
 	}
 
-	// 2. Attachments and sync key.
+	// 2. Attachments and the secret key files (sync.key, push.key).
 	m.emit("attachments")
 	if err = m.copyTree(from.Attachments(), to.Attachments()); err != nil {
 		return fail("attachments", err)
 	}
-	if exists(from.SyncKey()) {
-		if err = m.copyFile(from.SyncKey(), to.SyncKey()); err != nil {
-			return fail("attachments", err)
+	keys := []filePair{{from.SyncKey(), to.SyncKey()}, {from.PushKey(), to.PushKey()}}
+	for _, k := range keys {
+		if exists(k.src) {
+			if err = m.copyFile(k.src, k.dst); err != nil {
+				return fail("attachments", err)
+			}
 		}
 	}
 	if err = afterCopy("attachments"); err != nil {
@@ -378,7 +381,7 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 	if err = ctx.Err(); err != nil {
 		return fail("checking", err)
 	}
-	if err = checkCopy(src, tmp, m.pairs, from.SyncKey(), to.SyncKey()); err != nil {
+	if err = checkCopy(src, tmp, m.pairs, keys); err != nil {
 		return fail("checking", err)
 	}
 	closeSrc()
@@ -414,8 +417,8 @@ func Move(ctx context.Context, from, to paths.Layout, onProgress func(Progress))
 	return nil
 }
 
-// checkCopy verifies the copied database, files and sync key.
-func checkCopy(src *sql.DB, tmp string, pairs []filePair, srcKey, dstKey string) error {
+// checkCopy verifies the copied database, files and secret key files.
+func checkCopy(src *sql.DB, tmp string, pairs []filePair, keys []filePair) error {
 	cp, err := openRaw(tmp)
 	if err != nil {
 		return err
@@ -468,17 +471,20 @@ func checkCopy(src *sql.DB, tmp string, pairs []filePair, srcKey, dstKey string)
 			return fmt.Errorf("%s was copied incompletely", filepath.Base(p.dst))
 		}
 	}
-	if exists(srcKey) {
-		a, err := os.ReadFile(srcKey)
+	for _, k := range keys {
+		if !exists(k.src) {
+			continue
+		}
+		a, err := os.ReadFile(k.src)
 		if err != nil {
 			return err
 		}
-		b, err := os.ReadFile(dstKey)
+		b, err := os.ReadFile(k.dst)
 		if err != nil {
 			return err
 		}
 		if !bytes.Equal(a, b) {
-			return errors.New("sync.key was copied incorrectly")
+			return fmt.Errorf("%s was copied incorrectly", filepath.Base(k.dst))
 		}
 	}
 	return nil

@@ -66,6 +66,9 @@ type Deps struct {
 	// Sync is the sync controller behind the Sync* bindings; nil reports
 	// sync as off.
 	Sync *syncController
+	// Push is phone push behind the Push* bindings and the dismiss hook;
+	// nil reports push as off.
+	Push *pushController
 	// DataDir is the data folder in use; Restart quits and relaunches the app
 	// (DataFolder bindings).
 	DataDir string

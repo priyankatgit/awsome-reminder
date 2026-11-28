@@ -1087,3 +1087,20 @@ func TestSnoozeRepliesUntil(t *testing.T) {
 		t.Fatalf("err %v changes %d ids %v", err, changes, ids)
 	}
 }
+
+func TestDoneOccurrenceApplied(t *testing.T) {
+	e := newEnv(t)
+	it := mustCapture(t, e, "today 5pm deploy")
+	if ok, err := e.c.DoneOccurrence(it.ID, it.DueAt.Add(time.Hour)); ok || err != nil {
+		t.Fatalf("other occurrence: applied %v err %v", ok, err)
+	}
+	if ok, err := e.c.DoneOccurrence(it.ID, *it.DueAt); !ok || err != nil {
+		t.Fatalf("current occurrence: applied %v err %v", ok, err)
+	}
+	if ok, err := e.c.DoneOccurrence(it.ID, *it.DueAt); ok || err != nil {
+		t.Fatalf("already done: applied %v err %v", ok, err)
+	}
+	if ok, err := e.c.DoneOccurrence("missing", *it.DueAt); ok || err != nil {
+		t.Fatalf("missing: applied %v err %v", ok, err)
+	}
+}

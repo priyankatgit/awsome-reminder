@@ -12,7 +12,7 @@ import (
 var ownedFiles = []string{
 	"awesome.db", "awesome.db-wal", "awesome.db-shm",
 	"awesome.db.moved", "awesome.db-wal.moved", "awesome.db-shm.moved",
-	"sync.key", "awesome.log", "setup.log",
+	"sync.key", "push.key", "awesome.log", "setup.log",
 }
 
 func legacyExe() string {

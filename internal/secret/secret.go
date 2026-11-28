@@ -5,6 +5,7 @@ package secret
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 
 	"github.com/zalando/go-keyring"
@@ -12,9 +13,26 @@ import (
 
 const (
 	service = "dev.awesome-reminder.app"
-	account = "atlas-uri"
 
 	kindFile = "Encrypted file on this computer"
+)
+
+// Name identifies one secret: its keychain account, meta key and key file.
+type Name struct {
+	account string
+	metaKey string
+	keyFile string
+	noun    string // how the UI refers to the value, used in error text
+	aad     []byte
+}
+
+var (
+	// AtlasURI is the Atlas connection string.
+	AtlasURI = Name{account: "atlas-uri", metaKey: "sync_uri_enc", keyFile: "sync.key",
+		noun: "connection string", aad: []byte("awesome-reminder atlas-uri v1")}
+	// PushToken is the ntfy access token.
+	PushToken = Name{account: "ntfy-token", metaKey: "push_token_enc", keyFile: "push.key",
+		noun: "access token", aad: []byte("awesome-reminder ntfy-token v1")}
 )
 
 // ErrNotFound means no connection string has been saved.
@@ -52,18 +70,35 @@ type store struct {
 	dataDir string
 	meta    MetaStore
 	kc      keychain
+	name    Name // zero value means AtlasURI
+}
+
+func (s *store) n() Name {
+	if s.name.account == "" {
+		return AtlasURI
+	}
+	return s.name
 }
 
 // New returns a Store backed by the OS keychain, falling back to an
 // encrypted file under dataDir plus the meta table.
-func New(dataDir string, meta MetaStore) Store { return newStore(dataDir, meta, osKeychain{}) }
+func New(dataDir string, meta MetaStore) Store { return NewNamed(dataDir, meta, AtlasURI) }
+
+// NewNamed is New for the secret called name.
+func NewNamed(dataDir string, meta MetaStore, name Name) Store {
+	return newNamedStore(dataDir, meta, osKeychain{}, name)
+}
 
 func newStore(dataDir string, meta MetaStore, kc keychain) Store {
-	return &store{dataDir: dataDir, meta: meta, kc: kc}
+	return newNamedStore(dataDir, meta, kc, AtlasURI)
+}
+
+func newNamedStore(dataDir string, meta MetaStore, kc keychain, name Name) Store {
+	return &store{dataDir: dataDir, meta: meta, kc: kc, name: name}
 }
 
 func (s *store) Get() (string, error) {
-	if v, err := s.kc.Get(service, account); err == nil {
+	if v, err := s.kc.Get(service, s.n().account); err == nil {
 		return v, nil
 	}
 	// Not found or keychain unavailable: look at the fallback.
@@ -71,19 +106,19 @@ func (s *store) Get() (string, error) {
 }
 
 func (s *store) Set(v string) error {
-	if err := s.kc.Set(service, account, v); err == nil {
+	if err := s.kc.Set(service, s.n().account, v); err == nil {
 		// Drop any older fallback copy so Kind and Get stay unambiguous.
 		return s.fileDelete()
 	}
 	if err := s.fileSet(v); err != nil {
 		return err
 	}
-	_ = s.kc.Delete(service, account) // clear a stale keychain entry; best effort
+	_ = s.kc.Delete(service, s.n().account) // clear a stale keychain entry; best effort
 	return nil
 }
 
 func (s *store) Delete() error {
-	kcErr := s.kc.Delete(service, account)
+	kcErr := s.kc.Delete(service, s.n().account)
 	if errors.Is(kcErr, keyring.ErrNotFound) {
 		kcErr = nil
 	}
@@ -91,18 +126,18 @@ func (s *store) Delete() error {
 	if kcErr != nil {
 		// With no usable keychain every call errors; only report when the
 		// entry demonstrably survives.
-		if v, err := s.kc.Get(service, account); err == nil && v != "" {
-			return errors.Join(errors.New("couldn't remove the connection string from the system keychain"), fileErr)
+		if v, err := s.kc.Get(service, s.n().account); err == nil && v != "" {
+			return errors.Join(fmt.Errorf("couldn't remove the %s from the system keychain", s.n().noun), fileErr)
 		}
 	}
 	return fileErr
 }
 
 func (s *store) Kind() string {
-	if _, ok, _ := s.meta.Meta(metaKey); ok {
+	if _, ok, _ := s.meta.Meta(s.n().metaKey); ok {
 		return kindFile
 	}
-	if _, err := s.kc.Get(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if _, err := s.kc.Get(service, s.n().account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return kindFile
 	}
 	switch runtime.GOOS {
@@ -118,12 +153,21 @@ func (s *store) Kind() string {
 // sysKeychain is the keychain ClearKeychain acts on, swappable for tests.
 var sysKeychain keychain = osKeychain{}
 
-// ClearKeychain removes the saved connection string from the OS keychain. A
-// missing entry is not an error, and neither is a keychain that can't be used
-// at all (Linux without Secret Service): like Store.Delete, it fails only when
-// the entry demonstrably survives. The encrypted-file fallback lives in the
-// data folder and is not touched.
+// ClearKeychain removes the saved secrets (the connection string and the
+// phone push access token) from the OS keychain, where one entry is shared by
+// every data folder. A missing entry is not an error, and neither is a
+// keychain that can't be used at all (Linux without Secret Service): like
+// Store.Delete, it fails only when an entry demonstrably survives. The
+// encrypted-file fallbacks live in the data folder and are not touched.
 func ClearKeychain() error {
+	var errs []error
+	for _, n := range []Name{AtlasURI, PushToken} {
+		errs = append(errs, clearAccount(n.account))
+	}
+	return errors.Join(errs...)
+}
+
+func clearAccount(account string) error {
 	err := sysKeychain.Delete(service, account)
 	if err == nil || errors.Is(err, keyring.ErrNotFound) {
 		return nil

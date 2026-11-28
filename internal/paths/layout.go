@@ -25,6 +25,7 @@ func (l Layout) DB() string          { return filepath.Join(l.Root, DBFile) }
 func (l Layout) Log() string         { return filepath.Join(l.Root, "awesome.log") }
 func (l Layout) Attachments() string { return filepath.Join(l.Root, "attachments") }
 func (l Layout) SyncKey() string     { return filepath.Join(l.Root, "sync.key") }
+func (l Layout) PushKey() string     { return filepath.Join(l.Root, "push.key") }
 
 // Voice is the legacy cache folder for the standard root (not created here),
 // otherwise <root>/voice.

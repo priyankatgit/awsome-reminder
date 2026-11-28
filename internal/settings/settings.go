@@ -46,6 +46,19 @@ type Settings struct {
 	EndOfDay string `json:"endOfDay"`
 	// EndOfDaySweep turns the end-of-day sweep of owed replies on. Shared.
 	EndOfDaySweep bool `json:"endOfDaySweep"`
+	// PushEnabled turns optional phone push (ntfy) on. Shared.
+	PushEnabled bool `json:"pushEnabled"`
+	// PushServer is the ntfy server base URL ("https://ntfy.sh"). Shared.
+	PushServer string `json:"pushServer"`
+	// PushTopic is the secret ntfy topic ("ar-" + 26 base32 chars). Shared.
+	PushTopic string `json:"pushTopic"`
+	// PushReplies lets the phone push owed-reply nudges and the sweep. Shared.
+	PushReplies bool `json:"pushReplies"`
+	// PushHideText sends a generic message instead of the item text. Shared.
+	PushHideText bool `json:"pushHideText"`
+	// PushGrace is how long past a delivery time the computer has to show the
+	// alert before the phone one is due (0, 2m, 5m or 10m). Shared.
+	PushGrace time.Duration `json:"pushGrace"`
 	// SharedUpdatedAt and SharedUpdatedBy stamp the last change to the shared
 	// fields (see Shared), for last-writer-wins sync. JSON: unix ms and the
 	// device id; missing means zero and "".
@@ -62,12 +75,17 @@ type Shared struct {
 	WorkDays                               []string
 	EndOfDay                               string
 	EndOfDaySweep                          bool
+	PushEnabled                            bool
+	PushServer, PushTopic                  string
+	PushReplies, PushHideText              bool
+	PushGrace                              time.Duration
 }
 
 // Shared returns the synced fields.
 func (s Settings) Shared() Shared {
 	return Shared{append([]time.Duration(nil), s.LeadTimes...), s.DefaultTime, s.NextWeekDay, s.NextWeekTime,
-		slices.Clone(s.WorkDays), s.EndOfDay, s.EndOfDaySweep}
+		slices.Clone(s.WorkDays), s.EndOfDay, s.EndOfDaySweep,
+		s.PushEnabled, s.PushServer, s.PushTopic, s.PushReplies, s.PushHideText, s.PushGrace}
 }
 
 // WithShared returns s with only the shared fields replaced by p.
@@ -75,6 +93,8 @@ func (s Settings) WithShared(p Shared) Settings {
 	s.LeadTimes = append([]time.Duration(nil), p.LeadTimes...)
 	s.DefaultTime, s.NextWeekDay, s.NextWeekTime = p.DefaultTime, p.NextWeekDay, p.NextWeekTime
 	s.WorkDays, s.EndOfDay, s.EndOfDaySweep = slices.Clone(p.WorkDays), p.EndOfDay, p.EndOfDaySweep
+	s.PushEnabled, s.PushServer, s.PushTopic, s.PushReplies, s.PushHideText, s.PushGrace =
+		p.PushEnabled, p.PushServer, p.PushTopic, p.PushReplies, p.PushHideText, p.PushGrace
 	return s
 }
 
@@ -90,7 +110,9 @@ func (p Shared) Equal(q Shared) bool {
 		}
 	}
 	return p.DefaultTime == q.DefaultTime && p.NextWeekDay == q.NextWeekDay && p.NextWeekTime == q.NextWeekTime &&
-		slices.Equal(canonDays(p.WorkDays), canonDays(q.WorkDays)) && p.EndOfDay == q.EndOfDay && p.EndOfDaySweep == q.EndOfDaySweep
+		slices.Equal(canonDays(p.WorkDays), canonDays(q.WorkDays)) && p.EndOfDay == q.EndOfDay && p.EndOfDaySweep == q.EndOfDaySweep &&
+		p.PushEnabled == q.PushEnabled && p.PushServer == q.PushServer && p.PushTopic == q.PushTopic &&
+		p.PushReplies == q.PushReplies && p.PushHideText == q.PushHideText && p.PushGrace == q.PushGrace
 }
 
 // wire mirrors Settings with lead times as duration strings.
@@ -111,6 +133,13 @@ type wire struct {
 	WorkDays      []string `json:"workDays"`
 	EndOfDay      *string  `json:"endOfDay"`
 	EndOfDaySweep *bool    `json:"endOfDaySweep"`
+	// Push fields: pointers so settings saved before Phase 4 get the defaults.
+	PushEnabled  bool    `json:"pushEnabled"`
+	PushServer   *string `json:"pushServer"`
+	PushTopic    string  `json:"pushTopic"`
+	PushReplies  *bool   `json:"pushReplies"`
+	PushHideText bool    `json:"pushHideText"`
+	PushGrace    *string `json:"pushGrace"`
 	// Unix ms; a pointer so a missing field decodes to the zero time.
 	SharedUpdatedAt *int64 `json:"sharedUpdatedAt"`
 	SharedUpdatedBy string `json:"sharedUpdatedBy"`
@@ -118,8 +147,10 @@ type wire struct {
 
 // MarshalJSON encodes LeadTimes as duration strings such as "1h0m0s".
 func (s Settings) MarshalJSON() ([]byte, error) {
+	grace := s.PushGrace.String()
 	w := wire{s.Hotkey, make([]string, len(s.LeadTimes)), s.DefaultTime, s.NextWeekDay, s.NextWeekTime, s.ExportPath, s.Autostart, &s.ShowPendingCount,
-		&s.ReplyHotkey, slices.Clone(s.WorkDays), &s.EndOfDay, &s.EndOfDaySweep, nil, s.SharedUpdatedBy}
+		&s.ReplyHotkey, slices.Clone(s.WorkDays), &s.EndOfDay, &s.EndOfDaySweep,
+		s.PushEnabled, &s.PushServer, s.PushTopic, &s.PushReplies, s.PushHideText, &grace, nil, s.SharedUpdatedBy}
 	if w.WorkDays == nil {
 		w.WorkDays = []string{}
 	}
@@ -169,8 +200,23 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	if w.WorkDays != nil {
 		days = canonDays(w.WorkDays)
 	}
+	server, replies, grace := d.PushServer, d.PushReplies, d.PushGrace
+	if w.PushServer != nil {
+		server = *w.PushServer
+	}
+	if w.PushReplies != nil {
+		replies = *w.PushReplies
+	}
+	if w.PushGrace != nil {
+		g, err := time.ParseDuration(*w.PushGrace)
+		if err != nil {
+			return fmt.Errorf("pushGrace: %w", err)
+		}
+		grace = g
+	}
 	*s = Settings{w.Hotkey, leads, w.DefaultTime, w.NextWeekDay, w.NextWeekTime, w.ExportPath, w.Autostart, show,
-		reply, days, eod, sweep, at, w.SharedUpdatedBy}
+		reply, days, eod, sweep,
+		w.PushEnabled, server, w.PushTopic, replies, w.PushHideText, grace, at, w.SharedUpdatedBy}
 	return nil
 }
 
@@ -193,6 +239,8 @@ func Defaults(goos string) Settings {
 		WorkDays:         []string{"monday", "tuesday", "wednesday", "thursday", "friday"},
 		EndOfDay:         "17:30",
 		EndOfDaySweep:    true,
+		PushServer:       DefaultPushServer,
+		PushGrace:        2 * time.Minute,
 	}
 }
 
@@ -292,6 +340,9 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("workDays: %q listed twice", d)
 		}
 		seen[d] = true
+	}
+	if err := s.validatePush(); err != nil {
+		return err
 	}
 	rc, err := hotkey.ParseCombo(s.ReplyHotkey)
 	if err != nil {

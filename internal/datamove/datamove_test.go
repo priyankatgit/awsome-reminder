@@ -75,6 +75,7 @@ func countItems(t *testing.T, dbPath string) int {
 }
 
 var syncKey = bytes.Repeat([]byte{7, 9, 1, 3}, 8)
+var pushKey = bytes.Repeat([]byte{4, 2, 8, 6}, 8)
 
 func newSource(t *testing.T) paths.Layout {
 	t.Helper()
@@ -88,6 +89,7 @@ func newSource(t *testing.T) paths.Layout {
 	putItems(t, l.DB(), 3)
 	write(t, filepath.Join(l.Attachments(), "a.webp"), bytes.Repeat([]byte("x"), 200<<10))
 	write(t, l.SyncKey(), syncKey)
+	write(t, l.PushKey(), pushKey)
 	write(t, filepath.Join(l.Voice(), "models", "m.bin"), []byte("model"))
 	return l
 }
@@ -234,6 +236,9 @@ func TestMoveCopiesAndSwitches(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dst.SyncKey()); !bytes.Equal(b, syncKey) {
 		t.Fatal("sync.key differs")
+	}
+	if b, _ := os.ReadFile(dst.PushKey()); !bytes.Equal(b, pushKey) {
+		t.Fatal("push.key differs")
 	}
 	if fileSize(filepath.Join(dst.Attachments(), "a.webp")) != 200<<10 {
 		t.Fatal("attachment missing")
@@ -442,7 +447,7 @@ func TestRequestMoveAndKeepStandard(t *testing.T) {
 func TestRemoveOldCopyOnlyOwnedFiles(t *testing.T) {
 	isolate(t)
 	prev := filepath.Join(t.TempDir(), "old")
-	for _, f := range []string{"awesome.db.moved", "awesome.db-wal.moved", "sync.key", "awesome.log", "setup.log", "notes.txt"} {
+	for _, f := range []string{"awesome.db.moved", "awesome.db-wal.moved", "sync.key", "push.key", "awesome.log", "setup.log", "notes.txt"} {
 		write(t, filepath.Join(prev, f), []byte("x"))
 	}
 	write(t, filepath.Join(prev, "attachments", "a.webp"), []byte("x"))
@@ -450,7 +455,7 @@ func TestRemoveOldCopyOnlyOwnedFiles(t *testing.T) {
 	if err := paths.SaveLocation(loc); err != nil {
 		t.Fatal(err)
 	}
-	if OldCopySize(prev) != 6 {
+	if OldCopySize(prev) != 7 {
 		t.Fatalf("size %d", OldCopySize(prev))
 	}
 	if err := RemoveOldCopy(loc); err != nil {

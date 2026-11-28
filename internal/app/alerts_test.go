@@ -10,6 +10,7 @@ import (
 
 	"awesome-reminder/internal/core"
 	"awesome-reminder/internal/model"
+	"awesome-reminder/internal/push"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/settings"
 )
@@ -562,5 +563,40 @@ func TestAlertCardCarriesReplyFields(t *testing.T) {
 	h.svc.dropItemAlerts("P")
 	if got := keys(h.svc.PendingAlerts()); !reflect.DeepEqual(got, []string{"sweep|2026-12-02"}) {
 		t.Fatalf("queue %v", got)
+	}
+}
+
+// Dismissing a heads-up card (lead time > 0) is not handling the item: the
+// phone push stays.
+func TestDismissLeadCardKeepsPush(t *testing.T) {
+	h := newHarness(t)
+	putReminder(t, h, "A", "a", nil, "")
+	rec, _ := withPush(h)
+	h.svc.showAlerts([]scheduler.Alert{alert("A", "A|lead")})
+	h.svc.DismissAlert("A|lead")
+	for _, seqs := range rec.take() {
+		if len(seqs) != 0 {
+			t.Fatalf("Dismiss(%v) for a lead card", seqs)
+		}
+	}
+}
+
+// Dismiss all cancels the pushes of the cards that count, not the heads-ups.
+func TestDismissAllAppliesRule(t *testing.T) {
+	h := newHarness(t)
+	putReminder(t, h, "A", "a", nil, "")
+	putReminder(t, h, "B", "b", nil, "")
+	rec, _ := withPush(h)
+	h.svc.showAlerts([]scheduler.Alert{alert("A", "A|lead"), occurrenceAlert("B", alertDue, 0)})
+	if n := len(h.svc.PendingAlerts()); n != 2 {
+		t.Fatalf("queue %d", n)
+	}
+	h.svc.DismissAlerts()
+	var got []string
+	for _, seqs := range rec.take() {
+		got = append(got, seqs...)
+	}
+	if want := []string{push.SeqFor("B", scheduler.OccReminder, alertDue)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dismissed %v, want %v", got, want)
 	}
 }

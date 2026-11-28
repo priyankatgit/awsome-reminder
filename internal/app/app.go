@@ -23,9 +23,9 @@ import (
 	"awesome-reminder/internal/grab"
 	"awesome-reminder/internal/hotkey"
 	"awesome-reminder/internal/paths"
+	"awesome-reminder/internal/push"
 	"awesome-reminder/internal/scheduler"
 	"awesome-reminder/internal/secret"
-	"awesome-reminder/internal/settings"
 	"awesome-reminder/internal/store"
 )
 
@@ -167,14 +167,7 @@ func Run(opts Options) error {
 	hotkey.SetMainThreadRunner(application.InvokeSync)
 
 	emit := func(name string, data ...any) { app.Event.Emit(name, data...) }
-	sched := scheduler.New(st, func() scheduler.Rules {
-		s, err := c.Settings()
-		if err != nil {
-			s = settings.Defaults(runtime.GOOS)
-			s.LeadTimes = nil // as before: no default leads while settings can't be read
-		}
-		return core.SchedulerRules(s, time.Local)
-	}, func(alerts []scheduler.Alert) {
+	sched := scheduler.New(st, func() scheduler.Rules { return appRules(c) }, func(alerts []scheduler.Alert) {
 		// Runs inline in the scheduler loop: never block it. The scheduler
 		// only fires after Start (ApplicationStarted), when svc is set.
 		for _, a := range alerts {
@@ -213,6 +206,10 @@ func Run(opts Options) error {
 		// not touch the store.
 		OnApplied: func(a []core.Applied) { go svc.remoteApplied(a) },
 	})
+	// Phone push (off by default: nothing touches the network until enabled).
+	pushCtl := newPushController(c, st, lay.Root,
+		func(id string) { go svc.dropItemAlerts(id) }, // off the listener, like showAlerts
+		func(s push.Status) { emit(EventPushStatus, s) })
 	// On the way out, stop the scheduler and wait for a plan in flight, so it
 	// never reaches a closed store and its last change still reaches the
 	// export (deferred after exp.Close and st.Close, so it runs before them).
@@ -221,6 +218,7 @@ func Run(opts Options) error {
 	defer func() {
 		cancel()
 		sched.Wait()
+		pushCtl.wait() // the reconciler and the control listener
 		syncCtl.Stop() // joins the opener and the engine's cycle in flight
 		badges.Stop()  // joins a refresh in flight, closes the taskbar window
 	}()
@@ -258,6 +256,7 @@ func Run(opts Options) error {
 		Emit:          func(name string, data any) { emit(name, data) },
 		OpenURL:       app.Browser.OpenURL,
 		Sync:          syncCtl,
+		Push:          pushCtl,
 		DataDir:       lay.Root,
 		Restart:       func() { RequestRestart(); app.Quit() },
 	})
@@ -277,6 +276,7 @@ func Run(opts Options) error {
 		emit(EventItemsChanged)
 		badges.Changed() // also on a settings save
 		syncCtl.Kick()
+		pushCtl.changed()
 	})
 
 	tray = app.SystemTray.New()
@@ -321,6 +321,7 @@ func Run(opts Options) error {
 		sweepAttachments(c)
 		sched.Start(ctx)
 		syncCtl.Start(ctx)
+		pushCtl.start(ctx)
 		// Bring the export up to date with the database at startup (it may
 		// be missing, or older than changes made by an earlier run).
 		exp.Trigger()

@@ -6,9 +6,10 @@ import { Service, SetupService, VoiceService } from "../bindings/awesome-reminde
 import type { Status as VoiceStatus, WakeStatus } from "../bindings/awesome-reminder/internal/voice/models.js";
 import type { Detail, PersonGroup, Preview, TagGroup, View } from "../bindings/awesome-reminder/internal/core/models.js";
 import type { Attachment, Item } from "../bindings/awesome-reminder/internal/model/models.js";
-import type { AlertCard as GenAlertCard, FolderOption, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, DataFolderInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
+import type { AlertCard as GenAlertCard, DataFolderInfo, FolderOption, PushInfo as GenPushInfo, ReplyPrefill, SetupDone, SetupInfo as GenSetupInfo, Status, SyncInfo } from "../bindings/awesome-reminder/internal/app/models.js";
 import type { Check as SetupCheck, Progress as SetupProgress } from "../bindings/awesome-reminder/internal/datamove/models.js";
 import type { Status as GenSyncStatus } from "../bindings/awesome-reminder/internal/cloudsync/models.js";
+import type { Status as GenPushStatus } from "../bindings/awesome-reminder/internal/push/models.js";
 import type { Meta as ReplyMeta } from "../bindings/awesome-reminder/internal/reply/models.js";
 
 export type { Attachment, DataFolderInfo, Detail, FolderOption, PersonGroup, Preview, Item, ReplyMeta, ReplyPrefill, SetupCheck, SetupDone, SetupProgress, Status, SyncInfo, TagGroup, View, VoiceStatus, WakeStatus };
@@ -53,6 +54,23 @@ function syncStatus(s: GenSyncStatus): SyncStatus {
   return { ...s, state: s.state as string as SyncState, warnings: s.warnings ?? [] };
 }
 
+/** Phone push state (internal/push State). */
+export type PushState = "off" | "ok" | "offline" | "auth" | "quota" | "error";
+
+/** Phone push status (internal/push Status). */
+export type PushStatus = Omit<GenPushStatus, "state"> & { state: PushState };
+
+/** What Settings › Phone push shows (internal/app PushInfo). */
+export type PushInfo = Omit<GenPushInfo, "status"> & { status: PushStatus };
+
+function pushStatus(s: GenPushStatus): PushStatus {
+  return { ...s, state: s.state as string as PushState };
+}
+
+function pushInfo(i: GenPushInfo): PushInfo {
+  return { ...i, status: pushStatus(i.status) };
+}
+
 /** Base64 of a blob's bytes (a Go []byte argument travels as base64). */
 async function blobBase64(b: Blob): Promise<string> {
   const url = await new Promise<string>((resolve, reject) => {
@@ -85,6 +103,13 @@ export interface Settings {
   /** Stamp of the last shared-settings change (unix ms, device id). Set by Go; passed back unchanged. */
   sharedUpdatedAt?: number;
   sharedUpdatedBy?: string;
+  /** Phone push (synced). pushGrace is a Go duration string such as "2m0s". */
+  pushEnabled: boolean;
+  pushServer: string;
+  pushTopic: string;
+  pushReplies: boolean;
+  pushHideText: boolean;
+  pushGrace: string;
 }
 
 export const api = {
@@ -213,6 +238,17 @@ export const api = {
     /** attachmentBytes is -1 when unknown (offline or not connected). */
     info: (): Promise<SyncInfo> => Service.SyncInfo(),
   },
+  /** Phone push through ntfy (internal/app push.go). */
+  push: {
+    info: async (): Promise<PushInfo> => pushInfo(await Service.PushInfo()),
+    /** Saves the access token for this computer. */
+    setToken: (token: string): Promise<void> => Service.PushSetToken(token),
+    forgetToken: (): Promise<void> => Service.PushForgetToken(),
+    /** Sends an immediate test push with the saved settings. */
+    test: (): Promise<void> => Service.PushTest(),
+    /** Saves a fresh secret topic; resolves to the saved settings. */
+    newTopic: async (): Promise<Settings> => (await Service.PushNewTopic()) as unknown as Settings,
+  },
 };
 
 /** Event names emitted by Go (internal/app/events.go). */
@@ -232,6 +268,8 @@ export const events = {
   /** The capture box was opened by "Hey Awesome", shown without focus: start a wake-mode dictation. */
   captureWake: "capture:wake",
   syncStatus: "sync:status",
+  /** push.Status, whenever it changes. */
+  pushStatus: "push:status",
   setupProgress: "setup:progress",
   setupDone: "setup:done",
 } as const;
@@ -253,6 +291,11 @@ export function on<T = unknown>(name: string, fn: (data: T) => void): () => void
 /** Subscribes to sync status changes; returns the unsubscribe function. */
 export function onSyncStatus(cb: (s: SyncStatus) => void): () => void {
   return on<GenSyncStatus>(events.syncStatus, (s) => cb(syncStatus(s)));
+}
+
+/** Subscribes to phone push status changes; returns the unsubscribe function. */
+export function onPushStatus(cb: (s: PushStatus) => void): () => void {
+  return on<GenPushStatus>(events.pushStatus, (s) => cb(pushStatus(s)));
 }
 
 /** Delivers an event to this page's own listeners only (dev preview data). */

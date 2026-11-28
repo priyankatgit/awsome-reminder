@@ -34,6 +34,11 @@ export const ItemsChanged = "items:changed";
 export const ListFocus = "list:focus";
 
 /**
+ * Name of the custom event "push:status".
+ */
+export const PushStatus = "push:status";
+
+/**
  * Name of the custom event "reply:open".
  */
 export const ReplyOpen = "reply:open";

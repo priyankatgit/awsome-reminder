@@ -42,6 +42,7 @@ func TestLayoutCustom(t *testing.T) {
 		"DB":          {l.DB(), filepath.Join(T, "awesome.db")},
 		"Attachments": {l.Attachments(), filepath.Join(T, "attachments")},
 		"SyncKey":     {l.SyncKey(), filepath.Join(T, "sync.key")},
+		"PushKey":     {l.PushKey(), filepath.Join(T, "push.key")},
 		"Log":         {l.Log(), filepath.Join(T, "awesome.log")},
 		"Voice":       {l.Voice(), filepath.Join(T, "voice")},
 		"Webview":     {l.Webview(), wv},

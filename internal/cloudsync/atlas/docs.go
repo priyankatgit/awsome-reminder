@@ -77,6 +77,9 @@ func sharedSet(d cloudsync.SharedDoc) bson.D {
 		{Key: "next_week_day", Value: d.Shared.NextWeekDay}, {Key: "next_week_time", Value: d.Shared.NextWeekTime},
 		{Key: "work_days", Value: d.Shared.WorkDays}, {Key: "end_of_day", Value: d.Shared.EndOfDay},
 		{Key: "end_of_day_sweep", Value: d.Shared.EndOfDaySweep},
+		{Key: "push_enabled", Value: d.Shared.PushEnabled}, {Key: "push_server", Value: d.Shared.PushServer},
+		{Key: "push_topic", Value: d.Shared.PushTopic}, {Key: "push_replies", Value: d.Shared.PushReplies},
+		{Key: "push_hide_text", Value: d.Shared.PushHideText}, {Key: "push_grace_ms", Value: d.Shared.PushGrace.Milliseconds()},
 		{Key: "updated_at", Value: dt(d.UpdatedAt)}, {Key: "updated_by", Value: d.UpdatedBy},
 	}
 }
@@ -201,6 +204,9 @@ func decodeShared(r bson.Raw) *cloudsync.SharedDoc {
 			LeadTimes: rLeads(r), DefaultTime: rStr(r, "default_time"),
 			NextWeekDay: rStr(r, "next_week_day"), NextWeekTime: rStr(r, "next_week_time"),
 			WorkDays: rStrArr(r, "work_days"), EndOfDay: rStr(r, "end_of_day"), EndOfDaySweep: rBool(r, "end_of_day_sweep"),
+			PushEnabled: rBool(r, "push_enabled"), PushServer: rStr(r, "push_server"), PushTopic: rStr(r, "push_topic"),
+			PushReplies: rBool(r, "push_replies"), PushHideText: rBool(r, "push_hide_text"),
+			PushGrace: time.Duration(rInt(r, "push_grace_ms")) * time.Millisecond,
 		},
 		UpdatedAt: rTimeZero(r, "updated_at"), UpdatedBy: rStr(r, "updated_by"),
 	}

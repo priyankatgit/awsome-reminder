@@ -5,6 +5,7 @@ import (
 
 	"awesome-reminder/internal/cloudsync"
 	"awesome-reminder/internal/datamove"
+	"awesome-reminder/internal/push"
 )
 
 // Events emitted to the frontend.
@@ -15,6 +16,7 @@ const (
 	EventCaptureOpen  = "capture:open"  // no payload: reset and focus the input
 	EventSyncStatus   = "sync:status"   // cloudsync.Status
 	EventReplyOpen    = "reply:open"    // ReplyPrefill: open the capture box in reply mode
+	EventPushStatus   = "push:status"   // push.Status
 )
 
 // ReplyPrefill is what the reply hotkey found, for the capture box in reply
@@ -45,4 +47,5 @@ func init() {
 	application.RegisterEvent[application.Void]("capture:open")
 	application.RegisterEvent[cloudsync.Status]("sync:status")
 	application.RegisterEvent[ReplyPrefill]("reply:open")
+	application.RegisterEvent[push.Status]("push:status")
 }
