@@ -166,7 +166,7 @@ Unavailable variant:
 
 **Start with an empty list here** (Unavailable screen, empty folder) is handled the same way. The new database is created only on the explicit yes.
 
-**Sync safety:** the Atlas connection string's main copy lives in the OS keychain under a fixed name (`internal/secret`), shared by every data folder. Adopt and start-empty must not connect a different database to the cluster without the user knowing. So both delete the keychain entry, and the adopted database's own fallback copy (database meta plus that folder's `sync.key`), if any, then governs. The confirm text says so: "Sync across machines will be off until you connect again" (or "…uses the connection saved with that data"). A plain move keeps the keychain entry: it is the same dataset.
+**Sync (changed 2026-11-28, user: "its not that much high security, do whatever quick"):** adopt and start-empty keep the saved connection; it belongs to the computer, not the folder. Original text, superseded: the Atlas connection string's main copy lives in the OS keychain under a fixed name (`internal/secret`), shared by every data folder. Adopt and start-empty must not connect a different database to the cluster without the user knowing. So both delete the keychain entry, and the adopted database's own fallback copy (database meta plus that folder's `sync.key`), if any, then governs. The confirm text says so: "Sync across machines will be off until you connect again" (or "…uses the connection saved with that data"). A plain move keeps the keychain entry: it is the same dataset.
 
 ### Copy, check, switch (shared by the first-run move and Settings)
 

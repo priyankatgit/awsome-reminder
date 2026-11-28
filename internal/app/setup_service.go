@@ -59,7 +59,7 @@ type SetupService struct {
 	exe        func() (string, error)
 	move       func(ctx context.Context, from, to paths.Layout, onProgress func(datamove.Progress)) error
 	adopt      func(target string, prev *paths.Location) error
-	startFresh func(target string, prev *paths.Location, clearKeychain bool) error
+	startFresh func(target string, prev *paths.Location) error
 	keep       func() error
 	quit       func()
 	emit       func(string, any)
@@ -230,7 +230,7 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 			if err != nil {
 				return err
 			}
-			if err := s.startFresh(std, nil, false); err != nil {
+			if err := s.startFresh(std, nil); err != nil {
 				return err
 			}
 			s.finish()
@@ -260,7 +260,7 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 			}
 			err = s.adopt(c.Path, nil)
 		} else {
-			err = s.startFresh(c.Path, nil, false)
+			err = s.startFresh(c.Path, nil)
 		}
 	case paths.StateFirstRunExisting:
 		if !c.HasData {
@@ -283,7 +283,7 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 		case !confirm:
 			return errors.New(errConfirmFresh)
 		default:
-			err = s.startFresh(c.Path, prev, true)
+			err = s.startFresh(c.Path, prev)
 		}
 	default:
 		return errors.New("Nothing to choose in this state.")
