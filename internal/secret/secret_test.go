@@ -249,3 +249,108 @@ func TestDeleteOnUnavailableKeychainSucceeds(t *testing.T) {
 		t.Fatal("key file remains")
 	}
 }
+
+// mapKeychain keeps one value per account, like a real keychain.
+type mapKeychain struct {
+	vals map[string]string
+	err  error
+}
+
+func (m *mapKeychain) Get(service, user string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	v, ok := m.vals[user]
+	if !ok {
+		return "", keyring.ErrNotFound
+	}
+	return v, nil
+}
+func (m *mapKeychain) Set(service, user, pw string) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.vals[user] = pw
+	return nil
+}
+func (m *mapKeychain) Delete(service, user string) error {
+	if m.err != nil {
+		return m.err
+	}
+	if _, ok := m.vals[user]; !ok {
+		return keyring.ErrNotFound
+	}
+	delete(m.vals, user)
+	return nil
+}
+
+func TestNamedSecretsIndependent(t *testing.T) {
+	const token = "tk_abcdefghijklmnopqrstuvwxyz012"
+	t.Run("keychain", func(t *testing.T) {
+		dir, meta, kc := t.TempDir(), fakeMeta{}, &mapKeychain{vals: map[string]string{}}
+		atlas := newNamedStore(dir, meta, kc, AtlasURI)
+		push := newNamedStore(dir, meta, kc, PushToken)
+		if err := atlas.Set(testURI); err != nil {
+			t.Fatal(err)
+		}
+		if err := push.Set(token); err != nil {
+			t.Fatal(err)
+		}
+		if kc.vals["atlas-uri"] != testURI || kc.vals["ntfy-token"] != token {
+			t.Fatalf("keychain accounts = %v", kc.vals)
+		}
+		if err := atlas.Delete(); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := push.Get(); err != nil || got != token {
+			t.Fatalf("push Get = %q, %v", got, err)
+		}
+		if _, err := atlas.Get(); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("atlas err = %v", err)
+		}
+	})
+	t.Run("file fallback", func(t *testing.T) {
+		dir, meta, kc := t.TempDir(), fakeMeta{}, &mapKeychain{err: dbusErr}
+		atlas := newNamedStore(dir, meta, kc, AtlasURI)
+		push := newNamedStore(dir, meta, kc, PushToken)
+		if err := atlas.Set(testURI); err != nil {
+			t.Fatal(err)
+		}
+		if err := push.Set(token); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"sync_uri_enc", "push_token_enc"} {
+			if _, ok := meta[k]; !ok {
+				t.Fatalf("meta %s missing", k)
+			}
+		}
+		for _, f := range []string{"sync.key", "push.key"} {
+			if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := atlas.Delete(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "sync.key")); !os.IsNotExist(err) {
+			t.Fatalf("sync.key remains: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "push.key")); err != nil {
+			t.Fatalf("push.key gone: %v", err)
+		}
+		if got, err := push.Get(); err != nil || got != token {
+			t.Fatalf("push Get = %q, %v", got, err)
+		}
+		if push.Kind() != "Encrypted file on this computer" {
+			t.Fatalf("Kind = %q", push.Kind())
+		}
+	})
+}
+
+func TestPushTokenDeleteErrorText(t *testing.T) {
+	s := &store{dataDir: t.TempDir(), meta: fakeMeta{}, kc: &failDelete{&fakeKeychain{val: "tk_x", set: true}}, name: PushToken}
+	err := s.Delete()
+	if err == nil || !strings.Contains(err.Error(), "couldn't remove the access token from the system keychain") {
+		t.Fatalf("err = %v", err)
+	}
+}
