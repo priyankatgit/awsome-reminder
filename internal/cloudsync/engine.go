@@ -29,7 +29,7 @@ const (
 	pushBatch      = 100
 	maxPushBatches = 10
 	itemPage       = 200
-	attachmentPage = 8 // attachments carry their bytes
+	attachmentPage = 32 // and at most AttachmentPageBytes (or one attachment)
 	pullOverlap    = 2 * time.Minute
 	maxSkew        = 2 * time.Minute
 	offlineCapX    = 10 // the offline backoff caps at 10 polls (300 s)
@@ -56,9 +56,12 @@ type Engine struct {
 	needChecks bool // the clock and scope checks are still to run
 	closed     bool
 	// srvOffset is the server clock minus the local clock, read once per
-	// start (srvKnown). Pull starts are stamped in server time with it.
+	// start (srvKnown); a failed read is retried each cycle. Pull starts are
+	// stamped in server time with it, and not recorded while it is unknown.
 	srvOffset time.Duration
 	srvKnown  bool
+	// scopeBroad is the scope check's result, kept for the warnings.
+	scopeBroad bool
 	// pushFail and clockFail are the last failures logged by the cycle, so
 	// a cycle that keeps failing the same way logs once.
 	pushFail, clockFail string
@@ -367,7 +370,7 @@ func (e *Engine) cycle(ctx context.Context) error {
 	} else {
 		e.pushFail = ""
 	}
-	if e.needChecks {
+	if !e.srvKnown {
 		e.readServerClock(ctx)
 	}
 	if err := e.pullAttachments(ctx); err != nil {
@@ -387,6 +390,7 @@ func (e *Engine) cycle(ctx context.Context) error {
 		e.needChecks = false
 		e.check(ctx)
 	}
+	e.setWarnings()
 	return pushErr
 }
 
@@ -465,10 +469,16 @@ func (e *Engine) loadWatermark(key string) Watermark {
 
 // savePull records a complete pull: its watermark, then when it started. A
 // crash between the two leaves an older start, which only widens the next
-// overlap.
-func (e *Engine) savePull(wmKey, startKey string, saved, last Watermark, start time.Time) error {
+// overlap. A start in unknown server time (known false) is not recorded: the
+// local clock may run ahead, which would move the next overlap past a late
+// commit. The start recorded before it is older, so keeping it only widens
+// the overlap.
+func (e *Engine) savePull(wmKey, startKey string, saved, last Watermark, start time.Time, known bool) error {
 	if err := e.saveWatermark(wmKey, saved, last); err != nil {
 		return err
+	}
+	if !known {
+		return nil
 	}
 	return e.l.SetSyncMeta(startKey, start.UTC().Format(time.RFC3339Nano))
 }
@@ -491,8 +501,10 @@ func (e *Engine) saveWatermark(key string, saved, last Watermark) error {
 // previous pull's start, or from the saved watermark when that is later.
 // Bounding the overlap by the previous pull's start, not by the watermark,
 // means a quiet collection is not re-read on every poll. Without a recorded
-// start (a store from before it was recorded) it falls back to pullOverlap
-// before the watermark, once.
+// start (a store from before it was recorded), or while the server clock is
+// unknown, it falls back to pullOverlap before the watermark: the watermark is
+// a server stamp read by the previous pull, so it is no later than that pull's
+// start.
 func pullFrom(saved Watermark, prevStart time.Time, known bool) Watermark {
 	if saved.T.IsZero() {
 		return Watermark{}
@@ -524,18 +536,17 @@ func (e *Engine) startOf(key string) (time.Time, bool) {
 	return t, true
 }
 
-// serverNow is the server's clock as far as this engine knows it: the local
-// clock, corrected by the offset read at start when that read worked.
-func (e *Engine) serverNow() time.Time {
-	now := e.o.Now()
-	if e.srvKnown {
-		return now.Add(e.srvOffset)
+// pullStart is the server's clock as far as this engine knows it (the local
+// clock corrected by the offset read at start), and whether that read worked.
+func (e *Engine) pullStart() (time.Time, bool) {
+	if !e.srvKnown {
+		return time.Time{}, false
 	}
-	return now
+	return e.o.Now().Add(e.srvOffset), true
 }
 
 // readServerClock reads the server clock, for the pull starts and the skew
-// warning. It runs before the pulls of each cycle until the checks have run.
+// warning. It runs before the pulls of each cycle until a read works.
 func (e *Engine) readServerClock(ctx context.Context) {
 	srv, err := e.s.ServerTime(ctx)
 	if err != nil {
@@ -554,9 +565,9 @@ func errStuck(after, next Watermark) error {
 
 func (e *Engine) pullAttachments(ctx context.Context) error {
 	saved := e.loadWatermark(metaWMAttachments)
-	start := e.serverNow()
+	start, startKnown := e.pullStart()
 	prev, known := e.startOf(metaPullAttachments)
-	after, done := pullFrom(saved, prev, known), saved
+	after, done := pullFrom(saved, prev, known && startKnown), saved
 	for {
 		page, next, err := e.s.PullAttachments(ctx, after, attachmentPage)
 		if err != nil {
@@ -593,17 +604,19 @@ func (e *Engine) pullAttachments(ctx context.Context) error {
 		} else if len(page) > 0 {
 			return errStuck(after, next)
 		}
-		if len(page) < attachmentPage {
-			return e.savePull(metaWMAttachments, metaPullAttachments, saved, done, start)
+		// The byte budget can cut a page short: only an empty page is the
+		// end.
+		if len(page) == 0 {
+			return e.savePull(metaWMAttachments, metaPullAttachments, saved, done, start, startKnown)
 		}
 	}
 }
 
 func (e *Engine) pullItems(ctx context.Context) error {
 	saved := e.loadWatermark(metaWMItems)
-	start := e.serverNow()
+	start, startKnown := e.pullStart()
 	prev, known := e.startOf(metaPullItems)
-	after, done := pullFrom(saved, prev, known), saved
+	after, done := pullFrom(saved, prev, known && startKnown), saved
 	var all []core.Applied
 	defer func() {
 		if len(all) > 0 && e.o.OnApplied != nil {
@@ -636,7 +649,7 @@ func (e *Engine) pullItems(ctx context.Context) error {
 			return errStuck(after, next)
 		}
 		if len(page) < itemPage {
-			return e.savePull(metaWMItems, metaPullItems, saved, done, start)
+			return e.savePull(metaWMItems, metaPullItems, saved, done, start, startKnown)
 		}
 	}
 }
@@ -653,16 +666,24 @@ func (e *Engine) pullShared(ctx context.Context) error {
 	return err
 }
 
-// check runs the once-per-start clock and scope checks. Their failures are
-// logged, never shown.
+// check runs the once-per-start scope check. Its failure is logged, never
+// shown.
 func (e *Engine) check(ctx context.Context) {
+	broad, err := e.s.ScopeTooBroad(ctx)
+	if err != nil {
+		e.logf("sync: scope check: %v", err)
+	}
+	e.scopeBroad = err == nil && broad
+}
+
+// setWarnings shows the clock-skew warning (once the server clock is known,
+// which may be a cycle after the scope check) and the scope warning.
+func (e *Engine) setWarnings() {
 	warnings := []string{}
 	if skew := e.srvOffset.Abs(); e.srvKnown && skew > maxSkew {
 		warnings = append(warnings, fmt.Sprintf("This computer's clock is %d min off. Sync keeps the most recent edit by clock time, so fix the clock to avoid losing edits.", int(math.Round(skew.Minutes()))))
 	}
-	if broad, err := e.s.ScopeTooBroad(ctx); err != nil {
-		e.logf("sync: scope check: %v", err)
-	} else if broad {
+	if e.scopeBroad {
 		warnings = append(warnings, ScopeWarning)
 	}
 	e.mu.Lock()

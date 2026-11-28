@@ -106,7 +106,8 @@ export const api = {
   takePendingFocus: (): Promise<string> => Service.TakePendingFocus(),
   openSettings: (): Promise<void> => Service.OpenSettings(),
   openList: (focusItemId: string): Promise<void> => Service.OpenList(focusItemId),
-  saveSettings: (s: Settings): Promise<void> => Service.SaveSettings(s as never),
+  /** Saves the settings; resolves to a note for the user ("" when none). */
+  saveSettings: async (s: Settings): Promise<string> => (await Service.SaveSettings(s as never)) ?? "",
   setHotkeyRecording: (on: boolean): Promise<void> => Service.SetHotkeyRecording(on),
   pendingAlerts: async (): Promise<AlertCard[]> => ((await Service.PendingAlerts()) ?? []) as AlertCard[],
   dismissAlert: (key: string): Promise<void> => Service.DismissAlert(key),

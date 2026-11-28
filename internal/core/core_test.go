@@ -345,7 +345,7 @@ func TestOnChangeCalled(t *testing.T) {
 		func() error { _, err := e.c.Done(it.ID); return err },
 		func() error { return e.c.Reopen(it.ID) },
 		func() error { return e.c.Delete(it.ID) },
-		func() error { s, _ := e.c.Settings(); return e.c.SaveSettings(s) },
+		func() error { s, _ := e.c.Settings(); _, err := e.c.SaveSettings(s); return err },
 	}
 	want := 1
 	for i, f := range steps {
@@ -366,7 +366,7 @@ func TestSaveSettingsValidates(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
 	s.DefaultTime = "bogus"
-	if err := e.c.SaveSettings(s); err == nil {
+	if _, err := e.c.SaveSettings(s); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -659,7 +659,7 @@ func TestDoneThroughOccurrence(t *testing.T) {
 func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	drain := func() int {
@@ -685,7 +685,7 @@ func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
 	s.Hotkey = "Ctrl+Alt+H"
 	s.SharedUpdatedAt = time.UnixMilli(5)
 	s.SharedUpdatedBy = "evil"
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := e.c.Settings()
@@ -700,7 +700,7 @@ func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
 	s.LeadTimes = []time.Duration{3 * time.Hour}
 	s.SharedUpdatedAt = time.UnixMilli(5)
 	s.SharedUpdatedBy = "evil"
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = e.c.Settings()
@@ -715,7 +715,7 @@ func TestSaveSettingsStampsOnlySharedChanges(t *testing.T) {
 func TestSaveSettingsReplyScheduleIsShared(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.c.Settings()
-	if err := e.c.SaveSettings(s); err != nil {
+	if _, err := e.c.SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := e.c.Settings()
@@ -725,8 +725,7 @@ func TestSaveSettingsReplyScheduleIsShared(t *testing.T) {
 	} {
 		s := before
 		mut(&s)
-		s.SharedUpdatedAt = time.Time{}
-		if err := e.c.SaveSettings(s); err != nil {
+		if _, err := e.c.SaveSettings(s); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := e.c.Settings()

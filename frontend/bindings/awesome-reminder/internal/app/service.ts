@@ -190,9 +190,11 @@ export function RestoreListWidth(): $CancellablePromise<void> {
  * hotkeys, sets autostart and triggers the export. Invalid settings return an
  * error and change nothing. If a hotkey or autostart cannot be applied the
  * settings stay saved, the remaining steps still run, and the error is
- * returned (a hotkey error is also reported by Status).
+ * returned (a hotkey error is also reported by Status). The note is for the
+ * user: set when the draft was stale and another computer's change to the
+ * shared settings was kept (see core.Core.SaveSettings).
  */
-export function SaveSettings(st: settings$0.Settings): $CancellablePromise<void> {
+export function SaveSettings(st: settings$0.Settings): $CancellablePromise<string> {
     return $Call.ByID(3954599444, st);
 }
 

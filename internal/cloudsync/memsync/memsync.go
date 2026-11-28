@@ -42,6 +42,8 @@ type Syncer struct {
 	shared     doc
 	failErr    error
 	failN      int
+	clockErr   error
+	clockN     int
 	beforePush func()
 	scopeBroad bool
 	scopeErr   error
@@ -66,6 +68,14 @@ func (s *Syncer) SetNow(fn func() time.Time) {
 func (s *Syncer) FailNext(err error, n int) {
 	s.mu.Lock()
 	s.failErr, s.failN = err, n
+	s.mu.Unlock()
+}
+
+// FailServerTime makes the next n ServerTime calls return err; other calls
+// are unaffected.
+func (s *Syncer) FailServerTime(err error, n int) {
+	s.mu.Lock()
+	s.clockErr, s.clockN = err, n
 	s.mu.Unlock()
 }
 
@@ -389,16 +399,29 @@ func (s *Syncer) PullItems(ctx context.Context, after cloudsync.Watermark, limit
 	return out, wm, nil
 }
 
-// PullAttachments implements cloudsync.Syncer.
+// attOverhead stands in for an attachment document's fields other than its
+// bytes when sizing a page, as their BSON encoding would take in Atlas.
+const attOverhead = 256
+
+// PullAttachments implements cloudsync.Syncer: a page stops before its
+// documents pass cloudsync.AttachmentPageBytes, holding at least one.
 func (s *Syncer) PullAttachments(ctx context.Context, after cloudsync.Watermark, limit int) ([]cloudsync.RemoteAttachment, cloudsync.Watermark, error) {
 	if err := s.enter(ctx); err != nil {
 		return nil, after, err
 	}
 	defer s.mu.Unlock()
-	page, wm := pageLocked(s.atts, after, limit)
-	out := make([]cloudsync.RemoteAttachment, len(page))
-	for i, d := range page {
-		out[i] = decodeAttachment(d)
+	page, _ := pageLocked(s.atts, after, limit)
+	var out []cloudsync.RemoteAttachment
+	wm, size := after, 0
+	for _, d := range page {
+		b, _ := d["data"].([]byte)
+		n := len(b) + attOverhead
+		if len(out) > 0 && size+n > cloudsync.AttachmentPageBytes {
+			break
+		}
+		size += n
+		out = append(out, decodeAttachment(d))
+		wm = key(d)
 	}
 	return out, wm, nil
 }
@@ -429,6 +452,10 @@ func (s *Syncer) ServerTime(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	defer s.mu.Unlock()
+	if s.clockN > 0 {
+		s.clockN--
+		return time.Time{}, s.clockErr
+	}
 	return s.now(), nil
 }
 

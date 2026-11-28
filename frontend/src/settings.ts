@@ -172,6 +172,26 @@ function toSettings(d: Draft): Settings {
   };
 }
 
+/**
+ * withStoredShared is d with the shared settings and their stamp taken from
+ * what Go stored: it re-stamps them on save, and keeps another computer's
+ * newer ones over a stale draft's, so the next save must carry the new stamp.
+ */
+function withStoredShared(d: Draft, stored: Draft): Draft {
+  return {
+    ...d,
+    leads: [...stored.leads],
+    defaultTime: stored.defaultTime,
+    nextWeekDay: stored.nextWeekDay,
+    nextWeekTime: stored.nextWeekTime,
+    workDays: [...stored.workDays],
+    endOfDay: stored.endOfDay,
+    endOfDaySweep: stored.endOfDaySweep,
+    sharedUpdatedAt: stored.sharedUpdatedAt,
+    sharedUpdatedBy: stored.sharedUpdatedBy,
+  };
+}
+
 function same(a: Draft, b: Draft): boolean {
   return JSON.stringify({ ...a, exportPath: a.exportPath.trim() }) === JSON.stringify({ ...b, exportPath: b.exportPath.trim() });
 }
@@ -756,8 +776,9 @@ export function mountSettings(root: HTMLElement): void {
     status.textContent = "Saving…";
     let failed: { field: FieldKey; text: string }[] = [];
     let applied = true;
+    let note = "";
     try {
-      await api.saveSettings(toSettings(draft));
+      note = await api.saveSettings(toSettings(draft));
     } catch (err) {
       const lines = errorText(err).split("\n").filter((l) => l.trim());
       failed = lines.map(fieldOf);
@@ -766,11 +787,17 @@ export function mountSettings(root: HTMLElement): void {
       // ("replyHotkey:", the clash, ...) mean nothing was saved.
       applied = lines.every((l, i) => /^(hotkey|reply hotkey):/.test(l.trim()) || failed[i].field === "autostart");
     }
-    saving = false;
     if (applied) {
+      try {
+        draft = withStoredShared(draft, toDraft(await api.getSettings()));
+        fill();
+      } catch {
+        // Keep the draft; the next save may then be checked as stale.
+      }
       saved = { ...draft, leads: [...draft.leads] };
       await refreshStatus();
     }
+    saving = false;
     // A hotkey that couldn't be registered shows under the field from
     // Status (renderHotkey), the same text as the save error.
     renderHotkey();
@@ -780,7 +807,7 @@ export function mountSettings(root: HTMLElement): void {
       const first = failed[0].field;
       (inputs[first] ?? save).focus();
     } else {
-      status.textContent = "Saved";
+      status.textContent = note || "Saved";
     }
     changed();
   });

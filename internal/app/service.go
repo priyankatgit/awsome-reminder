@@ -253,10 +253,13 @@ func (s *Service) GetSettings() (settings.Settings, error) { return s.d.Core.Set
 // hotkeys, sets autostart and triggers the export. Invalid settings return an
 // error and change nothing. If a hotkey or autostart cannot be applied the
 // settings stay saved, the remaining steps still run, and the error is
-// returned (a hotkey error is also reported by Status).
-func (s *Service) SaveSettings(st settings.Settings) error {
-	if err := s.d.Core.SaveSettings(st); err != nil {
-		return err
+// returned (a hotkey error is also reported by Status). The note is for the
+// user: set when the draft was stale and another computer's change to the
+// shared settings was kept (see core.Core.SaveSettings).
+func (s *Service) SaveSettings(st settings.Settings) (note string, err error) {
+	note, err = s.d.Core.SaveSettings(st)
+	if err != nil {
+		return "", err
 	}
 	var errs []error
 	capErr, replyErr := s.setHotkeys(st.Hotkey, st.ReplyHotkey)
@@ -277,11 +280,11 @@ func (s *Service) SaveSettings(st settings.Settings) error {
 	if s.d.Export != nil {
 		s.d.Export()
 	}
-	err := errors.Join(errs...)
+	err = errors.Join(errs...)
 	if err != nil {
 		log.Printf("settings: %v", err)
 	}
-	return err
+	return note, err
 }
 
 // setHotkeys switches the capture and reply hotkeys to the given combos. A
