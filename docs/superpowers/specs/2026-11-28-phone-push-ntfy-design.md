@@ -37,12 +37,16 @@ The user juggles many things and is often away from the desk. Desktop alerts onl
 From docs.ntfy.sh (checked 2026-11-28):
 
 - `POST <server>/<topic>` publishes. Headers: `X-Title`, `X-Priority` (1–5), `X-Tags`, `X-Delay` (Unix timestamp; min 10 s, max 3 days on ntfy.sh), `X-Actions`, `X-Sequence-ID`, `Authorization: Bearer tk_…`.
-- **Sequence IDs** (server v2.16.0+, Jan 2026; a scheduled-message lookup fix in v2.29.0): publishing again with the same `X-Sequence-ID` before delivery **replaces** the scheduled message; `DELETE <server>/<topic>/<sequence_id>` **cancels** it.
+- **Sequence IDs** (server v2.16.0+): `POST <server>/<topic>/<seq>` publishes with a sequence ID; `DELETE <server>/<topic>/<seq>` cancels a scheduled message before delivery (and removes a delivered one from clients).
+- **Verified on ntfy.sh, 2026-11-28** (three throwaway-topic tests):
+  - Published with the sequence ID **in the path**, a `DELETE` before delivery **cancels** it. Published with the `X-Sequence-ID` **header**, the `DELETE` does **not** stop delivery. → Always use the path form.
+  - Publishing twice with the same sequence ID **delivers both** (the documented replace does not happen on ntfy.sh).
+  - `DELETE` then publish again with the same sequence ID delivers **only the new one**. → "Replace" is implemented as delete-then-publish.
 - Up to 3 action buttons; an `http` action sends a request from the phone (`http, <label>, <url>, method=…, headers.<h>=…, body=…, clear=true`).
 - `GET <server>/<topic>/json?poll=1&since=<id>` lists cached messages (ntfy.sh caches 12 h); `GET <server>/<topic>/json` streams new ones.
 - ntfy.sh free tier: 250 messages/day, 4,096-byte messages.
 
-**Risk to verify first:** the replace-before-delivery and cancel-before-delivery behaviour was read from a summary of the docs. The first plan task is a throwaway check against real ntfy.sh: schedule with a sequence ID, republish with the same ID, delete, and confirm on a subscribed client what is delivered. If replace does not work as described, fall back to the original spec's Atlas claim (see "Fallback").
+The plan's final manual check repeats the cancel and delete-then-publish behaviour from the built app against ntfy.sh.
 
 ## Approaches considered
 
@@ -61,7 +65,7 @@ Synced (added to the shared settings group, so every computer schedules the same
 | Setting | Default | Notes |
 |---|---|---|
 | `PushEnabled` | off | |
-| `PushServer` | `https://ntfy.sh` | Any http(s) URL; self-hosted needs ntfy ≥ 2.29 (stated in help text). Trailing slash trimmed. |
+| `PushServer` | `https://ntfy.sh` | Any http(s) URL; self-hosted needs ntfy ≥ 2.16 (stated in help text). Trailing slash trimmed. |
 | `PushTopic` | generated on first enable | `ar-` + 26 random base32 chars (130 bits) from `crypto/rand`. **New topic** button rotates it. |
 | `PushReplies` | off | Also push reply-owed nudges and the end-of-day sweep. |
 | `PushHideText` | off | Phone shows "Reminder due" / "Reply owed" with no task text. |
@@ -99,7 +103,7 @@ Only pushes whose delivery time is between `now + 15 s` and `now + 71 h` are sch
 
 ### Deterministic sequence IDs → no duplicates without claims
 
-`seq = "ar" + base32(sha256(itemID + "|" + kind + "|" + occurrenceUnixMs))[:20]` (sweep uses `"sweep"` and the sweep time). Every computer derives the same ID for the same occurrence. Two computers scheduling it publish with the same sequence ID, so the second **replaces** the first: one buzz. This replaces the original spec's Atlas claim (`ntfy.claimed_by`), so no item schema change and no sync dependency; it also works without sync.
+`seq = "ar" + base32(sha256(itemID + "|" + kind + "|" + occurrenceUnixMs))[:20]` (sweep uses `"sweep"` and the sweep time). Every computer derives the same ID for the same occurrence. Every publish is **delete-then-publish** (`DELETE /<topic>/<seq>` then `POST /<topic>/<seq>`), so when a second computer schedules the same occurrence it cancels the first computer's copy: one buzz. (A simultaneous race between two computers within the same second could still double; accepted.) This replaces the original spec's Atlas claim (`ntfy.claimed_by`), so no item schema change and no sync dependency; it also works without sync.
 
 The content hash is part of what we compare locally (below) but not of the sequence ID, so an edit to the text replaces in place.
 
@@ -110,8 +114,8 @@ A `push` package component, run in its own goroutine:
 - **Triggers:** start, item changes (local or pulled by sync — the same hooks that kick the scheduler), settings changes, wake from sleep, every 15 min, and retry timers.
 - **Desired set:** from open items + rules + push settings, compute `{seq → message}` in the window.
 - **Push log** (local SQLite table `push_log`: `seq, topic, server, deliver_at, content_hash, state (scheduled|deleted), sent_at`): what this computer last published.
-- **Diff:** publish entries that are new or whose `deliver_at`/hash changed; `DELETE` entries in the log that are no longer desired and still in the future; forget log entries whose delivery time has passed. Delete 404 is success.
-- Only this computer's log is consulted, so with N computers each occurrence is published ≤ N times (replaces, one buzz) — acceptable for quota.
+- **Diff:** (each publish is delete-then-publish, path form) publish entries that are new or whose `deliver_at`/hash changed; `DELETE` entries in the log that are no longer desired and still in the future; forget log entries whose delivery time has passed. Delete 404 is success.
+- Only this computer's log is consulted, so with N computers each occurrence is published ≤ N times (each delete-then-publish cancels the previous copy: one buzz); count deletes against the quota too — acceptable for quota.
 - **Server/topic change** (or New topic): delete everything pending on the old topic (best effort), then publish to the new one.
 - **Turned off:** delete everything pending, clear the log.
 - **Failures:** network errors and 5xx retry with backoff (30 s → 15 min), the log only records successes; 401/403 stop and show "needs an access token" until settings or the token change; 429 backs off to the next 15-min tick. Nothing here touches the scheduler or the alert window.
@@ -132,7 +136,7 @@ With grace 0 the phone buzzes at the same moment as the desktop.
 The phone cannot reach the laptop, so actions go through ntfy itself:
 
 - **Done:** `http` action → `POST <server>/<topic>-ctl` with body `{"op":"done","id":"<itemID>","occ":<occurrenceUnixMs>}`, `clear=true`, plus `headers.Authorization=Bearer …` when a token is set. The phone does not subscribe to `-ctl`, so it never buzzes.
-- **Snooze 1h:** `http` action → `POST <server>/<topic>` with `headers.X-Delay=1h`, `headers.X-Sequence-ID=<seq>s`, the same title/body (prefixed "Snoozed · ") and `clear=true`. This schedules the re-buzz on the server with every computer off. One action can send only one request, so the computers are not told about a phone snooze and the item is not snoozed on them. Instead, every computer that deletes a push for an occurrence (done, edit, delete, dismiss) also deletes `<seq>s`, so handling the item on a computer within the hour cancels the snoozed re-buzz too. The snoozed re-buzz carries only Done (no second snooze).
+- **Snooze 1h:** `http` action → `POST <server>/<topic>/<seq>s` (path form, so computers can cancel it) with `headers.X-Delay=1h`, the same title/body (prefixed "Snoozed · ") and `clear=true`. This schedules the re-buzz on the server with every computer off. One action can send only one request, so the computers are not told about a phone snooze and the item is not snoozed on them. Instead, every computer that deletes a push for an occurrence (done, edit, delete, dismiss) also deletes `<seq>s`, so handling the item on a computer within the hour cancels the snoozed re-buzz too. The snoozed re-buzz carries only Done (no second snooze).
 - **Control listener:** each computer with push on keeps a streaming `GET <server>/<topic>-ctl/json` subscription (reconnect with backoff; on (re)connect it first polls `?poll=1&since=<last id>` stored locally, so messages sent while it was off are applied when it comes back within ntfy's 12 h cache). For `done`: if the item is open and its current occurrence equals `occ`, mark it done through the normal core path (which syncs to other computers and lets recurring items advance). Otherwise ignore (stale or already handled). Messages are idempotent across computers.
 - **Token in the buttons** *[my call]*: an `http` action runs on the phone, so on a protected topic it must carry a token. When the publishing computer has a token, it is put in the Done/Snooze actions (`headers.Authorization`), which means it is stored on the ntfy server and on every subscribed client. The Settings help says so and recommends a dedicated token that can only write to `<topic>` and `<topic>-ctl`. With no token (the ntfy.sh default, where the unguessable topic is the secret) nothing extra is exposed. The token is never logged.
 - **Which occurrence a phone Done applies to** *[builder's call, accepted]*: the item's current due time, or the next occurrence after it (a recurring item may already have advanced); apply through `core.DoneThrough`. Control messages are applied before missed alerts are shown on wake.
@@ -154,16 +158,16 @@ The phone cannot reach the laptop, so actions go through ntfy itself:
 
 Log publish/delete/listener events at the existing sync logging level, with the topic and token redacted (reuse `cloudsync.Redact` style). Never log message bodies.
 
-### Fallback (if ntfy replace-by-sequence-ID does not behave as documented)
+### Fallback
 
-Use the original spec's claim: with sync on, a computer publishes an occurrence only after atomically claiming it in Atlas (`findOneAndUpdate` on a `push_claims` collection keyed by seq); without sync, the single computer just publishes. Cancel by `DELETE` still needs sequence IDs; if delete of scheduled messages also fails, drop the grace feature and accept that done-before-delivery still buzzes, and say so in Settings help.
+If a self-hosted server is older than v2.16 (deletes are ignored), pushes still arrive but cancel does not; Settings help states the version requirement. No Atlas claim is needed.
 
 ## Constraints
 
 - Go 1.27 + Wails v3.1.0, vanilla TS frontend; follow the UI design guide.
 - Idle cost: one goroutine and one long-lived HTTP stream when on; nothing at all when off.
 - Never block capture, the alert window, the scheduler or sync on the network.
-- Keep the existing test style (fakes, `httptest` ntfy server). The fake ntfy server must model scheduled delivery, replace by sequence ID and delete, so tests can assert "one delivery" across two simulated computers.
+- Keep the existing test style (fakes, `httptest` ntfy server). The fake ntfy server must model what ntfy.sh actually does (scheduled delivery; path-form DELETE cancels a pending message; two publishes with the same sequence ID both deliver), so tests can assert "one delivery" across two simulated computers.
 - Manual testing uses temp copies of the binary with `APPDATA` pointed at a temp dir, never `bin/awesome-reminder.exe` from the repo path.
 
 ## Left to the builder
