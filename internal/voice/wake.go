@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +21,10 @@ import (
 var ErrWakeNotInstalled = errors.New("voice: wake word files are not installed")
 
 const hintWakeUnsupported = "The wake word isn't available on this system yet."
+
+// hintWakeMicWindows goes with a microphone error on Windows: the same words
+// as dictation's (micErrorText in frontend/src/voice.ts).
+const hintWakeMicWindows = "Microphone access is blocked. On Windows: Settings › Privacy & security › Microphone › let desktop apps use it."
 
 const (
 	wakeModelDir  = "kws-gigaspeech-3.3M"
@@ -188,8 +194,22 @@ func (w *Wake) statusLocked() WakeStatus {
 		st.State, st.Error = "off", ""
 	default:
 		st.State, st.Error = w.helperStateLocked()
+		if st.State == "error" && w.c.GOOS == "windows" && strings.Contains(strings.ToLower(st.Error), "microphone") {
+			// A blocked or muted mic is the usual cause; say where to fix it.
+			st.Hint = hintWakeMicWindows
+		}
 	}
 	return st
+}
+
+// syncKeywords rewrites the keyword file when it differs from the embedded
+// line, so a retuned line reaches installs made before it.
+func syncKeywords(modelDir string) error {
+	p := filepath.Join(modelDir, wakeKeywordsF)
+	if b, err := os.ReadFile(p); err == nil && bytes.Equal(b, wakeKeywords) {
+		return nil
+	}
+	return os.WriteFile(p, wakeKeywords, 0o644)
 }
 
 func (w *Wake) emit(force bool) {

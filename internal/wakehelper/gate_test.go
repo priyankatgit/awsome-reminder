@@ -106,3 +106,46 @@ func TestGateUnalignedBlocksAndPause(t *testing.T) {
 		t.Fatalf("speech after pause: fed %d, reset %v", len(feed), reset)
 	}
 }
+
+func TestZeroWatch(t *testing.T) {
+	const blk = rate / 10 // 100 ms, the mic's block
+	z := NewZeroWatch(rate)
+	for i := 1; i < 100; i++ { // 9.9 s of exact zeros
+		if z.Push(make([]int16, blk)) {
+			t.Fatalf("silent after %d ms, want 10 s", i*100)
+		}
+	}
+	if !z.Push(make([]int16, blk)) {
+		t.Fatal("10 s of exact zeros: want silent")
+	}
+
+	// Any non-zero sample starts over, however quiet.
+	z = NewZeroWatch(rate)
+	for i := 0; i < 99; i++ {
+		z.Push(make([]int16, blk))
+	}
+	b := make([]int16, blk)
+	b[blk-1] = 1
+	if z.Push(b) {
+		t.Fatal("a block with one non-zero sample counted as silent")
+	}
+	for i := 1; i < 100; i++ {
+		if z.Push(make([]int16, blk)) {
+			t.Fatalf("silent %d ms after a sound, want 10 s", i*100)
+		}
+	}
+	if z.Push(nil) {
+		t.Fatal("an empty block counted")
+	}
+	if !z.Push(make([]int16, blk)) {
+		t.Fatal("10 s of zeros after the sound: want silent")
+	}
+
+	// A quiet room (low noise) never trips it.
+	z = NewZeroWatch(rate)
+	for i := 0; i < 600; i++ {
+		if z.Push(block(blk, 3)) {
+			t.Fatal("low noise counted as silent")
+		}
+	}
+}

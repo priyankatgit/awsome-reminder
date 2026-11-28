@@ -848,3 +848,98 @@ func TestWakeCloseKillsHelper(t *testing.T) {
 		t.Error("SetEnabled after Close started a helper")
 	}
 }
+
+// A helper whose mic delivers only zeros exits with the microphone line; after
+// three exits the error state carries the Windows privacy hint.
+func TestWakeSilentMicGivesUpWithHint(t *testing.T) {
+	f, _, _ := newSupFixture(t, "die")
+	line := "wake helper: microphone: the microphone delivers no sound (blocked in Settings › Privacy & security › Microphone, or muted)"
+	t.Setenv("FAKE_STDERR", line)
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return gaveUp(w) }) {
+		t.Fatalf("never gave up; status %+v", w.Status())
+	}
+	st := w.Status()
+	if st.State != "error" || st.Error != line || st.Hint != hintWakeMicWindows {
+		t.Errorf("status = %+v", st)
+	}
+	if hintWakeMicWindows != "Microphone access is blocked. On Windows: Settings › Privacy & security › Microphone › let desktop apps use it." {
+		t.Errorf("hint %q differs from dictation's mic hint", hintWakeMicWindows)
+	}
+}
+
+func TestWakeErrorHint(t *testing.T) {
+	for _, c := range []struct {
+		goos, err, hint string
+	}{
+		{"windows", "wake helper: microphone: the microphone stopped delivering audio", hintWakeMicWindows},
+		{"windows", "wake helper: microphone: no microphone found", hintWakeMicWindows},
+		{"windows", "wake helper: model: LoadLibrary failed", ""},
+		{"linux", "PortAudio error: no microphone", ""},
+	} {
+		f, _, _ := newSupFixture(t, "idle")
+		f.cfg.GOOS = c.goos
+		w := NewWake(f.cfg)
+		w.mu.Lock()
+		w.cfg.Enabled = true
+		w.sup = &wakeSup{gaveUp: true, errText: c.err}
+		st := w.statusLocked()
+		w.sup = nil
+		w.mu.Unlock()
+		if st.State != "error" || st.Error != c.err || st.Hint != c.hint {
+			t.Errorf("%s %q: status = %+v, want hint %q", c.goos, c.err, st, c.hint)
+		}
+	}
+}
+
+// A keyword line retuned after an install reaches it when the helper starts.
+func TestWakeRewritesStaleKeywords(t *testing.T) {
+	f, _, _ := newSupFixture(t, "idle")
+	kw := filepath.Join(f.cfg.Dir, "models", wakeModelDir, wakeKeywordsF)
+	if err := os.WriteFile(kw, []byte("▁HE Y ▁A W E SO ME @HEY_AWESOME :1.5 #0.10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWake(f.cfg)
+	defer w.Close()
+	if err := w.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	waitProc(t, w, 0)
+	if b, _ := os.ReadFile(kw); string(b) != string(wakeKeywords) {
+		t.Errorf("keywords = %q, want the embedded %q", b, wakeKeywords)
+	}
+}
+
+func TestSyncKeywords(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, wakeKeywordsF)
+	if err := syncKeywords(dir); err != nil { // missing: written
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != string(wakeKeywords) {
+		t.Fatalf("missing file: got %q", b)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncKeywords(dir); err != nil { // same: left alone
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p); !st.ModTime().Equal(old) {
+		t.Error("an up-to-date file was rewritten")
+	}
+	if err := os.WriteFile(p, []byte("old line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncKeywords(dir); err != nil { // different: rewritten
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != string(wakeKeywords) {
+		t.Errorf("stale file: got %q", b)
+	}
+}

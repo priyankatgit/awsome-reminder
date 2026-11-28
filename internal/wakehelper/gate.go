@@ -113,3 +113,35 @@ func (g *Gate) remember(block []int16) {
 	g.ringPos = (g.ringPos + len(block)) % len(g.ring)
 	g.ringN = min(g.ringN+len(block), len(g.ring))
 }
+
+// zeroLimitMs of nothing but exact-zero samples means the mic delivers no
+// sound. Windows hands a microphone blocked in privacy settings (or muted)
+// to desktop apps as digital silence, not as an error; a real room, even a
+// quiet one, is never exactly zero for this long.
+const zeroLimitMs = 10000
+
+// ZeroWatch tells when the mic has delivered only exact-zero blocks for
+// zeroLimitMs.
+type ZeroWatch struct {
+	limit int // samples
+	run   int // samples in a row, in all-zero blocks
+}
+
+// NewZeroWatch returns a watch for audio at rate samples per second.
+func NewZeroWatch(rate int) *ZeroWatch {
+	return &ZeroWatch{limit: rate * zeroLimitMs / 1000}
+}
+
+// Push takes the next block and reports whether the blocks of the last
+// zeroLimitMs (or more) were all exactly zero. A block with any non-zero
+// sample starts the count over; an empty block changes nothing.
+func (z *ZeroWatch) Push(block []int16) bool {
+	for _, s := range block {
+		if s != 0 {
+			z.run = 0
+			return false
+		}
+	}
+	z.run += len(block)
+	return z.run >= z.limit
+}

@@ -27,6 +27,11 @@ const (
 	exitModel = 4
 )
 
+// micSilentText is the error for a mic that delivers only exact zeros
+// (ZeroWatch). It exits with exitMic, so the app's supervisor gives up after
+// three such exits and shows it in Settings with Try again.
+const micSilentText = "the microphone delivers no sound (blocked in Settings › Privacy & security › Microphone, or muted)"
+
 // loopStats counts what one run's loop did, for the measurement test.
 type loopStats struct {
 	blocks, fedSamples, resets int
@@ -86,6 +91,7 @@ func run(args []string, stdin io.Reader, stderr io.Writer) int {
 	defer k.close()
 
 	var src func() ([]int16, error)
+	var zeros *ZeroWatch // the mic only: a test WAV may hold long digital silence
 	if *wav != "" {
 		src = wavSource(samples)
 	} else {
@@ -111,6 +117,7 @@ func run(args []string, stdin io.Reader, stderr io.Writer) int {
 			windows.SetEvent(stop)
 		}()
 		src = mc.next
+		zeros = NewZeroWatch(micRate)
 	}
 
 	gate := NewGate(micRate)
@@ -129,6 +136,10 @@ func run(args []string, stdin io.Reader, stderr io.Writer) int {
 		}
 		if err != nil {
 			fmt.Fprintf(stderr, "wake helper: microphone: %v\n", err)
+			return exitMic
+		}
+		if zeros != nil && zeros.Push(block) {
+			fmt.Fprintf(stderr, "wake helper: microphone: %s\n", micSilentText)
 			return exitMic
 		}
 		feed, reset := gate.Push(block)

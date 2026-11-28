@@ -367,6 +367,9 @@ func (w *Wake) spawn(s *wakeSup) (*wakeProc, string) {
 			return fail(err)
 		}
 	}
+	if err := syncKeywords(w.modelDir()); err != nil {
+		log.Printf("wake: keywords file: %v", err) // start with the old line
+	}
 	bin, args := helperCommand(w.c.GOOS, exe, w.engineDir(), w.modelDir(), filepath.Join(w.modelDir(), wakeKeywordsF))
 	if w.c.Bin != nil {
 		bin = w.c.Bin(w.engineDir())

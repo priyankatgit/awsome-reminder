@@ -521,6 +521,7 @@ func (w *wailsWindows) ShowReply(p ReplyPrefill) {
 	w.captureShown() // the reply box is the capture box: wakes stay suppressed
 	w.app.Event.Emit(EventReplyOpen, p)
 	if p.KeepText {
+		restoreActivation(w.capture) // a wake-opened box may still be no-focus
 		w.capture.Focus()
 		log.Printf("capture: switched to reply mode")
 		return
