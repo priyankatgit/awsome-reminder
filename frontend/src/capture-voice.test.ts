@@ -31,7 +31,9 @@ vi.mock("./api", () => ({
     hideCapture: async () => {},
     resizeCapture: async () => {},
     withDue: async (input: string) => input,
-    deleteItem: async () => {},
+    deleteItem: async (id: string) => {
+      h.log.push(`delete:${id}`);
+    },
     voice: { wakeStatus: async () => ({ state: "off", enabled: false, chime: true }) },
   },
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
@@ -135,6 +137,29 @@ describe("capture box voice host", () => {
     input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await settle();
     expect(h.log).toEqual(["finish", "capture:buy milk"]);
+  });
+
+  it("Ctrl+Z with the caret in the input undoes a spoken save", async () => {
+    h.host.insert("call Sam");
+    h.host.addTask();
+    h.host.insert("buy milk");
+    await h.host.saveAll(true);
+    expect(document.querySelector("#cap-note-text")!.textContent).toBe("Saved 2 tasks");
+    input().focus();
+    const e = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    input().dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    await settle();
+    expect(h.log.filter((l) => l.startsWith("delete:"))).toEqual(["delete:id-call Sam", "delete:id-buy milk"]);
+    expect(rows()).toEqual(["call Sam", "buy milk"]);
+    expect(document.querySelector<HTMLElement>("#cap-note")!.hidden).toBe(true);
+  });
+
+  it("Ctrl+Z without an Undo note is left to the input", () => {
+    input().focus();
+    const e = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    input().dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
   });
 
   it("a note without Undo hides the Undo button", () => {

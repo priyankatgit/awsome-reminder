@@ -162,8 +162,9 @@ function setup(opts: { multi?: boolean; mode?: "focused" | "wake" } = {}) {
   let now = 0;
   let ended = 0;
   let cancels = 0;
+  const requestCancels: number[] = []; // segment ids whose own request was cancelled
   const s = new VoiceSession(opts.mode ?? "focused", rec, host, {
-    transcribe: tx.fn,
+    transcribe: (sg, prompt) => Object.assign(tx.fn(sg, prompt), { cancel: () => void requestCancels.push(sg.pcm[0]) }),
     now: () => now,
     sessionEnded: () => ended++,
     errorText: (e) => (e instanceof Error ? e.message : String(e)),
@@ -173,6 +174,7 @@ function setup(opts: { multi?: boolean; mode?: "focused" | "wake" } = {}) {
   return {
     s,
     cancels: () => cancels,
+    requestCancels,
     host,
     rec,
     tx,
@@ -454,10 +456,124 @@ describe("VoiceSession", () => {
 
   it("wake mode waits 15 s of silence; focusing the box switches to focused rules", async () => {
     const t = setup({ mode: "wake" });
+    t.at(3000);
+    t.s.segment(seg(1));
+    t.tx.say(1, "buy milk");
+    await settle();
     t.at(6000, 3000);
     expect(t.s.tick()).toBeNull();
     t.s.focusGained();
     expect(t.s.tick()).toBe("silence");
+  });
+
+  describe("an unengaged wake session", () => {
+    it("mic level with no words ends at the 6 s quiet rule", async () => {
+      const t = setup({ mode: "wake" });
+      // Continuous speech by level; every segment transcribes to nothing.
+      for (let i = 1; i <= 5; i++) {
+        t.at(i * 1000, 0);
+        t.s.segment(seg(i));
+        t.tx.say(i, i % 2 ? "" : "  ");
+        await settle();
+        expect(t.s.tick()).toBeNull();
+      }
+      t.at(6000, 0);
+      expect(t.s.tick()).toBe("quiet-wake");
+      await settle();
+      expect(t.host.calls).toEqual([]);
+      expect(t.host.errors).toEqual([]);
+      expect(t.s.endedBy()).toBe("quiet-wake");
+    });
+
+    it("the quiet rule waits for a segment still in flight", async () => {
+      const t = setup({ mode: "wake" });
+      t.at(5000, 0);
+      t.s.segment(seg(1));
+      t.at(6500, 0);
+      expect(t.s.tick()).toBeNull(); // it may hold the first words
+      t.tx.say(1, "buy milk");
+      await settle();
+      expect(t.s.tick()).toBeNull(); // words heard: now the 15 s rule
+      expect(t.host.input).toBe("buy milk");
+    });
+
+    it("15 s after the last words it ends, even with sound going on", async () => {
+      const t = setup({ mode: "wake" });
+      t.at(2000, 0);
+      t.s.segment(seg(1));
+      t.tx.say(1, "buy milk");
+      await settle();
+      t.at(16900, 0); // level says speech; no words since 2 s
+      t.s.segment(seg(2));
+      t.tx.say(2, "");
+      await settle();
+      expect(t.s.tick()).toBeNull();
+      t.at(17000, 0);
+      expect(t.s.tick()).toBe("silence");
+    });
+
+    it("chatter that keeps producing words ends at 60 s with nothing saved", async () => {
+      const t = setup({ mode: "wake" });
+      for (let i = 1; i <= 11; i++) {
+        t.at(i * 5000, 0);
+        t.s.segment(seg(i));
+        t.tx.say(i, i % 3 === 0 ? "blah blah. That's it." : "and then she said something about the release");
+        await settle();
+        expect(t.s.tick(), `at ${i * 5}s`).toBeNull();
+      }
+      t.s.segment(seg(12)); // still transcribing when the cap hits
+      t.at(60000, 0);
+      expect(t.s.tick()).toBe("wake-limit");
+      expect(t.rec.stopped).toBe(0); // the open audio is dropped
+      t.tx.say(12, "okay. Save all.");
+      await settle();
+      expect(t.host.calls.filter((c) => !c.startsWith("insert:"))).toEqual([]);
+      expect(t.host.said).not.toContain("Ready to save");
+      expect(t.host.errors).toEqual([]);
+      expect(t.s.endedBy()).toBe("wake-limit");
+      expect(t.ended()).toBe(1);
+    });
+
+    it("\"That's it\" is text before the user engages", async () => {
+      const t = setup({ mode: "wake" });
+      t.s.segment(seg(1));
+      t.tx.say(1, "blah blah. That's it.");
+      await settle();
+      expect(t.host.calls).toEqual(["insert:blah blah. That's it"]);
+      expect(t.s.state()).toBe("listening");
+    });
+
+    it("\"save all\" saves before the user engages", async () => {
+      const t = setup({ mode: "wake" });
+      t.s.segment(seg(1));
+      t.tx.say(1, "buy milk. Save all.");
+      await settle();
+      expect(t.host.calls).toEqual(["insert:buy milk", "saveAll:true"]);
+      expect(t.s.endedBy()).toBe("save");
+    });
+
+    it("cancel phrases still cancel before the user engages", async () => {
+      const t = setup({ mode: "wake" });
+      t.s.segment(seg(1));
+      t.tx.say(1, "buy milk. Never mind.");
+      await settle();
+      expect(t.host.calls).toEqual(["insert:buy milk", "cancelAll:true"]);
+    });
+
+    it("once engaged, the full phrase set and the 5-minute limit apply", async () => {
+      const t = setup({ mode: "wake" });
+      t.s.focusGained();
+      t.at(59000, 100);
+      t.s.segment(seg(1));
+      t.tx.say(1, "buy milk");
+      await settle();
+      t.at(61000, 100);
+      expect(t.s.tick()).toBeNull(); // no unengaged cap
+      t.s.segment(seg(2));
+      t.tx.say(2, "That's it.");
+      await settle();
+      expect(t.host.calls).toEqual(["insert:buy milk", "saveAll:true"]);
+    });
   });
 
   describe("stuck transcriptions", () => {
@@ -513,12 +629,36 @@ describe("VoiceSession", () => {
       expect(finished).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       await settle();
-      expect(t.cancels()).toBe(1); // the stuck request is cancelled
+      expect(t.requestCancels).toEqual([1]); // the stuck request is cancelled
       expect(t.host.errors).toEqual(["Couldn't transcribe the last bit: timed out"]);
       expect(t.host.calls).toEqual(["insert:call Sam"]); // later segment still applied
       expect(finished).toBe(true);
       expect(t.host.said).toContain("Ready to save");
       expect(t.ended()).toBe(1);
+    });
+
+    it("a timeout cancels the request it guards, not the shared in-flight one", async () => {
+      vi.useFakeTimers();
+      const t = setup();
+      t.s.segment(seg(1)); // never settles
+      t.s.segment(seg(2));
+      await vi.advanceTimersByTimeAsync(SEGMENT_TIMEOUT_MS);
+      await settle();
+      expect(t.requestCancels).toEqual([1]);
+      expect(t.cancels()).toBe(0); // the shared cancel is not the timer's
+    });
+
+    it("a dropped request's timer never fires later", async () => {
+      vi.useFakeTimers();
+      const t = setup();
+      t.s.segment(seg(1)); // never settles
+      void t.s.finish();
+      await vi.advanceTimersByTimeAsync(1000);
+      t.s.escape(); // give up: the queue is dropped
+      expect(t.cancels()).toBe(1);
+      await vi.advanceTimersByTimeAsync(SEGMENT_TIMEOUT_MS * 2);
+      expect(t.requestCancels).toEqual([]); // the 30 s timer was cleared with the queue
+      expect(t.host.errors).toEqual(["Couldn't transcribe the last bit: cancelled"]);
     });
 
     it("a stuck segment holds the silence end only until its timeout", async () => {
@@ -679,6 +819,40 @@ describe("mountVoice wiring", () => {
     expect(host.errors).toContain("Couldn't transcribe the last bit: cancelled");
     expect(m.ended).toBe(1);
     await ctl.finish(); // nothing left to wait for
+  });
+
+  it("a dropped request's timeout never cancels a later session's request", async () => {
+    vi.useFakeTimers();
+    try {
+      stubAudio();
+      m.status = () => Promise.resolve({ state: "ready" });
+      const cancels: string[] = [];
+      let n = 0;
+      m.transcribe = () => {
+        const id = `req${++n}`;
+        return Object.assign(new Promise<string>(() => {}), { cancel: () => void cancels.push(id) }); // never answers
+      };
+      const ctl = mount();
+      ctl.startSession("focused");
+      await settle();
+      speakOneSegment(); // request 1 at t=0
+      await settle();
+      ctl.toggle();
+      ctl.escape(); // give up on it
+      expect(cancels).toEqual(["req1"]);
+      await vi.advanceTimersByTimeAsync(20000);
+      ctl.startSession("focused");
+      await settle();
+      speakOneSegment(); // request 2 at t=20 s
+      await settle();
+      expect(n).toBe(2);
+      await vi.advanceTimersByTimeAsync(15000); // past request 1's 30 s mark
+      expect(cancels).toEqual(["req1"]);
+      await vi.advanceTimersByTimeAsync(15000); // request 2's own timeout
+      expect(cancels).toEqual(["req1", "req2"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a wake session shows its own listening label and reports how it ended", async () => {

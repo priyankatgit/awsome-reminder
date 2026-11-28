@@ -5,8 +5,8 @@ import { api, errorText, events, on, type VoiceStatus, type WakeStatus } from ".
 import { el } from "./dom";
 import { icons } from "./icons";
 
-/** Peak working set of the real Windows helper over 300 s: 60.8 MB (spec "Measurements"). */
-const WAKE_MEMORY = "about 60 MB";
+/** Working set of the real Windows helper started by the app: 69.3 MB (spec "Measurements"). */
+const WAKE_MEMORY = "about 70 MB";
 const NOT_INSTALLED = "wake word files are not installed";
 
 export const WAKE_HELP =

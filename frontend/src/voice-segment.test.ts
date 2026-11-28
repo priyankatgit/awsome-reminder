@@ -73,7 +73,8 @@ describe("endReason", () => {
     ["focused limit", { ...base, mode: "focused", heardSpeech: true, elapsedMs: 300000, sinceSpeechMs: 100 }, "limit"],
     ["focused just under limit", { ...base, mode: "focused", heardSpeech: true, elapsedMs: 299999, sinceSpeechMs: 100 }, null],
     ["wake limit", { ...base, mode: "wake", heardSpeech: true, elapsedMs: 300000, sinceSpeechMs: 100 }, "limit"],
-    ["wake just under limit", { ...base, mode: "wake", heardSpeech: true, elapsedMs: 299999, sinceSpeechMs: 100 }, null],
+    ["wake unengaged cap", { ...base, mode: "wake", heardSpeech: true, elapsedMs: 60000, sinceSpeechMs: 100 }, "wake-limit"],
+    ["wake just under unengaged cap", { ...base, mode: "wake", heardSpeech: true, elapsedMs: 59999, sinceSpeechMs: 100 }, null],
   ];
   it.each(rows)("%s", (_name, input, want) => {
     expect(endReason(input)).toBe(want);

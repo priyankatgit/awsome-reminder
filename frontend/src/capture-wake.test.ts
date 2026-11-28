@@ -16,6 +16,7 @@ const h = vi.hoisted(() => {
     fake: null as unknown as Fake,
     log: [] as string[],
     chime: true,
+    failCapture: "", // api.capture rejects for this text
     playChime: async (): Promise<void> => {},
   };
 });
@@ -23,6 +24,7 @@ vi.mock("./api", () => ({
   api: {
     preview: async (input: string) => ({ kind: "todo", text: input, tags: ["inbox"], dueAt: null, rrule: "", priority: "", human: "", alerts: null, warnings: null }),
     capture: async (input: string) => {
+      if (input === h.failCapture) throw new Error("disk full");
       h.log.push(`capture:${input}`);
       return { id: `id-${input}`, text: input };
     },
@@ -103,6 +105,7 @@ describe("capture box wake mode", () => {
     document.body.append(root);
     h.log = [];
     h.chime = true;
+    h.failCapture = "";
     h.playChime = async () => {};
     mountCapture(root);
     await settle(); // the initial wakeStatus
@@ -392,6 +395,37 @@ describe("capture box wake mode", () => {
       expect(input().value).toBe("buy milk");
     });
 
+    it("a spoken save that fails on the first row shows why, then hides keeping the draft", async () => {
+      await wake();
+      h.fake.host.insert("call Sam");
+      h.fake.host.addTask();
+      h.fake.host.insert("buy milk");
+      h.failCapture = "call Sam";
+      h.fake.host.sessionEnded("wake", "save"); // the box stays for the save
+      vi.useFakeTimers();
+      await h.fake.host.saveAll(true);
+      expect(document.querySelector(".rv-row")!.textContent).toContain("disk full");
+      await expectHidesAfter4s();
+      expect(rows()).toEqual(["call Sam"]);
+      expect(input().value).toBe("buy milk");
+    });
+
+    it("a spoken save that fails partway hides too, keeping the unsaved rest", async () => {
+      await wake();
+      h.fake.host.insert("call Sam");
+      h.fake.host.addTask();
+      h.fake.host.insert("buy milk");
+      h.failCapture = "buy milk";
+      h.fake.host.sessionEnded("wake", "save");
+      vi.useFakeTimers();
+      await h.fake.host.saveAll(true);
+      expect(errorRow().textContent).toBe("disk full");
+      expect(document.querySelector("#cap-note-text")!.textContent).toBe("Saved 1 task");
+      await expectHidesAfter4s();
+      expect(rows()).toEqual([]);
+      expect(input().value).toBe("buy milk");
+    });
+
     it("an error with text dictated hides at once, keeping the text", async () => {
       await wake();
       h.fake.host.insert("buy milk");
@@ -419,6 +453,35 @@ describe("capture box wake mode", () => {
     await settle();
     h.handlers.get("capture:open")!(undefined);
     expect(status().textContent).toBe("1 unsaved task from voice");
+  });
+
+  it("turning the wake word off releases an unengaged wake session's mic and hides, keeping the draft", async () => {
+    await wake();
+    h.fake.host.insert("buy milk");
+    h.handlers.get("voice:wake-status")!({ state: "off", enabled: false, chime: true });
+    expect(h.fake.calls).toContain("cancel");
+    expect(box().classList.contains("is-hidden")).toBe(true);
+    await settle();
+    expect(h.log).toContain("hideCapture");
+    expect(input().value).toBe("buy milk");
+  });
+
+  it("turning the wake word off leaves an engaged box alone", async () => {
+    await wake();
+    box().dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    h.handlers.get("voice:wake-status")!({ state: "off", enabled: false, chime: true });
+    expect(h.fake.calls).not.toContain("cancel");
+    expect(box().classList.contains("is-hidden")).toBe(false);
+  });
+
+  it("the 60 s unengaged cap hides the box like any wake end, keeping the text", async () => {
+    await wake();
+    h.fake.host.insert("and then she said");
+    h.fake.host.sessionEnded("wake", "wake-limit");
+    expect(box().classList.contains("is-hidden")).toBe(true);
+    await settle();
+    expect(h.log.filter((l) => l.startsWith("capture:"))).toEqual([]);
+    expect(input().value).toBe("and then she said");
   });
 
   it("a quiet wake hides the box with no error", async () => {

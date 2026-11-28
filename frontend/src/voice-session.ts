@@ -46,8 +46,11 @@ export interface SessionHost {
 export type SessionPhase = "listening" | "draining" | "done";
 export type SessionEnd = EndReason | "user" | "escape" | "blur" | "save" | "cancel" | "abort";
 
+/** One transcription request; cancel stops it (the binding's Cancellable). */
+export type Transcription = Promise<string> & { cancel?(): void };
+
 export interface SessionDeps {
-  transcribe(seg: PcmSegment, prompt: string): Promise<string>;
+  transcribe(seg: PcmSegment, prompt: string): Transcription;
   now(): number;
   /** Called once when the session is over (api.voice.sessionEnded). */
   sessionEnded(): void;
@@ -68,6 +71,9 @@ export class VoiceSession {
   private saveAfter = false; // "save all" heard: save once drained
   private blurred = false;
   private drainer: Promise<void> | null = null;
+  private textHeard = false; // some segment produced text
+  private lastTextAt = 0; // deps.now() when a segment last produced text
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>(); // per-request timeouts
 
   constructor(
     private mode: SessionMode,
@@ -107,18 +113,26 @@ export class VoiceSession {
   /** Checks the end rules (called a few times a second while listening). */
   tick(): EndReason | null {
     if (this.phase !== "listening") return null;
-    const heardSpeech = this.rec.heardSpeech;
+    // A wake session nobody engaged with counts only speech that produced
+    // text: a conversation in the room (mic level, no words for us, or words
+    // that are chatter) must not keep a false wake alive.
+    const wake = this.mode === "wake";
+    const heardSpeech = wake ? this.textHeard : this.rec.heardSpeech;
+    const lastSpeech = wake ? this.lastTextAt : this.rec.lastSpeechAt();
     const why = endReason({
       mode: this.mode,
       elapsedMs: this.rec.elapsedMs(),
       heardSpeech,
-      sinceSpeechMs: heardSpeech ? this.deps.now() - this.rec.lastSpeechAt() : 0,
+      sinceSpeechMs: heardSpeech ? this.deps.now() - lastSpeech : 0,
       afterBoundary: this.afterBoundary,
     });
     if (!why) return null;
-    // A segment still in flight may hold a "new task" that extends the wait.
-    if (why === "silence" && this.pending > 0) return null;
+    // A segment still in flight may hold a "new task" that extends the wait,
+    // or (in a wake session) the first words.
+    if ((why === "silence" || why === "quiet-wake") && this.pending > 0) return null;
     if (why === "limit") this.host.showNote(LIMIT_NOTE);
+    // The box hides at the unengaged cap: nothing is saved behind it.
+    if (why === "wake-limit") this.blurred = true;
     // With no speech heard there is no open segment worth sending.
     this.stop(why, why === "silence" || why === "limit");
     void this.drain();
@@ -197,7 +211,14 @@ export class VoiceSession {
   }
 
   private apply(text: string): void {
-    for (const op of parseSegment(text, { multi: this.host.multi() })) {
+    // Before the user engages, "that's it" and the like are chatter: only
+    // the explicit "save all" phrases save.
+    const ops = parseSegment(text, { multi: this.host.multi(), strictSave: this.mode === "wake" });
+    if (ops.length > 0) {
+      this.textHeard = true;
+      this.lastTextAt = this.deps.now();
+    }
+    for (const op of ops) {
       if (this.phase === "done") return; // a "cancel" ended the session
       this.heard = true;
       switch (op.kind) {
@@ -233,20 +254,29 @@ export class VoiceSession {
     this.host.showError(`${FAIL_PREFIX}${this.deps.errorText(err)}`);
   }
 
-  /** Whisper requests have no timeout of their own: cap each segment. */
-  private withTimeout(p: Promise<string>): Promise<string> {
+  /**
+   * Whisper requests have no timeout of their own: cap each segment. The
+   * timer cancels the request it guards, never whatever is in flight then.
+   */
+  private withTimeout(p: Transcription): Promise<string> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.deps.cancelTranscribe?.();
+        this.timers.delete(timer);
+        p.cancel?.();
         reject(new Error("timed out"));
       }, SEGMENT_TIMEOUT_MS);
+      this.timers.add(timer);
+      const clear = () => {
+        clearTimeout(timer);
+        this.timers.delete(timer);
+      };
       p.then(
         (text) => {
-          clearTimeout(timer);
+          clear();
           resolve(text);
         },
         (err) => {
-          clearTimeout(timer);
+          clear();
           reject(err);
         },
       );
@@ -267,6 +297,8 @@ export class VoiceSession {
   private dropQueue(): void {
     this.queue.cancel();
     this.deps.cancelTranscribe?.();
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
     this.pending = 0;
     this.host.setBusy(false);
   }
@@ -285,7 +317,7 @@ export class VoiceSession {
       return;
     }
     const end = this.end;
-    if (end === "blur" || end === "quiet-wake") return; // quietly into the draft
+    if (end === "blur" || end === "quiet-wake" || end === "wake-limit") return; // quietly into the draft
     if (!this.heard && !this.failed) {
       if (end === "escape") return;
       this.host.showError(NOTHING_HEARD);

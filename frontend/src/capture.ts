@@ -595,12 +595,6 @@ export function mountCapture(root: HTMLElement): void {
   }
 
   noteUndo.addEventListener("click", () => void runUndo());
-  note.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
-      e.preventDefault();
-      void runUndo();
-    }
-  });
 
   /**
    * Voice boundary ("new task"): the input becomes a row at the end of the
@@ -725,6 +719,9 @@ export function mountCapture(root: HTMLElement): void {
         showNote(`Saved ${tasks(r.saved.length)}`, () => undoSaved(ids, savedTexts));
       }
       updateReview();
+      // A spoken save in a wake box nobody engaged with: show why, then hide
+      // keeping the unsaved rest as the draft (never left up unattended).
+      if (keyGuard.armed()) hideSoon();
       return;
     }
     dropSaved(rows.length);
@@ -1031,6 +1028,13 @@ export function mountCapture(root: HTMLElement): void {
       clearConfirm();
       updateReview();
     }
+    if (noteAction && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "z") {
+      // Ctrl+Z undoes the Saved/Discarded note from anywhere in the box,
+      // the input included (instead of the input's own text undo).
+      e.preventDefault();
+      void runUndo();
+      return;
+    }
     if (reply.handleKey(e)) return; // Alt+P: the person editor
     if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "m") {
       e.preventDefault();
@@ -1142,6 +1146,9 @@ export function mountCapture(root: HTMLElement): void {
   on(events.captureWake, () => void openForWake());
   on<WakeStatus>(events.wakeStatus, (st) => {
     wakeChime = st.chime;
+    // The wake word was turned off while a wake box listens unengaged:
+    // release the mic and hide, keeping what was dictated.
+    if (!st.enabled && keyGuard.armed()) hideKeepingDraft();
   });
   void api.voice
     .wakeStatus()

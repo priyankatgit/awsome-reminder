@@ -9,9 +9,12 @@ export type Op =
 const BOUNDARY = ["new task", "create new task", "create a new task", "next task", "add another task"];
 const SCRATCH = ["scratch that", "delete that"];
 const SAVE = ["save all", "save them", "save them all", "save tasks", "thats all", "thats it"];
+/** A wake box nobody engaged with yet saves only on these: chatter often ends "that's it". */
+const STRICT_SAVE = ["save all", "save tasks", "save them all"];
 const CANCEL = ["cancel", "cancel all", "never mind"];
 
-const PUNCT = /[.,!?;:"']/g;
+// Curly quotes and the ellipsis character count as punctuation when matching.
+const PUNCT = /[.,!?;:"'‘’“”…]/g;
 const EDGE_PUNCT = /^[\s.,!?;:"']+|[\s.,!?;:"']+$/g;
 
 const norm = (w: string): string => w.toLowerCase().replace(PUNCT, "");
@@ -60,8 +63,16 @@ function splitBoundaries(text: string): Op[] {
   return ops;
 }
 
-export function parseSegment(text: string, opts: { multi?: boolean } = {}): Op[] {
+export interface ParseOptions {
+  /** False in reply mode: one line of text, no boundaries, saves or cancels. */
+  multi?: boolean;
+  /** Only "save all", "save tasks" and "save them all" save (an unengaged wake box). */
+  strictSave?: boolean;
+}
+
+export function parseSegment(text: string, opts: ParseOptions = {}): Op[] {
   const multi = opts.multi ?? true;
+  const save = opts.strictSave ? STRICT_SAVE : SAVE;
 
   // The last sentence (or the whole segment) may be a command.
   const sentences = [...text.matchAll(/[^.?!]+[.?!]*/g)].filter((m) => norm(m[0]).trim() !== "");
@@ -71,7 +82,7 @@ export function parseSegment(text: string, opts: { multi?: boolean } = {}): Op[]
   if (last) {
     const s = last[0];
     if (matchesWhole(s, SCRATCH)) command = { kind: "scratch" };
-    else if (multi && matchesWhole(s, SAVE)) command = { kind: "save" };
+    else if (multi && matchesWhole(s, save)) command = { kind: "save" };
     else if (multi && matchesWhole(s, CANCEL)) command = { kind: "cancel" };
     if (command) body = text.slice(0, last.index);
   }

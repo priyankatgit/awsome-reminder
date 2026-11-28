@@ -153,11 +153,18 @@ export class Segmenter {
 }
 
 export type SessionMode = "focused" | "wake";
-export type EndReason = "silence" | "nothing" | "limit" | "quiet-wake";
+export type EndReason = "silence" | "nothing" | "limit" | "quiet-wake" | "wake-limit";
 
 const LIMIT_MS = 300000;
+/** A wake session nobody engaged with (click, hotkey, Ctrl+M) ends by then. */
+export const WAKE_UNENGAGED_MS = 60000;
 
-/** When (and why) a dictation session should end; null to keep going. */
+/**
+ * When (and why) a dictation session should end; null to keep going.
+ * "wake" is a wake session nobody engaged with yet: there heardSpeech and
+ * sinceSpeechMs are about segments that produced text (VoiceSession), not
+ * raw mic level, so a conversation in the room does not keep it alive.
+ */
 export function endReason(t: {
   mode: SessionMode;
   elapsedMs: number;
@@ -174,6 +181,7 @@ export function endReason(t: {
     }
     return null;
   }
+  if (t.elapsedMs >= WAKE_UNENGAGED_MS) return "wake-limit";
   if (t.heardSpeech) {
     if (t.sinceSpeechMs >= 15000) return "silence";
   } else if (t.elapsedMs >= 6000) {
