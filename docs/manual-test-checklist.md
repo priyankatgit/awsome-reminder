@@ -188,3 +188,19 @@ Run in the built app (`wails3 build`) from a temp copy, with `APPDATA` / `LOCALA
 | H27 | Idle with the wake word off | Fresh profile, wake word never turned on: no `--wake-helper` process, app process about 50 MB and 0 % CPU for a minute. | done (Task 13: 48 to 50 MB, 0 %, no helper) | | | |
 | H28 | Quit leaves no helper | With the wake word on, quit from the tray and kill the app from Task Manager: no `--wake-helper` or `sherpa-onnx-keyword-spotter-microphone` process remains and the mic indicator goes. | needs human | needs human | needs human | needs human |
 | H29 | False wake during a real call (speech continues) | During a real call or meeting (people keep talking near the mic), make the wake word fire (say "Hey Awesome" mid-conversation) and do not touch the box. The box ends within 60 s and hides; nothing is saved (sentences ending "that's it" stay text), and what it heard is only the draft on the next hotkey. | needs human | needs human | needs human | needs human |
+
+## Phone push (Phase 4)
+
+These need a phone with the ntfy app (and, for P8, a self-hosted server), so none can be run by a script. Use a scratch profile as above.
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| P1 | Phone buzzes with the laptop closed | Phone push on, subscribed in the ntfy app, grace 2 min. Create `in 5 min test push`, close the lid (or shut down) right away. The phone buzzes at the due time plus the grace. | needs human | needs human | needs human | needs human |
+| P2 | Two computers, one buzz | Same topic on two computers (settings synced). Create a reminder due in 5 min on one. The phone buzzes once, not twice. | needs human | needs human | needs human | needs human |
+| P3 | Done before due plus grace | Create `in 5 min test push`, mark it done on the computer before due plus grace: the phone does not buzz. | needs human | needs human | needs human | needs human |
+| P4 | Dismiss the at-time card | Let the at-time card appear and dismiss it within the grace: no buzz. Dismissing an early "in 10 min" card does not cancel it. | needs human | needs human | needs human | needs human |
+| P5 | Phone Done | Tap Done on the phone notification: the item shows done on a computer once one is online (within ntfy.sh's 12 h cache). | needs human | needs human | needs human | needs human |
+| P6 | Phone Snooze 1h with the laptop off | Tap Snooze 1h, then turn every computer off: the phone buzzes again an hour later. | needs human | needs human | needs human | needs human |
+| P7 | Hidden text | Turn on Hide task text on the phone: the buzz reads "Open Awesome Reminder on a computer." with no task text. | needs human | needs human | needs human | needs human |
+| P8 | Token-protected self-hosted topic | On a self-hosted ntfy 2.16+ with an access-controlled topic, save a token that can post to the topic and `<topic>-ctl`: Send test arrives, and the phone's Done and Snooze buttons work. | needs human | needs human | needs human | needs human |
+| P9 | Consent note and QR | Turning the switch on (or un-hiding text) shows "Reminder text will be sent to <host>."; scanning the QR code in the ntfy app subscribes to the topic. | needs human | needs human | needs human | needs human |

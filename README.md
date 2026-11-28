@@ -213,6 +213,7 @@ Open Settings from the tray menu or the gear in the list window.
 - **Default time** for dates without a time (`09:00`), and the weekday and time used for "next week".
 - **Export path:** if set, the app writes a read-only `todo.md` there after changes (leave empty to turn off).
 - **Replies:** the reply key, working days, end-of-day time and the end-of-day sweep (see Replies owed above).
+- **Phone push:** off by default (see Phone push below).
 - **Start at login:** on by default.
 - **Show pending count:** on by default. Turn it off to remove the count from the tray icon, the taskbar button and the Dock.
 
@@ -226,6 +227,37 @@ Sync is off by default and the app never touches the network for it until you tu
 - **Status:** the list header shows a pill (`All synced · 2 min ago`, `Syncing…`, `Offline · 3 changes waiting`, `Sync error`); click it for details, **Sync now** and the cluster host. Rows that Atlas has not received yet show a small crossed-out cloud marker. The tray icon carries a status dot and the tooltip ends with the same wording.
 - **Safety:** the connection string is kept in the OS keychain (or an AES-256-GCM encrypted file where there is none) and never logged. If the database user can reach other databases, Settings warns you but sync still works. Synced data is not encrypted beyond Atlas's own TLS and storage, so it is readable by anyone with access to your cluster.
 - **Disconnect** in Settings stops sync and forgets the string; your items stay here and Atlas keeps its copy.
+
+### Phone push (optional)
+
+Phone push is off by default and the app does not touch ntfy until you turn it on. It buzzes your phone for reminders through [ntfy](https://ntfy.sh), even when the computer is closed or off.
+
+**Set up.** In the ntfy app on your phone, subscribe to the topic. Then in **Settings › Phone push**:
+
+- Turn on **Phone push**. Turning it on shows a note: "Reminder text will be sent to <host>." and asks you to confirm.
+- **Server** is `https://ntfy.sh` by default. A self-hosted server needs ntfy 2.16 or newer.
+- **Topic** is a random `ar-...` name. **Copy** copies it, **New topic** replaces it (subscribe again on the phone), and the QR code holds `<server>/<topic>` so you can scan it from the ntfy app.
+- **Access token** (optional) is for a protected self-hosted topic. It is set per computer and kept in the OS keychain, or in an AES-256-GCM encrypted file `push.key` (plus a database entry) where there is no keychain. It is never logged.
+- **Also push reply nudges and the end-of-day sweep** (off) sends those too.
+- **Hide task text on the phone** (off) sends "Open Awesome Reminder on a computer." instead of the task text. Un-hiding it asks for the same consent note.
+- **Buzz the phone if not handled here within** is immediately, 2, 5 or 10 minutes (default 2).
+- **Send test** pushes a test message; the status line shows the state (`Phone push: 3 scheduled · last sent 2 min ago`, `Offline · will retry`, or the error).
+
+The server, topic, the two checkboxes and the grace sync between computers; the token does not (set it on each computer).
+
+**What gets pushed.** One buzz per reminder occurrence, at the due time (or the end of a snooze) plus the grace, not one per lead-time alert. High-priority items buzz as urgent (ntfy priority 5), others as high (4). The buzz is scheduled ahead on the ntfy server, up to 3 days (71 hours) ahead, so it arrives with the laptop closed or off, as long as a computer running the app was online at some point in the 3 days before. Each computer reschedules every 15 minutes and whenever something changes.
+
+**Staying in step with the computers.**
+
+- Done, snooze, edit or delete on any computer cancels or moves the phone buzz.
+- Dismissing the at-time card (or a missed, snooze-end, nudge or sweep card) within the grace cancels the buzz. Dismissing an early "in 10 min" card does not.
+- With several computers you still get one buzz: each cancels the previous copy before it schedules its own.
+
+**Buttons on the phone.** The notification has **Done** and **Snooze 1h** (the end-of-day sweep has no buttons). Done reaches your computers through ntfy and is applied when one of them is online within ntfy.sh's 12-hour message cache. Snooze 1h makes the server buzz again an hour later even with every computer off; the computers do not show that snooze, and a Done on a computer within the hour cancels it.
+
+**Privacy.** The ntfy server (ntfy.sh unless you host your own) can read everything that is sent unless you hide the text. The topic works like a password: anyone who knows it can read it and post to it. A token you save is included in the phone's Done and Snooze buttons, so use one that can only post to the topic and `<topic>-ctl`.
+
+**Limits.** ntfy.sh's free tier allows 250 messages a day. Above 200 requests a day the app slows down and only schedules pushes due within 6 hours. A failed request is retried in the background and never delays an alert on the computer.
 
 ### Pending count
 
@@ -246,7 +278,7 @@ Everything is under the per-user config directory, in an `awesome-reminder` fold
 | macOS | `~/Library/Application Support/awesome-reminder/` |
 | Linux | `~/.config/awesome-reminder/` |
 
-It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). With sync on and no OS keychain it also holds `sync.key`. Settings are stored in the database. Delete the folder to reset the app.
+It holds `awesome.db` (the SQLite database), `awesome.log`, and an `attachments` folder with the description images (`<id>.webp`). With sync on and no OS keychain it also holds `sync.key`; with a phone push token and no OS keychain, `push.key`. Settings are stored in the database. Delete the folder to reset the app.
 
 At startup the app deletes images that no description has referred to for more than 7 days, and images of items that have been deleted for more than 30 days. Undoing a delete within those windows keeps the images.
 
@@ -283,10 +315,8 @@ The icon is drawn in `build/appicon.svg` and the tray glyphs in `build/tray/*.sv
 
 ## Status and roadmap
 
-Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Phase 3 (hands-free voice: the "Hey Awesome" wake word and several tasks per dictation, collected in a review list) is done; the macOS and Linux listeners and real-voice tuning are not yet checked on real machines (see the [checklist](docs/manual-test-checklist.md)). Nothing leaves your machine unless you turn sync on (the one-time voice and wake word downloads are the only other network use, and only after you agree to them).
+Phase 1 (local core) is complete: hotkey capture, natural-language parsing, local storage, tray list, alerts, settings, `todo.md` export and autostart. Phase 1.5 adds local voice dictation in the capture box. Phase 1.6 adds the details panel with a Markdown description and inline images, priority, the live reminder indicator in the capture box, and the pending-count badge. Phase 2 (optional sync through your own MongoDB Atlas cluster, with status indicators in the tray and list) is complete; checks against a real Atlas cluster and between two machines are still pending (see the [checklist](docs/manual-test-checklist.md)). Replies owed (grab a message, track who is waiting, nudges and an end-of-day sweep) is done. Phase 3 (hands-free voice: the "Hey Awesome" wake word and several tasks per dictation, collected in a review list) is done; the macOS and Linux listeners and real-voice tuning are not yet checked on real machines (see the [checklist](docs/manual-test-checklist.md)). Phase 4 (optional phone push for reminders through ntfy) is done; checks that need a phone are still pending (see the [checklist](docs/manual-test-checklist.md)). Nothing leaves your machine unless you turn sync or phone push on (the one-time voice and wake word downloads are the only other network use, and only after you agree to them).
 
-Planned, in order:
-
-1. **Phase 4:** optional phone push for reminders through ntfy.
+Nothing else is planned at the moment; the planned list is empty.
 
 The full design is in [docs/superpowers/specs/2026-11-27-awesome-reminder-design.md](docs/superpowers/specs/2026-11-27-awesome-reminder-design.md); the UI rules are in [docs/superpowers/specs/2026-11-27-ui-design-guide.md](docs/superpowers/specs/2026-11-27-ui-design-guide.md). Atlas setup is in [docs/atlas-setup.md](docs/atlas-setup.md). Per-OS verification is tracked in [docs/manual-test-checklist.md](docs/manual-test-checklist.md).
