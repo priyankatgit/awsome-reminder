@@ -51,6 +51,12 @@ func TestIsNetworkUNC(t *testing.T) {
 	if !IsNetwork(`\\server\share\x`) {
 		t.Error("UNC should be network")
 	}
+	if !IsNetwork(`\\?\UNC\server\share\x`) {
+		t.Error("extended UNC should be network")
+	}
+	if IsNetwork(`\\?\C:\x`) || IsNetwork(`\\.\C:\x`) {
+		t.Error("extended-length local path is not network")
+	}
 	if IsNetwork(t.TempDir()) {
 		t.Error("temp dir should not be network")
 	}

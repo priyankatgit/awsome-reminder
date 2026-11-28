@@ -1,6 +1,7 @@
 package paths
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,8 +51,11 @@ func Resolve() Resolution {
 		return fail("The saved data folder path is not absolute.")
 	}
 	st, err := os.Stat(root)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return fail("Folder not found: " + root)
+	}
+	if err != nil {
+		return fail("Can't open folder: " + err.Error())
 	}
 	if !st.IsDir() {
 		return fail("Not a folder: " + root)

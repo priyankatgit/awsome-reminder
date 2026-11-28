@@ -21,7 +21,13 @@ func freeSpace(dir string) (uint64, error) {
 }
 
 func isNetwork(dir string) bool {
-	if strings.HasPrefix(dir, `\\`) || strings.HasPrefix(dir, "//") {
+	dir = strings.ReplaceAll(dir, "/", `\`)
+	switch {
+	case strings.HasPrefix(strings.ToUpper(dir), `\\?\UNC\`):
+		return true
+	case strings.HasPrefix(dir, `\\?\`) || strings.HasPrefix(dir, `\\.\`):
+		dir = dir[4:]
+	case strings.HasPrefix(dir, `\\`):
 		return true
 	}
 	if len(dir) < 2 || dir[1] != ':' {

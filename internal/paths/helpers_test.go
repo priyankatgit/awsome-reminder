@@ -1,6 +1,7 @@
 package paths
 
 import (
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -15,7 +16,7 @@ func isolate(t *testing.T) (cfgBase, cacheBase string) {
 		t.Setenv("LOCALAPPDATA", cache)
 	case "darwin":
 		t.Setenv("HOME", cfg)
-		cache = cfg
+		cache = filepath.Join(cfg, "Library", "Caches")
 	default:
 		t.Setenv("XDG_CONFIG_HOME", cfg)
 		t.Setenv("XDG_CACHE_HOME", cache)
