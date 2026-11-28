@@ -42,6 +42,8 @@ type Syncer struct {
 	shared     doc
 	failErr    error
 	failN      int
+	clockErr   error
+	clockN     int
 	beforePush func()
 	scopeBroad bool
 	scopeErr   error
@@ -66,6 +68,14 @@ func (s *Syncer) SetNow(fn func() time.Time) {
 func (s *Syncer) FailNext(err error, n int) {
 	s.mu.Lock()
 	s.failErr, s.failN = err, n
+	s.mu.Unlock()
+}
+
+// FailServerTime makes the next n ServerTime calls return err; other calls
+// are unaffected.
+func (s *Syncer) FailServerTime(err error, n int) {
+	s.mu.Lock()
+	s.clockErr, s.clockN = err, n
 	s.mu.Unlock()
 }
 
@@ -429,6 +439,10 @@ func (s *Syncer) ServerTime(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	defer s.mu.Unlock()
+	if s.clockN > 0 {
+		s.clockN--
+		return time.Time{}, s.clockErr
+	}
 	return s.now(), nil
 }
 

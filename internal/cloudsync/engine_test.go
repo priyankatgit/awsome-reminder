@@ -102,7 +102,10 @@ func newDeviceOpts(t *testing.T, s cloudsync.Syncer, clk *clock, o cloudsync.Opt
 		d.changes++
 		d.mu.Unlock()
 	})
-	o.Host, o.Now = testHost, clk.Now
+	o.Host = testHost
+	if o.Now == nil {
+		o.Now = clk.Now
+	}
 	o.OnStatus = func(s cloudsync.Status) {
 		d.mu.Lock()
 		d.statuses = append(d.statuses, s)
@@ -667,6 +670,87 @@ func TestLateCommitInsideOverlapIsPulled(t *testing.T) {
 	b.sync()
 	if got := b.item(late.ID); got.Text != "late" {
 		t.Errorf("late commit not pulled: %+v", got)
+	}
+}
+
+// TestServerClockFailureKeepsOverlap: when the first server-clock read fails,
+// a local clock that runs ahead must not be recorded as a pull start (it would
+// push the overlap past late commits). The read is retried on the next cycle,
+// which then records starts in server time and shows the skew warning.
+func TestServerClockFailureKeepsOverlap(t *testing.T) {
+	ms, clk := setup()
+	ctx := context.Background()
+	ms.FailServerTime(errors.New("server status refused"), 1)
+	ahead := func() time.Time { return clk.Now().Add(7 * time.Minute) }
+	b := newDeviceOpts(t, ms, clk, cloudsync.Options{Now: ahead})
+	early := remoteItem("01JD00000000000000000000C1", "early", clk.Now())
+	if err := ms.PushItem(ctx, early); err != nil {
+		t.Fatal(err)
+	}
+	b.sync() // the clock read fails
+	if _, ok, _ := b.c.SyncMeta("sync_pull_at_items"); ok {
+		t.Error("a pull start was recorded while the server clock was unknown")
+	}
+	if st := b.e.Status(); len(st.Warnings) != 0 {
+		t.Errorf("warnings with the clock unknown: %#v", st.Warnings)
+	}
+
+	clk.Add(10 * time.Second)
+	newer := remoteItem("01JD00000000000000000000C2", "newer", clk.Now())
+	if err := ms.PushItem(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(10 * time.Second)
+	pullStart := clk.Now()
+	b.sync() // the clock read is retried and works
+	if st := b.e.Status(); !reflect.DeepEqual(st.Warnings, []string{skewText}) {
+		t.Errorf("skew warning after the retry: %#v", st.Warnings)
+	}
+	v, ok, _ := b.c.SyncMeta("sync_pull_at_items")
+	if got, err := time.Parse(time.RFC3339Nano, v); !ok || err != nil || !got.Equal(pullStart) {
+		t.Errorf("pull start %q (%v), want the server time %v", v, err, pullStart)
+	}
+
+	late := remoteItem("01JD00000000000000000000C3", "late", clk.Now())
+	if err := ms.PushItem(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	ms.SetItemSrv(late.ID, pullStart.Add(-15*time.Second))
+	clk.Add(30 * time.Second)
+	b.sync()
+	if got := b.item(late.ID); got.Text != "late" {
+		t.Errorf("late commit not pulled: %+v", got)
+	}
+}
+
+// TestServerClockUnknownFallsBackToWatermark: while the server clock stays
+// unknown, each pull overlaps from 2 min before its saved watermark, so a late
+// commit is still picked up and nothing is recorded in local time.
+func TestServerClockUnknownFallsBackToWatermark(t *testing.T) {
+	ms, clk := setup()
+	ctx := context.Background()
+	ms.FailServerTime(errors.New("server status refused"), 100)
+	ahead := func() time.Time { return clk.Now().Add(7 * time.Minute) }
+	b := newDeviceOpts(t, ms, clk, cloudsync.Options{Now: ahead})
+	newer := remoteItem("01JD00000000000000000000C2", "newer", clk.Now())
+	if err := ms.PushItem(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(10 * time.Second)
+	pullStart := clk.Now()
+	b.sync()
+	late := remoteItem("01JD00000000000000000000C3", "late", clk.Now())
+	if err := ms.PushItem(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	ms.SetItemSrv(late.ID, pullStart.Add(-15*time.Second))
+	clk.Add(30 * time.Second)
+	b.sync()
+	if got := b.item(late.ID); got.Text != "late" {
+		t.Errorf("late commit not pulled: %+v", got)
+	}
+	if _, ok, _ := b.c.SyncMeta("sync_pull_at_items"); ok {
+		t.Error("a pull start was recorded while the server clock was unknown")
 	}
 }
 
