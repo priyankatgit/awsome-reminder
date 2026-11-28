@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -336,7 +337,7 @@ func TestControlPollAndStream(t *testing.T) {
 	sctx, cancel := context.WithCancel(ctx)
 	got := make(chan CtlMessage, 4)
 	done := make(chan error, 1)
-	go func() { done <- c.StreamControl(sctx, func(m CtlMessage) { got <- m }) }()
+	go func() { done <- c.StreamControl(sctx, "", func(m CtlMessage) { got <- m }) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for s.Subscribers(testTopic+"-ctl") == 0 {
 		if time.Now().After(deadline) {
@@ -371,11 +372,19 @@ func TestControlPollAndStream(t *testing.T) {
 
 	// A server-closed stream returns an error. Wait for the cancelled
 	// stream to unsubscribe first so the count below is the new one.
+	deadline = time.Now().Add(5 * time.Second)
 	for s.Subscribers(testTopic+"-ctl") != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("cancelled stream never unsubscribed")
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	go func() { done <- c.StreamControl(ctx, func(CtlMessage) {}) }()
+	go func() { done <- c.StreamControl(ctx, "", func(CtlMessage) {}) }()
+	deadline = time.Now().Add(5 * time.Second)
 	for s.Subscribers(testTopic+"-ctl") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("second stream never subscribed")
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	s.CloseStreams()
@@ -387,5 +396,74 @@ func TestControlPollAndStream(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("StreamControl did not return when the stream closed")
+	}
+}
+
+// A stream started with since first replays the cached messages after it,
+// so a message posted between a poll and the stream connecting is not lost.
+func TestStreamControlSince(t *testing.T) {
+	s := pushtest.New()
+	defer s.Close()
+	c := newClient(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, b := range []string{`{"n":1}`, `{"n":2}`, `{"n":3}`} {
+		if err := c.PostControl(ctx, []byte(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := c.PollControl(ctx, "")
+	if err != nil || len(all) != 3 {
+		t.Fatalf("poll = %+v %v", all, err)
+	}
+	got := make(chan CtlMessage, 4)
+	done := make(chan error, 1)
+	go func() { done <- c.StreamControl(ctx, all[0].ID, func(m CtlMessage) { got <- m }) }()
+	for _, want := range all[1:] {
+		select {
+		case m := <-got:
+			if m.ID != want.ID {
+				t.Fatalf("stream got %+v, want %+v", m, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("stream replayed nothing")
+		}
+	}
+	var q string
+	for _, r := range s.Requests() {
+		if r.Method == http.MethodGet && !strings.Contains(r.Query, "poll=1") {
+			q = r.Query
+		}
+	}
+	if q != "since="+all[0].ID {
+		t.Fatalf("stream query = %q", q)
+	}
+	cancel()
+	<-done
+}
+
+// A server that never answers (laptop asleep mid-connect) must not hang
+// the stream: the idle timer covers the wait for response headers.
+func TestStreamControlStallBeforeHeaders(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	c := Client{Server: srv.URL, Topic: testTopic, HTTP: srv.Client(), streamIdle: 100 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() { done <- c.StreamControl(context.Background(), "", func(CtlMessage) {}) }()
+	select {
+	case err := <-done:
+		var te *TempError
+		if !errors.As(err, &te) {
+			t.Fatalf("stalled stream = %v, want *TempError", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StreamControl hung waiting for response headers")
 	}
 }

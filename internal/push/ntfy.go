@@ -67,6 +67,8 @@ type CtlMessage struct{ ID, Message string }
 type Client struct {
 	Server, Topic, Token string
 	HTTP                 *http.Client
+
+	streamIdle time.Duration // tests; 0 means the streamIdle constant
 }
 
 // Schedule publishes m for delivery at m.DeliverAt, replacing any pending
@@ -162,20 +164,39 @@ func (c Client) PollControl(ctx context.Context, since string) ([]CtlMessage, er
 	return out, nil
 }
 
-// StreamControl subscribes to <topic>-ctl and calls fn for each new message.
-// It returns when ctx ends (ctx.Err()) or the stream fails or closes
-// (*TempError, or the status errors).
-func (c Client) StreamControl(ctx context.Context, fn func(CtlMessage)) error {
+// StreamControl subscribes to <topic>-ctl and calls fn for each new message,
+// starting with the cached ones after the message ID since (none when
+// empty), so nothing posted after a poll is missed. It returns when ctx ends
+// (ctx.Err()) or the stream fails, stalls or closes (*TempError, or the
+// status errors).
+func (c Client) StreamControl(ctx context.Context, since string, fn func(CtlMessage)) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	resp, err := c.doStream(sctx, c.url(c.Topic+"-ctl", "json"))
+	idleFor := c.streamIdle
+	if idleFor <= 0 {
+		idleFor = streamIdle
+	}
+	// Started before the request, so a server that never sends response
+	// headers (a connection dead after sleep) is noticed too.
+	idle := time.AfterFunc(idleFor, cancel)
+	defer idle.Stop()
+	u := c.url(c.Topic+"-ctl", "json")
+	if since != "" {
+		u += "?since=" + url.QueryEscape(since)
+	}
+	resp, err := c.doStream(sctx, u)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if sctx.Err() != nil {
+			return &TempError{Err: errors.New("control stream: no response")}
+		}
 		return err
 	}
 	defer resp.Body.Close()
-	idle := time.AfterFunc(streamIdle, cancel)
-	defer idle.Stop()
-	err = readLines(&resetReader{r: resp.Body, onRead: func() { idle.Reset(streamIdle) }}, fn)
+	idle.Reset(idleFor)
+	err = readLines(&resetReader{r: resp.Body, onRead: func() { idle.Reset(idleFor) }}, fn)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

@@ -8,7 +8,8 @@
 //   - A publish without X-Delay is delivered at once.
 //
 // Delivered messages are cached per topic and served by
-// GET /<topic>/json?poll=1&since=<id|all> and streamed by GET /<topic>/json.
+// GET /<topic>/json?poll=1&since=<id|all> and streamed by GET /<topic>/json
+// (with since=<id|all>, the cached messages after it are sent first).
 //
 // Headers are decoded with mime.WordDecoder (RFC 2047) and X-Actions as
 // ntfy's JSON array form, so tests can round-trip exact text.
@@ -37,7 +38,7 @@ type Request struct {
 	Body   []byte
 }
 
-// Action is a decoded X-Actions entry.
+// Action is a decoded X-Actions entry. Keep in sync with push.actionJSON.
 type Action struct {
 	Action  string            `json:"action"`
 	Label   string            `json:"label"`
@@ -240,7 +241,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("poll") == "1" {
 			s.poll(w, parts[0], r.URL.Query().Get("since"))
 		} else {
-			s.stream(w, r, parts[0])
+			s.stream(w, r, parts[0], r.URL.Query().Get("since"))
 		}
 	case (r.Method == http.MethodPost || r.Method == http.MethodPut) && (len(parts) == 1 || len(parts) == 2) && parts[0] != "":
 		seq := ""
@@ -322,18 +323,29 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request, topic, seq stri
 	writeJSON(w, map[string]any{"id": m.ID, "event": "message", "topic": topic})
 }
 
-func (s *Server) poll(w http.ResponseWriter, topic, since string) {
-	s.mu.Lock()
-	msgs := append([]Message(nil), s.cache[topic]...)
-	s.mu.Unlock()
-	if since != "all" && since != "" {
+// after returns msgs after the message with ID since: all for "all" or an
+// unknown ID, none for "".
+func after(msgs []Message, since string) []Message {
+	if since == "" {
+		return nil
+	}
+	if since != "all" {
 		for i, m := range msgs {
 			if m.ID == since {
-				msgs = msgs[i+1:]
-				break
+				return msgs[i+1:]
 			}
 		}
 	}
+	return msgs
+}
+
+func (s *Server) poll(w http.ResponseWriter, topic, since string) {
+	if since == "" {
+		since = "all"
+	}
+	s.mu.Lock()
+	msgs := after(append([]Message(nil), s.cache[topic]...), since)
+	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	bw := bufio.NewWriter(w)
 	for _, m := range msgs {
@@ -342,13 +354,14 @@ func (s *Server) poll(w http.ResponseWriter, topic, since string) {
 	bw.Flush()
 }
 
-func (s *Server) stream(w http.ResponseWriter, r *http.Request, topic string) {
+func (s *Server) stream(w http.ResponseWriter, r *http.Request, topic, since string) {
 	ch := make(chan Message, 64)
 	s.mu.Lock()
 	if s.subs[topic] == nil {
 		s.subs[topic] = map[chan Message]struct{}{}
 	}
 	s.subs[topic][ch] = struct{}{}
+	backlog := after(append([]Message(nil), s.cache[topic]...), since)
 	kill := s.kill
 	s.mu.Unlock()
 	defer func() {
@@ -360,6 +373,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, topic string) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	fl, _ := w.(http.Flusher)
 	json.NewEncoder(w).Encode(map[string]any{"id": "open", "event": "open", "topic": topic})
+	for _, m := range backlog {
+		writeLine(w, m)
+	}
 	if fl != nil {
 		fl.Flush()
 	}
