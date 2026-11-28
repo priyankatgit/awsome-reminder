@@ -188,3 +188,20 @@ Run in the built app (`wails3 build`) from a temp copy, with `APPDATA` / `LOCALA
 | H27 | Idle with the wake word off | Fresh profile, wake word never turned on: no `--wake-helper` process, app process about 50 MB and 0 % CPU for a minute. | done (Task 13: 48 to 50 MB, 0 %, no helper) | | | |
 | H28 | Quit leaves no helper | With the wake word on, quit from the tray and kill the app from Task Manager: no `--wake-helper` or `sherpa-onnx-keyword-spotter-microphone` process remains and the mic indicator goes. | needs human | needs human | needs human | needs human |
 | H29 | False wake during a real call (speech continues) | During a real call or meeting (people keep talking near the mic), make the wake word fire (say "Hey Awesome" mid-conversation) and do not touch the box. The box ends within 60 s and hides; nothing is saved (sentences ending "that's it" stay text), and what it heard is only the draft on the next hotkey. | needs human | needs human | needs human | needs human |
+
+## Data folder
+
+Run in the built app from a temp copy with `APPDATA` / `LOCALAPPDATA` pointed at scratch folders (see the safety note at the top). The macOS and Linux columns are still to be run. The design is in [data-folder-design](superpowers/specs/2026-11-28-data-folder-design.md).
+
+| # | Check | How | Windows 11 | macOS 14+ | Ubuntu X11 | Ubuntu Wayland |
+|---|---|---|---|---|---|---|
+| D1 | Fresh install | Empty scratch config dir. The first start shows the data folder screen with Standard location, Next to the app, Another folder…. Pick Standard: the app starts, `awesome.db` and `location.json` exist. | | | | |
+| D2 | Existing install, Keep | Scratch profile with an old `awesome.db`. The screen has "Keep it where it is" selected; Continue starts the app with the same items and nothing moved. Hey Awesome / dictation still work afterwards. | | | | |
+| D3 | Existing install, move | Same profile, choose Another folder…. Progress shows, the app restarts on the new folder with the same items; the old folder has `awesome.db.moved`; the voice folder was moved. | | | | |
+| D4 | Adopt a folder that has data | Choose a folder that already holds an `awesome.db`. Its items show, nothing is merged, and Atlas sync is off until reconnected. | | | | |
+| D5 | Folder unavailable | Rename or unplug the data folder and start. "Your data folder isn't available" shows; no empty database is created. Retry after restoring it starts normally; Choose another folder… and Quit work. | | | | |
+| D6 | Settings: move | Settings › Data folder › Change…: pick a new folder; the copy is checked, the app switches and the items are all there. Cancel during the copy leaves the old folder in use. | | | | |
+| D7 | Settings: Remove old copy | After D6, click Remove old copy: the old `awesome.db.moved` and attachments are deleted, the button goes away. | | | | |
+| D8 | Network and cloud warnings | Pick a network share, then a folder under OneDrive / Dropbox / Google Drive / iCloud: each shows a warning before the move proceeds. | | | | |
+| D9 | Older exe after a move | After D3, start the previous build against the same profile: it shows an empty list (the old database was renamed). The new build shows the items. | | | | |
+| D10 | Wake word after Keep | With the wake word on, do D2 (Keep): after the restart "Hey Awesome" still wakes and the log resolves the voice folder to the local cache path. | | | | |
