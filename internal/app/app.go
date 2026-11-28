@@ -64,6 +64,25 @@ func setTrayIcons(tray *application.SystemTray, o Options) {
 	}
 }
 
+// webviewBrowserArgs are the WebView2 switches for every app window. Memory
+// (Task 12b, measured on the idle app with the capture window pre-created):
+// --disable-gpu replaces the GPU process's hardware compositor with software
+// compositing (64 -> 12 MB private), and --in-process-gpu folds what is left
+// into the browser process (one process fewer, about 8 MB less). The windows
+// are small and mostly static, rendering looked the same, and the Acrylic
+// backdrop is drawn by DWM, not Chromium.
+func webviewBrowserArgs() []string { return []string{"--disable-gpu", "--in-process-gpu"} }
+
+// requireDB refuses a data folder without its database. Resolve found one,
+// so a missing file means the folder went away since (a drive unplugged);
+// opening the store would silently create an empty list there instead.
+func requireDB(lay paths.Layout) error {
+	if _, err := os.Stat(lay.DB()); err != nil {
+		return fmt.Errorf("the data folder %s has no %s: %w", lay.Root, paths.DBFile, err)
+	}
+	return nil
+}
+
 // Run opens the store, wires core, scheduler, exporter and hotkey to the
 // Wails application and blocks until the app quits.
 func Run(opts Options) error {
@@ -74,8 +93,8 @@ func Run(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("data folder: %w", err)
 	}
-	if err := os.MkdirAll(lay.Root, 0o755); err != nil {
-		return fmt.Errorf("data folder: %w", err)
+	if err := requireDB(lay); err != nil {
+		return err
 	}
 	setAppUserModelID() // before any window exists (Windows taskbar button)
 	st, err := store.Open(lay.DB())
@@ -129,14 +148,7 @@ func Run(opts Options) error {
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
 			WebviewUserDataPath:           lay.Webview(),
-			// WebView2 memory (Task 12b, measured on the idle app with the
-			// capture window pre-created): --disable-gpu replaces the GPU
-			// process's hardware compositor with software compositing
-			// (64 -> 12 MB private), and --in-process-gpu folds what is left
-			// into the browser process (one process fewer, about 8 MB less).
-			// The windows are small and mostly static, rendering looked the
-			// same, and the Acrylic backdrop is drawn by DWM, not Chromium.
-			AdditionalBrowserArgs: []string{"--disable-gpu", "--in-process-gpu"},
+			AdditionalBrowserArgs:         webviewBrowserArgs(),
 		},
 		Linux: application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 		SingleInstance: &application.SingleInstanceOptions{

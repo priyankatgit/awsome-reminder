@@ -404,3 +404,76 @@ func TestSetupConcurrentRetryAndInfo(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestChooseUnavailableSameFolderRetries(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		fx := newSetupFx(t, paths.StateUnavailable)
+		root := dbFolder(t) // the drive came back
+		fx.svc.res.Root = root
+		fx.svc.resolve = func() paths.Resolution { return paths.Resolution{State: paths.StateReady, Root: root} }
+		if err := fx.svc.Choose("other", root, confirm); err != nil {
+			t.Fatalf("confirm=%v: %v", confirm, err)
+		}
+		if len(fx.adopts) != 0 || len(fx.fresh) != 0 || !RestartRequested() || fx.quits != 1 {
+			t.Fatalf("confirm=%v: adopts=%v fresh=%v restart=%v quits=%d", confirm, fx.adopts, fx.fresh, RestartRequested(), fx.quits)
+		}
+	}
+}
+
+func TestChooseUnavailableSameFolderStillMissing(t *testing.T) {
+	fx := newSetupFx(t, paths.StateUnavailable)
+	root := filepath.Join(t.TempDir(), "gone")
+	fx.svc.res.Root = root
+	fx.svc.resolve = func() paths.Resolution {
+		return paths.Resolution{State: paths.StateUnavailable, Root: root, Reason: "Folder not found: " + root}
+	}
+	err := fx.svc.Choose("other", root, true)
+	if err == nil || err.Error() != "Folder not found: "+root {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fx.adopts) != 0 || len(fx.fresh) != 0 || RestartRequested() || fx.quits != 0 {
+		t.Fatalf("adopts=%v fresh=%v restart=%v quits=%d", fx.adopts, fx.fresh, RestartRequested(), fx.quits)
+	}
+}
+
+func TestChooseUnavailableStandardUsesStandardRoot(t *testing.T) {
+	fx := newSetupFx(t, paths.StateUnavailable)
+	fx.svc.res.Root = filepath.Join(t.TempDir(), "gone")
+	std, _ := paths.StandardRoot()
+	// The standard folder holds the pointer and the setup log, and data.
+	if err := paths.SaveLocation(paths.Location{DataDir: fx.svc.res.Root}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"setup.log", paths.DBFile} {
+		if err := os.WriteFile(filepath.Join(std, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fx.svc.Choose("standard", "", false); err == nil || err.Error() != errConfirmAdopt {
+		t.Fatalf("err = %v", err)
+	}
+	if err := fx.svc.Choose("standard", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if len(fx.adopts) != 1 || !paths.SameDir(fx.adopts[0], std) {
+		t.Fatalf("adopts = %v, want %q", fx.adopts, std)
+	}
+}
+
+func TestChooseUnavailableStandardWithoutDataStartsFresh(t *testing.T) {
+	fx := newSetupFx(t, paths.StateUnavailable)
+	fx.svc.res.Root = filepath.Join(t.TempDir(), "gone")
+	std, _ := paths.StandardRoot()
+	if err := paths.SaveLocation(paths.Location{DataDir: fx.svc.res.Root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.svc.Choose("standard", "", false); err == nil || err.Error() != errConfirmFresh {
+		t.Fatalf("err = %v", err)
+	}
+	if err := fx.svc.Choose("standard", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if len(fx.fresh) != 1 || !paths.SameDir(fx.fresh[0], std) || !fx.freshClr[0] {
+		t.Fatalf("fresh = %v clr=%v, want %q", fx.fresh, fx.freshClr, std)
+	}
+}

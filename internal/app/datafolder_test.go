@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"awesome-reminder/internal/datamove"
 	"awesome-reminder/internal/paths"
 )
 
@@ -135,5 +137,56 @@ func TestDataFolderInfo(t *testing.T) {
 	}
 	if info.Path != fx.cur || info.FreeText == "" || info.UsedText == "" || info.PreviousDir != "" {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+func TestCheckDataFolderStandardRootAroundCurrent(t *testing.T) {
+	newDataFolderFx(t, "")
+	std, _ := paths.StandardRoot()
+	// The data folder lives inside the standard folder. Picking the standard
+	// folder must not target the standard folder itself (that holds the
+	// current one, which a move refuses): it is not empty, so the check
+	// offers a subfolder beside the current one, as for any other folder.
+	inner := filepath.Join(std, "Inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(Deps{DataDir: inner})
+	c := svc.CheckDataFolder(std)
+	if c.Err != "" || c.Path != filepath.Join(std, datamove.SubfolderName) {
+		t.Fatalf("check = %+v", c)
+	}
+}
+
+func TestCheckDataFolderStandardRootHasData(t *testing.T) {
+	fx := newDataFolderFx(t, "")
+	std, _ := paths.StandardRoot()
+	if err := os.WriteFile(filepath.Join(std, paths.DBFile), []byte("db"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := fx.svc.CheckDataFolder(std)
+	if c.Err != "" || c.Path != std || !c.HasData || c.Same {
+		t.Fatalf("check = %+v", c)
+	}
+}
+
+func TestRequireDB(t *testing.T) {
+	dir := t.TempDir()
+	lay, err := paths.NewLayout(filepath.Join(dir, "gone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := requireDB(lay); err == nil || !strings.Contains(err.Error(), lay.Root) {
+		t.Fatalf("err = %v, want one naming %q", err, lay.Root)
+	}
+	if _, err := os.Stat(lay.Root); !os.IsNotExist(err) {
+		t.Fatal("the missing folder was created")
+	}
+	lay, _ = paths.NewLayout(dir)
+	if err := os.WriteFile(lay.DB(), []byte("db"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireDB(lay); err != nil {
+		t.Fatal(err)
 	}
 }

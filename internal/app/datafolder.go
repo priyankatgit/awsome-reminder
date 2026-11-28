@@ -2,8 +2,6 @@ package app
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 
 	"awesome-reminder/internal/datamove"
 	"awesome-reminder/internal/paths"
@@ -52,43 +50,13 @@ func (s *Service) DataFolder() (DataFolderInfo, error) {
 	return info, nil
 }
 
-// checkPicked inspects a folder the user picked. Picking the standard folder
-// means that folder itself: it holds location.json, so datamove.Target would
-// otherwise add an "Awesome Reminder" subfolder.
-func checkPicked(picked string, from *paths.Layout) datamove.Check {
-	std, err := paths.StandardRoot()
-	if err != nil || !paths.SameDir(picked, std) {
-		return datamove.CheckTarget(picked, from)
-	}
-	c := datamove.Check{Path: std, Need: datamove.SpaceMargin}
-	if _, err := os.Stat(filepath.Join(std, paths.DBFile)); err == nil {
-		c.HasData = true
-	}
-	if from != nil {
-		if sz, err := datamove.Measure(*from); err == nil {
-			c.Need = sz.Total() + datamove.SpaceMargin
-		}
-		if paths.SameDir(std, from.Root) {
-			c.Same = true
-		}
-	}
-	free, err := paths.FreeSpace(std)
-	if err == nil {
-		c.Free = free
-		if !c.Same && !c.HasData && int64(free) < c.Need {
-			c.Err = "Not enough space: needs " + datamove.FormatBytes(c.Need) + ", " + datamove.FormatBytes(int64(free)) + " free."
-		}
-	}
-	return c
-}
-
 // CheckDataFolder inspects a folder picked for the new data folder.
 func (s *Service) CheckDataFolder(picked string) datamove.Check {
 	lay, err := s.currentLayout()
 	if err != nil {
 		return datamove.Check{Path: picked, Err: err.Error()}
 	}
-	return checkPicked(picked, &lay)
+	return datamove.CheckTarget(picked, &lay)
 }
 
 // ChangeDataFolder switches to the picked folder and restarts. A folder that

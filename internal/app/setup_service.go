@@ -188,8 +188,7 @@ func (s *SetupService) resolveTarget(kind, path string) (datamove.Check, error) 
 		if err != nil {
 			return datamove.Check{}, err
 		}
-		_, statErr := os.Stat(filepath.Join(std, paths.DBFile))
-		return datamove.Check{Path: std, HasData: statErr == nil}, nil
+		path = std
 	case "beside":
 		d := s.exeDataDir()
 		if d == "" {
@@ -245,6 +244,11 @@ func (s *SetupService) Choose(kind, path string, confirm bool) error {
 		}
 	}
 	c, err := s.resolveTarget(kind, path)
+	if res.State == paths.StateUnavailable && res.Root != "" && c.Path != "" && paths.SameDir(c.Path, res.Root) {
+		// The folder that went missing was picked (the drive came back): look
+		// again like Retry rather than adopting it and clearing the keychain.
+		return s.retryChosen()
+	}
 	if err != nil {
 		return err
 	}
@@ -379,6 +383,12 @@ func (s *SetupService) AbandonMove() error {
 
 // Retry looks again; a folder that is back starts the app.
 func (s *SetupService) Retry() SetupInfo {
+	s.reresolve()
+	return s.Info()
+}
+
+// reresolve looks at the pointer and disk again and restarts when ready.
+func (s *SetupService) reresolve() paths.Resolution {
 	res := s.resolve()
 	s.mu.Lock()
 	s.res = res
@@ -386,7 +396,20 @@ func (s *SetupService) Retry() SetupInfo {
 	if res.State == paths.StateReady {
 		s.finish()
 	}
-	return s.Info()
+	return res
+}
+
+// retryChosen is Retry for a Choose of the unavailable folder itself: a
+// folder that is back starts the app, otherwise the reason is the error.
+func (s *SetupService) retryChosen() error {
+	res := s.reresolve()
+	if res.State == paths.StateReady {
+		return nil
+	}
+	if res.Reason != "" {
+		return errors.New(res.Reason)
+	}
+	return errors.New("That folder still can't be used.")
 }
 
 // Quit closes setup without starting the app.
