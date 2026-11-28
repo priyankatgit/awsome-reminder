@@ -57,6 +57,9 @@ var migrations = []string{
 	ALTER TABLE items ADD COLUMN owed_to TEXT NOT NULL DEFAULT '';
 	ALTER TABLE items ADD COLUMN source TEXT NOT NULL DEFAULT '';
 	ALTER TABLE items ADD COLUMN reply_outcome TEXT NOT NULL DEFAULT '';`,
+	// v5: phone push log (what is scheduled on the ntfy server)
+	`CREATE TABLE push_log (seq TEXT PRIMARY KEY, server TEXT NOT NULL, topic TEXT NOT NULL,
+		deliver_at INTEGER NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL, sent_at INTEGER NOT NULL);`,
 }
 
 func migrate(db *sql.DB) error {
