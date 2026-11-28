@@ -3,13 +3,17 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"awesome-reminder/internal/badge"
 	"awesome-reminder/internal/cloudsync"
 )
 
@@ -18,6 +22,7 @@ type fakeBadgeTray struct {
 	icons   [3][]byte
 	tooltip string
 	sets    int
+	tips    int // SetTooltip calls
 }
 
 func (f *fakeBadgeTray) SetIcons(light, dark, template []byte) {
@@ -31,6 +36,13 @@ func (f *fakeBadgeTray) SetTooltip(s string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tooltip = s
+	f.tips++
+}
+
+func (f *fakeBadgeTray) tooltipSets() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tips
 }
 
 func (f *fakeBadgeTray) state() ([3][]byte, string, int) {
@@ -503,5 +515,83 @@ func TestBadgeWiringNoTrayWritesAfterStop(t *testing.T) {
 				t.Fatal("tray written after Stop")
 			}
 		})
+	}
+}
+
+// The syncing animation composes each frame's icons once per count and dot
+// style, then reuses them; an unchanged tooltip is not set again.
+func TestBadgeWiringSyncFramesCached(t *testing.T) {
+	var composes atomic.Int32
+	orig := composeBadge
+	composeBadge = func(icon []byte, n int, dot badge.DotStyle, template bool) []byte {
+		composes.Add(1)
+		return orig(icon, n, dot, template)
+	}
+	defer func() { composeBadge = orig }()
+
+	var mu sync.Mutex
+	count := 3
+	tray := &fakeBadgeTray{}
+	ft := &fakeTicker{c: make(chan time.Time)}
+	w := newBadgeWiring(badgeDeps{
+		Count:     func() (int, error) { mu.Lock(); defer mu.Unlock(); return count, nil },
+		Show:      func() bool { return true },
+		HotkeyErr: func() string { return "" },
+		Sync:      func() cloudsync.Status { return cloudsync.Status{State: cloudsync.StateSyncing} },
+		NewTicker: ft.New,
+		Icons: trayIcons{
+			Light:    testPNG(t, color.NRGBA{0, 0, 0, 255}),
+			Dark:     testPNG(t, color.NRGBA{255, 255, 255, 255}),
+			Template: testPNG(t, color.NRGBA{0, 0, 0, 255}),
+		},
+		Tray:     tray,
+		Debounce: time.Millisecond,
+	})
+	w.Start(nil)
+	defer w.Stop()
+	waitFor(t, "first refresh", func() bool { _, _, sets := tray.state(); return sets == 1 })
+	frameA, _, _ := tray.state()
+
+	tick := func(i int) [3][]byte {
+		t.Helper()
+		_, _, before := tray.state()
+		ft.c <- time.Now()
+		waitFor(t, fmt.Sprintf("tick %d", i), func() bool { _, _, sets := tray.state(); return sets == before+1 })
+		icons, _, _ := tray.state()
+		return icons
+	}
+	frameB := tick(0)
+	if bytes.Equal(frameA[0], frameB[0]) {
+		t.Fatal("frames A and B are the same icon")
+	}
+	for i := 1; i <= 6; i++ {
+		want := frameA
+		if i%2 == 0 {
+			want = frameB
+		}
+		if got := tick(i); !bytes.Equal(got[0], want[0]) || !bytes.Equal(got[2], want[2]) {
+			t.Fatalf("tick %d shows the wrong frame", i)
+		}
+	}
+	if n := composes.Load(); n != 6 {
+		t.Errorf("composed %d icons over 7 ticks, want 6 (3 per frame)", n)
+	}
+	if n := tray.tooltipSets(); n != 1 {
+		t.Errorf("tooltip set %d times, want 1 (it never changed)", n)
+	}
+
+	// A new count composes new frames, and the tooltip changes once.
+	mu.Lock()
+	count = 4
+	mu.Unlock()
+	w.Changed()
+	waitFor(t, "count 4 tooltip", func() bool { _, tip, _ := tray.state(); return strings.Contains(tip, "4 pending") })
+	tick(7)
+	tick(8)
+	if n := composes.Load(); n != 12 {
+		t.Errorf("composed %d icons after the count changed, want 12", n)
+	}
+	if n := tray.tooltipSets(); n != 2 {
+		t.Errorf("tooltip set %d times, want 2", n)
 	}
 }

@@ -82,6 +82,13 @@ type badgeWiring struct {
 	frame     bool           // syncing animation frame (false = A)
 	tickStop  chan struct{}  // non-nil while the syncing ticker runs
 	tickWG    sync.WaitGroup // ticker goroutines
+	// iconCache holds the composed icons per dot style for the count
+	// iconCount, so the syncing animation's two frames are decoded and
+	// encoded once, not on every tick. A new count empties it.
+	iconCache map[badge.DotStyle][3][]byte
+	iconCount int
+	tip       string // the tooltip last set
+	tipSet    bool
 
 	afterStopCheck func() // test hook: runs between the stopped check and refreshMu
 }
@@ -155,7 +162,7 @@ func (w *badgeWiring) refresh(tb taskbar) {
 			if !w.iconsSet {
 				// Nothing shown yet: still show the name and any hotkey
 				// error.
-				w.d.Tray.SetTooltip(w.tooltip(w.syncStatus()))
+				w.setTooltip(w.tooltip(w.syncStatus()))
 			}
 			return
 		}
@@ -209,7 +216,18 @@ func (w *badgeWiring) render() {
 		w.d.Tray.SetIcons(light, dark, tmpl)
 		w.label, w.dot, w.iconsSet = label, dot, true
 	}
-	w.d.Tray.SetTooltip(w.tooltip(st))
+	w.setTooltip(w.tooltip(st))
+}
+
+// setTooltip sets the tray tooltip unless it already shows text (each tick
+// of the syncing animation re-renders with the same text). Call with
+// refreshMu held.
+func (w *badgeWiring) setTooltip(text string) {
+	if w.tipSet && text == w.tip {
+		return
+	}
+	w.d.Tray.SetTooltip(text)
+	w.tip, w.tipSet = text, true
 }
 
 // syncTicker runs the syncing-animation ticker while on. Call with refreshMu
@@ -271,14 +289,30 @@ func (w *badgeWiring) syncTicker(on bool) {
 }
 
 // icons returns the tray icons with the badge for n and the status dot, or
-// the plain ones when there is neither (or an icon cannot be decoded).
+// the plain ones when there is neither (or an icon cannot be decoded). Call
+// with refreshMu held (it fills iconCache).
 func (w *badgeWiring) icons(label string, n int, dot badge.DotStyle) (light, dark, tmpl []byte) {
 	p := w.d.Icons
 	if label == "" && dot == badge.DotNone {
 		return p.Light, p.Dark, p.Template
 	}
-	return withBadge(p.Light, n, dot, false), withBadge(p.Dark, n, dot, false), withBadge(p.Template, n, dot, true)
+	if w.iconCache == nil || w.iconCount != n {
+		w.iconCache, w.iconCount = map[badge.DotStyle][3][]byte{}, n
+	}
+	if c, ok := w.iconCache[dot]; ok {
+		return c[0], c[1], c[2]
+	}
+	light, dark, tmpl = composeIcons(p, n, dot)
+	w.iconCache[dot] = [3][]byte{light, dark, tmpl}
+	return light, dark, tmpl
 }
+
+func composeIcons(p trayIcons, n int, dot badge.DotStyle) (light, dark, tmpl []byte) {
+	return composeBadge(p.Light, n, dot, false), composeBadge(p.Dark, n, dot, false), composeBadge(p.Template, n, dot, true)
+}
+
+// composeBadge is withBadge; a variable so tests can count compositions.
+var composeBadge = withBadge
 
 // withBadge composes the badge and then the status dot onto a PNG; on any
 // error it returns the PNG unchanged.
