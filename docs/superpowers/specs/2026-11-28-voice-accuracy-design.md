@@ -22,7 +22,7 @@ The user's words: "Voice to text quality is really poor, some word is not able t
 
 3. **Switching models.**
    - **Nothing installed yet** (`absent`): choosing a model only records it. The capture box's consent then offers that model's size.
-   - **A model is ready**: choosing another downloads it in the background (`.part`, then checked for size and hash, then renamed). **Dictation keeps working on the old model meanwhile**: the state stays `ready`, and `Status.target/phase/done/total` report the switch. When the file is in place, the choice is saved, the engine is replaced at its next use, and the old model file is deleted (one model on disk at a time; a failed delete is retried at the next start).
+   - **A model is ready**: choosing another downloads it in the background (`.part`, then checked for size and hash, then renamed). **Dictation keeps working on the old model meanwhile**: the state stays `ready`, and `Status.target/phase/done/total` report the switch. When the file is in place, the choice is saved, the engine is replaced at its next use, and the old model file is deleted (one model on disk at a time; a failed delete, and any `.part` left by quitting mid-download, is cleaned up at the next start).
    - **The model is already on disk**: switching to it is immediate.
    - **Cancel and errors**: a switch can be cancelled. An error appears in `Status.switchError`, and the old model stays.
    - **During the first install**, or while another switch is running, choosing a model is refused.
@@ -43,11 +43,19 @@ The user's words: "Voice to text quality is really poor, some word is not able t
 
    whisper keeps the **last** `n_text_ctx/2 = 224` prompt tokens, so the most specific context goes last. The prompt is capped at 600 characters, about 220 tokens even at a pessimistic 2.7 characters per token for names. The recent text is cut to its last 200 characters at a word boundary. The words list is limited to 300 characters when saved. Whole sentences are dropped from the start of the fixed passage until the prompt fits.
 
-7. **Times written with a dot.** With the prompt, whisper often writes "9.30 am" (the Indian and British form). `CleanTranscript` rewrites `H.MM am/pm`, and `at|by|from|until|till|before|after H.MM`, as `H:MM`, which the capture parser reads. Other decimals ("2.50", "1.20") are left alone.
+7. **Times written with a dot.** With the prompt, whisper often writes "9.30 am" (the Indian and British form). `CleanTranscript` rewrites two shapes as `H:MM`, which the capture parser reads:
+   - `H.MM am/pm`, with an hour of 1 to 12;
+   - `at|until|till|before|after H.MM`, with an hour of 0 to 23, unless an amount follows (each, lakh, rupees, %, kg and so on).
 
-8. **Prompt echo guard.** On silence, whisper sometimes repeats its prompt. A transcript that is exactly one sentence of the fixed passage, ignoring case and punctuation, is dropped.
+   `by` and `from` are left out, because they come before amounts too often ("by 1.50 lakh"). Other decimals ("2.50", "at 2.50 each") are left alone, and "a.m"/"p.m" without the final dot count as am/pm.
 
-9. **"Words I use".** Entries are separated by commas, semicolons or new lines. Each is trimmed, empty entries are dropped, and duplicates are removed (case-insensitively, keeping the first spelling). The list is stored joined with ", ", and a list over 300 characters is refused with a message.
+8. **Prompt echo guard.** whisper sometimes repeats its prompt on silence. `DropPromptEcho` drops two kinds of transcript:
+   - one that starts with "Words I use", which is the vocabulary line;
+   - for a dictation segment with under 2.5 s of speech, one that is exactly a sentence of the fixed passage, ignoring case and punctuation.
+
+   A sentence that long can't be said in under 2.5 s, so a real dictation of it is kept.
+
+9. **"Words I use".** Entries are separated by commas, semicolons or new lines. Each is trimmed, empty entries are dropped, and duplicates are removed (case-insensitively, keeping the first spelling). The list is stored joined with ", ", and a list over 300 characters (counted as characters, not bytes) is refused with a message.
 
 10. **Settings UI** (`voice-settings.ts`, at the top of the Voice section; none of the theme session's files change). It reuses the existing classes and adds no CSS:
     - a "Speech model" `select.input.input-select`, whose options show the label, size and "· Recommended";

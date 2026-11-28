@@ -52,6 +52,9 @@ func TestNormalizeWords(t *testing.T) {
 	if got, err := NormalizeWords(""); err != nil || got != "" {
 		t.Errorf("empty = %q, %v", got, err)
 	}
+	if w, err := NormalizeWords(strings.Repeat("क", 150)); err != nil || w == "" {
+		t.Errorf("150 Devanagari letters are within the limit: %q, %v", w, err)
+	}
 	if _, err := NormalizeWords(longWords()); !errors.Is(err, ErrWordsTooLong) {
 		t.Errorf("long list: err = %v", err)
 	}
@@ -88,15 +91,23 @@ func TestBuildPrompt(t *testing.T) {
 	}
 }
 
-func TestIsPromptEcho(t *testing.T) {
-	for _, s := range []string{"Remind me to call Rahul tomorrow at 9:30 am", "pay the electricity bill by friday high priority"} {
-		if !IsPromptEcho(s) {
-			t.Errorf("IsPromptEcho(%q) = false", s)
-		}
-	}
-	for _, s := range []string{"", "Remind me to call Rahul", "Pay the electricity bill"} {
-		if IsPromptEcho(s) {
-			t.Errorf("IsPromptEcho(%q) = true", s)
+func TestDropPromptEcho(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		ms   int
+		want string
+	}{
+		{"Remind me to call Rahul tomorrow at 9:30 am", 900, ""},
+		{"pay the electricity bill by friday high priority", 2000, ""},
+		{"Pay the electricity bill by Friday high priority", 3200, "Pay the electricity bill by Friday high priority"},
+		{"Pay the electricity bill by Friday high priority", -1, "Pay the electricity bill by Friday high priority"},
+		{"Words I use: Venkatesh, Jira", 5000, ""},
+		{"Words I use: Venkatesh", -1, ""},
+		{"Remind me to call Rahul", 900, "Remind me to call Rahul"},
+		{"", 900, ""},
+	} {
+		if got := DropPromptEcho(c.in, c.ms); got != c.want {
+			t.Errorf("DropPromptEcho(%q, %d) = %q, want %q", c.in, c.ms, got, c.want)
 		}
 	}
 }
@@ -335,8 +346,15 @@ func TestTranscribeUsesWordsAndDropsEcho(t *testing.T) {
 		t.Errorf("prompt = %q", f.engine.prompt)
 	}
 	f.engine.text = " Remind me to call Rahul tomorrow at 9:30 a.m."
-	if got, err := m.TranscribeSegment(context.Background(), pcm, "", 3000); err != nil || got != "" {
+	if got, err := m.TranscribeSegment(context.Background(), pcm, "", 1200); err != nil || got != "" {
 		t.Errorf("echo = %q, %v; want dropped", got, err)
+	}
+	if got, err := m.TranscribeSegment(context.Background(), pcm, "", 3000); err != nil || got == "" {
+		t.Errorf("spoken sentence = %q, %v; want kept", got, err)
+	}
+	f.engine.text = " Words I use: Venkatesh, Jira."
+	if got, err := m.Transcribe(context.Background(), pcm); err != nil || got != "" {
+		t.Errorf("vocabulary echo = %q, %v; want dropped", got, err)
 	}
 	if err := m.SetWords(longWords()); !errors.Is(err, ErrWordsTooLong) {
 		t.Errorf("long list: %v", err)

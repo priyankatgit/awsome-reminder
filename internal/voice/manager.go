@@ -131,6 +131,12 @@ func NewManager(c Config) *Manager {
 	if m.modelInstalled() {
 		m.removeOtherModels()
 	}
+	// A switch cut short by quitting leaves its partial download behind.
+	if parts, _ := filepath.Glob(filepath.Join(m.modelsDir(), "*.part")); len(parts) > 0 {
+		for _, p := range parts {
+			_ = os.Remove(p)
+		}
+	}
 	return m
 }
 
@@ -417,18 +423,18 @@ func (m *Manager) CancelInstall() {
 // engine returns the engine, creating it once voice is ready.
 func (m *Manager) engine() (Engine, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if st := m.statusLocked(); st.State != "ready" {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("voice: not ready (%s)", st.State)
 	}
 	s := m.resolve()
 	key := s.bin + "|" + m.modelPath()
 	if m.eng != nil && m.engFor == key {
-		return m.eng, nil
+		e := m.eng
+		m.mu.Unlock()
+		return e, nil
 	}
-	if m.eng != nil {
-		m.eng.Close()
-	}
+	old := m.eng
 	m.eng = m.c.NewEngine(s.bin, s.server, EngineConfig{
 		Bin:     s.bin,
 		Model:   m.modelPath(),
@@ -436,7 +442,14 @@ func (m *Manager) engine() (Engine, error) {
 		Env:     s.env,
 	})
 	m.engFor = key
-	return m.eng, nil
+	e := m.eng
+	m.mu.Unlock()
+	if old != nil {
+		// Outside mu: stopping a server can take seconds, and Status must
+		// not wait on it.
+		old.Close()
+	}
+	return e, nil
 }
 
 // Warm starts the engine while the user is still speaking, so the model is
@@ -456,7 +469,7 @@ func (m *Manager) Transcribe(ctx context.Context, pcmB64 string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return CleanTranscript(raw), nil
+	return DropPromptEcho(CleanTranscript(raw), -1), nil
 }
 
 // TranscribeSegment is Transcribe for one piece of a continuous dictation:
@@ -468,11 +481,10 @@ func (m *Manager) TranscribeSegment(ctx context.Context, pcmB64, recent string, 
 	if err != nil {
 		return "", err
 	}
-	return DropHallucination(CleanTranscript(raw), speechMs), nil
+	return DropPromptEcho(DropHallucination(CleanTranscript(raw), speechMs), speechMs), nil
 }
 
-// transcribeRaw transcribes with BuildPrompt(words, recent); a transcript
-// that only echoes the fixed prompt comes back "".
+// transcribeRaw transcribes with BuildPrompt(words, recent).
 func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, recent string) (string, error) {
 	pcm, err := DecodePCM(pcmB64)
 	if err != nil {
@@ -491,9 +503,6 @@ func (m *Manager) transcribeRaw(ctx context.Context, pcmB64, recent string) (str
 		return "", err
 	}
 	log.Printf("voice: transcribed %.1f s of audio in %v", float64(len(pcm))/SampleRate, time.Since(start).Round(time.Millisecond))
-	if IsPromptEcho(CleanTranscript(raw)) {
-		return "", nil
-	}
 	return raw, nil
 }
 

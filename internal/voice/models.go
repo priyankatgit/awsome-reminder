@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // Model ids (voice.json "model").
@@ -121,7 +122,7 @@ func NormalizeWords(s string) (string, error) {
 		out = append(out, p)
 	}
 	joined := strings.Join(out, ", ")
-	if len(joined) > MaxWordsLen {
+	if utf8.RuneCountInString(joined) > MaxWordsLen {
 		return "", ErrWordsTooLong
 	}
 	return joined, nil

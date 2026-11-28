@@ -73,19 +73,28 @@ func lastChars(s string, n int) string {
 	return s
 }
 
-// IsPromptEcho reports whether text is just one of the fixed passage's
-// sentences, which whisper sometimes repeats on silence.
-func IsPromptEcho(text string) bool {
+// echoSpeechMs: a fixed sentence takes longer than this to say, so with
+// less speech in the piece a transcript equal to one is an echo.
+const echoSpeechMs = 2500
+
+// DropPromptEcho returns "" when text is whisper repeating its prompt rather
+// than speech: anything starting "Words I use" (the vocabulary line), or,
+// for a piece with under echoSpeechMs of speech (speechMs < 0: unknown, so
+// never), exactly one of the fixed passage's sentences. Otherwise text.
+func DropPromptEcho(text string, speechMs int) string {
 	n := promptKey(text)
-	if n == "" {
-		return false
+	if strings.HasPrefix(n, "words i use") {
+		return ""
+	}
+	if n == "" || speechMs < 0 || speechMs >= echoSpeechMs {
+		return text
 	}
 	for _, s := range promptSentences {
 		if promptKey(s) == n {
-			return true
+			return ""
 		}
 	}
-	return false
+	return text
 }
 
 // promptKey is s lowercased with only letters, digits and single spaces.

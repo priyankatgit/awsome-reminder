@@ -398,6 +398,19 @@ describe("Speech model and words in the Voice section", () => {
     expect(h.cancelSwitch).toBe(1);
   });
 
+  it("reloads the models when the first install finishes", async () => {
+    const { $ } = mount(voice({ state: "absent", model: "small" }));
+    await flush();
+    expect($("speech-model-help").textContent).toBe("Balanced.");
+    h.models = MODELS.map((m) => ({ ...m, installed: m.id === "small", active: m.id === "small" }));
+    h.voice = voice({ model: "small" });
+    for (const fn of h.listeners.get("voice:status") ?? []) fn(h.voice);
+    await flush();
+    await flush();
+    expect($("speech-model-help").textContent).toBe("Balanced.");
+    expect($<HTMLSelectElement>("speech-model").value).toBe("small");
+  });
+
   it("saves words on change and shows the normalised list, or the error", async () => {
     const { $ } = mount(voice());
     await flush();

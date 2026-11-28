@@ -13,11 +13,14 @@ var (
 	// A transcript that is only an annotation: "(wind blowing)", "*coughs*".
 	annotation = regexp.MustCompile(`^(\([^)]*\)|\*[^*]*\*)$`)
 	// "5 p.m." -> "5 pm" so the capture parser understands it.
-	meridiem = regexp.MustCompile(`(?i)\b([ap])\.m\.`)
+	// "5 p.m" (no final dot) too.
+	meridiem = regexp.MustCompile(`(?i)\b([ap])\.m\b\.?`)
 	// "9.30 am" / "at 9.30" -> "9:30 am" / "at 9:30": whisper writes times
-	// the Indian/British way, the capture parser reads colons.
-	dotTimeMeridiem = regexp.MustCompile(`(?i)\b(\d{1,2})\.([0-5]\d)(\s*[ap]m\b)`)
-	dotTimeAfter    = regexp.MustCompile(`(?i)\b(at|by|from|until|till|before|after)\s+(\d{1,2})\.([0-5]\d)\b`)
+	// the Indian/British way, the capture parser reads colons. The bare form
+	// needs a time word before it and no amount word after it ("at 2.50
+	// each" stays); the hour must be a clock hour.
+	dotTimeMeridiem = regexp.MustCompile(`(?i)\b(1[0-2]|0?[1-9])\.([0-5]\d)(\s*[ap]m\b)`)
+	dotTimeAfter    = regexp.MustCompile(`(?i)\b(at|until|till|before|after)\s+(2[0-3]|1\d|0?\d)\.([0-5]\d)\b(\s*[\p{L}%₹$]+)?`)
 	// "hashtag backend" / "hash tag backend" -> "#backend".
 	spokenTag = regexp.MustCompile(`(?i)\bhash ?tag\s+([\p{L}\p{N}_-]+)`)
 )
@@ -36,7 +39,13 @@ func CleanTranscript(s string) string {
 		return strings.ToLower(m[:1]) + "m"
 	})
 	s = dotTimeMeridiem.ReplaceAllString(s, "$1:$2$3")
-	s = dotTimeAfter.ReplaceAllString(s, "$1 $2:$3")
+	s = dotTimeAfter.ReplaceAllStringFunc(s, func(m string) string {
+		g := dotTimeAfter.FindStringSubmatch(m)
+		if next := strings.ToLower(strings.TrimSpace(g[4])); amountWords[next] || strings.ContainsAny(next, "%₹$") {
+			return m
+		}
+		return g[1] + " " + g[2] + ":" + g[3] + g[4]
+	})
 	s = spokenTag.ReplaceAllStringFunc(s, func(m string) string {
 		w := spokenTag.FindStringSubmatch(m)[1]
 		return "#" + strings.ToLower(w)
@@ -73,6 +82,15 @@ func DropHallucination(text string, speechMs int) string {
 		return ""
 	}
 	return text
+}
+
+// amountWords after "at 2.50" mean a price or quantity, not a time.
+var amountWords = map[string]bool{
+	"each": true, "per": true, "apiece": true, "lakh": true, "lakhs": true, "crore": true, "crores": true,
+	"rupee": true, "rupees": true, "rs": true, "inr": true, "dollar": true, "dollars": true, "usd": true,
+	"euro": true, "euros": true, "percent": true, "kg": true, "kgs": true, "g": true, "km": true, "l": true,
+	"litre": true, "litres": true, "liter": true, "liters": true, "gb": true, "mb": true, "k": true,
+	"times": true, "x": true, "units": true,
 }
 
 var oclock = regexp.MustCompile(`(?i)\s*o['’]clock\b`)

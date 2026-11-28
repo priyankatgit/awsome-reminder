@@ -324,9 +324,10 @@ function mountSpeech(host: HTMLElement): void {
   });
 
   on<VoiceStatus>(events.voiceStatus, (s) => {
-    const switched = !!voice?.target && !s.target;
+    // A finished switch or install, or another model, changes the installed/active flags.
+    const stale = (!!voice?.target && !s.target) || s.state !== voice?.state || s.model !== voice?.model;
     voice = s;
-    if (switched) void refresh(); // the installed/active flags changed
+    if (stale) void refresh();
     else render();
   });
   void (async () => {
