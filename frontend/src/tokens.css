@@ -418,3 +418,12 @@
   --reply-source-max: 14ch; /* a long app name ("Microsoft Teams (work or school)") truncates */
   --person-field-max: 28ch; /* the panel's For input */
 }
+
+/* ---- Setup: first-run data folder screen ----
+   Own block, so it merges cleanly with other token changes. Only sizes:
+   every colour reuses an existing pair (--time-text and --danger-text on
+   --bg, --fg-muted on --surface / --bg). */
+:root {
+  --radio-size: 16px; /* native radio in an option row */
+  --setup-max: 520px; /* the single column (same as --settings-max) */
+}
