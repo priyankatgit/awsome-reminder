@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"awesome-reminder/internal/model"
@@ -218,12 +219,6 @@ func Hash(m Message) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// oneLine replaces line breaks (which headers can't hold) with spaces.
-func oneLine(s string) string {
-	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
-	return strings.TrimSpace(s)
-}
-
 // clip cuts s to at most max bytes on a rune boundary, ending in "…" when cut.
 func clip(s string, max int) string {
 	if len(s) <= max {
@@ -256,4 +251,16 @@ func age(d time.Duration) string {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// oneLine replaces every control character (line breaks included, which
+// headers can't hold; net/http rejects the rest) with a space.
+func oneLine(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
 }

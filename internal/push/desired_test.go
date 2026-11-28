@@ -2,10 +2,12 @@ package push
 
 import (
 	"context"
+	"mime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"awesome-reminder/internal/model"
 	"awesome-reminder/internal/push/pushtest"
@@ -263,5 +265,43 @@ func TestHashCoversDeliverAt(t *testing.T) {
 	n.DeliverAt = tNow.Add(time.Minute)
 	if Hash(m) == Hash(n) || Hash(m) != Hash(m) {
 		t.Error("hash must change with DeliverAt and be stable")
+	}
+}
+
+func TestSnoozeTitleDecodes(t *testing.T) {
+	srv := pushtest.New()
+	defer srv.Close()
+	c := cfg()
+	c.Server = srv.URL
+	m := only(t, Desired([]model.Item{reminder("a", "fix 🚀 now", tNow.Add(time.Hour))}, tRule, c, tNow))
+	if err := (Client{Server: srv.URL, Topic: c.Topic, HTTP: srv.Client()}).Schedule(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := new(mime.WordDecoder).DecodeHeader(srv.Pending()[0].Actions[1].Headers["X-Title"])
+	if err != nil || got != "Snoozed · "+m.Title {
+		t.Errorf("snooze title = %q, %v; want %q", got, err, "Snoozed · "+m.Title)
+	}
+}
+
+func TestControlCharsInText(t *testing.T) {
+	srv := pushtest.New()
+	defer srv.Close()
+	c := cfg()
+	c.Server = srv.URL
+	m := only(t, Desired([]model.Item{reminder("a", "a\x00b\x1bc\u0085d\x0be", tNow.Add(time.Hour))}, tRule, c, tNow))
+	if err := (Client{Server: srv.URL, Topic: c.Topic, HTTP: srv.Client()}).Schedule(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	p := srv.Pending()[0]
+	for _, r := range p.Title {
+		if unicode.IsControl(r) {
+			t.Errorf("control %q in title %q", r, p.Title)
+		}
+	}
+	sn, _ := new(mime.WordDecoder).DecodeHeader(p.Actions[1].Headers["X-Title"])
+	for _, r := range sn {
+		if unicode.IsControl(r) {
+			t.Errorf("control %q in snooze title %q", r, sn)
+		}
 	}
 }
