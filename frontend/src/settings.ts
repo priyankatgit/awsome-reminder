@@ -146,6 +146,12 @@ interface Draft {
 const PUSH_SERVER = "https://ntfy.sh";
 const PUSH_GRACE = 2 * MIN;
 
+/** Grace in seconds; the default when missing or unparseable. */
+function pushGraceSec(g: string | undefined): number {
+  const n = g === undefined ? NaN : parseGoDuration(g);
+  return Number.isNaN(n) ? PUSH_GRACE : n;
+}
+
 function toDraft(s: Settings): Draft {
   return {
     hotkey: s.hotkey,
@@ -167,7 +173,7 @@ function toDraft(s: Settings): Draft {
     pushTopic: s.pushTopic ?? "",
     pushReplies: s.pushReplies ?? true,
     pushHideText: s.pushHideText ?? false,
-    pushGrace: s.pushGrace === undefined ? PUSH_GRACE : parseGoDuration(s.pushGrace),
+    pushGrace: pushGraceSec(s.pushGrace),
   };
 }
 

@@ -161,6 +161,34 @@ describe("section", () => {
     expect(form.d.enabled).toBe(true);
   });
 
+  it("asks before un-hiding the text while push is on, and Cancel re-ticks Hide text", async () => {
+    const form = fakeForm({ enabled: true, hideText: true });
+    const { host } = await mount(form);
+    const hide = q<HTMLInputElement>(host, "#push-hide");
+    hide.checked = false;
+    hide.dispatchEvent(new Event("change"));
+    const note = q(host, "#push-consent");
+    expect(visible(note)).toBe(true);
+    expect(note.textContent).toContain("Reminder text will be sent to ntfy.sh.");
+    expect(form.d.hideText).toBe(true);
+    button(host, "Cancel").click();
+    expect(hide.checked).toBe(true);
+    expect(form.d.hideText).toBe(true);
+    hide.checked = false;
+    hide.dispatchEvent(new Event("change"));
+    button(host, "Send text").click();
+    expect(form.d.hideText).toBe(false);
+    expect(visible(note)).toBe(false);
+  });
+
+  it("shows why the push info could not be read", async () => {
+    h.info = async () => {
+      throw new Error("no connection");
+    };
+    const { host } = await mount(fakeForm({ enabled: true }));
+    expect(host.textContent).toContain("no connection");
+  });
+
   it("writes the grace choice into the form in seconds", async () => {
     const form = fakeForm({ enabled: true });
     const { host } = await mount(form);

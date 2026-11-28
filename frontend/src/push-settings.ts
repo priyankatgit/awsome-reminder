@@ -231,7 +231,8 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
 
   let info: PushInfo | null = null;
   let status: PushStatus | null = null;
-  let asking = false; // the consent note is open
+  let infoError = ""; // why the last info read failed
+  let ask: "enable" | "show" | null = null; // which consent note is open
 
   const setText = (target: HTMLElement, text: string) => {
     target.textContent = text;
@@ -245,7 +246,7 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
 
   function renderStatus(): void {
     const s = status ?? info?.status ?? null;
-    statusLine.textContent = s ? pushStatusLine(s, new Date()) : "";
+    statusLine.textContent = infoError || (s ? pushStatusLine(s, new Date()) : "");
   }
 
   function renderInfo(): void {
@@ -267,12 +268,12 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
   function render(): void {
     const d = form.get();
     if (!d) return;
-    sw.checked = d.enabled || asking;
+    sw.checked = d.enabled || ask === "enable";
     details.hidden = !d.enabled;
     server.value = d.server;
     topic.value = d.topic;
     replies.input.checked = d.replies;
-    hide.input.checked = d.hideText;
+    hide.input.checked = d.hideText && ask !== "show";
     const secs = GRACE_OPTIONS.includes(d.graceSec) ? GRACE_OPTIONS : [...GRACE_OPTIONS, d.graceSec].sort((a, b) => a - b);
     grace.replaceChildren(
       ...secs.map((s) => {
@@ -290,15 +291,17 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
     try {
       info = await api.push.info();
       status = info.status;
-    } catch {
+      infoError = "";
+    } catch (err) {
       info = null;
+      infoError = errorText(err);
     }
     renderInfo();
   }
 
   // ----- Form fields -----
   function closeAsk(): void {
-    asking = false;
+    ask = null;
     consent.hidden = true;
   }
   sw.addEventListener("change", () => {
@@ -315,21 +318,33 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
       render();
       return;
     }
-    asking = true;
+    openAsk("enable", d);
+  });
+  function openAsk(kind: "enable" | "show", d: PushDraft): void {
+    ask = kind;
     consentText.textContent = `Reminder text will be sent to ${hostOf(d.server)}.`;
+    consentYes.textContent = kind === "enable" ? "Turn on" : "Send text";
     consent.hidden = false;
     consentYes.focus();
-  });
+  }
   consentYes.addEventListener("click", () => {
+    const kind = ask;
     closeAsk();
-    form.patch({ enabled: true });
+    if (kind === "show") form.patch({ hideText: false });
+    else form.patch({ enabled: true });
     render();
-    sw.focus();
+    (kind === "show" ? hide.input : sw).focus();
   });
   const cancelAsk = () => {
+    const kind = ask;
     closeAsk();
-    sw.checked = false;
-    sw.focus();
+    if (kind === "show") {
+      hide.input.checked = true;
+      hide.input.focus();
+    } else {
+      sw.checked = false;
+      sw.focus();
+    }
   };
   consentNo.addEventListener("click", cancelAsk);
   consent.addEventListener("keydown", (e) => {
@@ -346,7 +361,16 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
     setDisabled(copyBtn, topic.value.trim() === "");
   });
   replies.input.addEventListener("change", () => form.patch({ replies: replies.input.checked }));
-  hide.input.addEventListener("change", () => form.patch({ hideText: hide.input.checked }));
+  hide.input.addEventListener("change", () => {
+    const d = form.get();
+    // Un-hiding while push is on starts sending task text: ask first.
+    if (d && d.enabled && d.hideText && !hide.input.checked) {
+      openAsk("show", d);
+      return;
+    }
+    closeAsk();
+    form.patch({ hideText: hide.input.checked });
+  });
   grace.addEventListener("change", () => form.patch({ graceSec: Number(grace.value) }));
 
   // ----- Immediate actions -----
@@ -425,6 +449,7 @@ export function mountPushSection(host: HTMLElement, form: PushForm): PushSection
   // ----- Live status -----
   onPushStatus((s) => {
     status = s;
+    infoError = "";
     renderStatus();
   });
   window.setInterval(() => renderStatus(), TICK_MS);
