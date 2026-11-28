@@ -249,3 +249,32 @@ func TestDeleteOnUnavailableKeychainSucceeds(t *testing.T) {
 		t.Fatal("key file remains")
 	}
 }
+
+func TestClearKeychain(t *testing.T) {
+	old := sysKeychain
+	t.Cleanup(func() { sysKeychain = old })
+
+	kc := &fakeKeychain{val: "x", set: true}
+	sysKeychain = kc
+	if err := ClearKeychain(); err != nil || kc.set {
+		t.Fatalf("clear present entry: err=%v set=%v", err, kc.set)
+	}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("missing entry must not be an error: %v", err)
+	}
+	// No usable keychain (Linux without Secret Service): nothing can survive.
+	sysKeychain = &fakeKeychain{err: dbusErr}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("unavailable keychain must not be an error, got %v", err)
+	}
+	// Delete fails but the entry demonstrably survives.
+	sysKeychain = &failDelete{&fakeKeychain{val: "x", set: true}}
+	if err := ClearKeychain(); err == nil {
+		t.Fatal("surviving entry must be an error")
+	}
+	// Delete fails and the entry is gone or empty.
+	sysKeychain = &failDelete{&fakeKeychain{}}
+	if err := ClearKeychain(); err != nil {
+		t.Fatalf("delete error with no entry left must not be an error, got %v", err)
+	}
+}

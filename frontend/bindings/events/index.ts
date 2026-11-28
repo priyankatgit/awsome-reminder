@@ -39,6 +39,16 @@ export const ListFocus = "list:focus";
 export const ReplyOpen = "reply:open";
 
 /**
+ * Name of the custom event "setup:done".
+ */
+export const SetupDone = "setup:done";
+
+/**
+ * Name of the custom event "setup:progress".
+ */
+export const SetupProgress = "setup:progress";
+
+/**
  * Name of the custom event "sync:status".
  */
 export const SyncStatus = "sync:status";

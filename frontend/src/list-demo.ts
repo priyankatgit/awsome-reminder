@@ -515,6 +515,20 @@ function installSettingsDemo(): void {
     status: async () => ({ hotkeyErr, replyHotkeyErr: "" }),
     setHotkeyRecording: async (on: boolean) => console.info(`demo: hotkey recording ${on}`),
     chooseExportPath: async () => "C:\\Users\\demo\\Documents\\todo",
+    chooseFolder: async () => "E:\\Awesome Reminder",
+    dataFolder: {
+      info: async () => ({
+        path: "C:\\Users\\demo\\AppData\\Roaming\\awesome-reminder",
+        usedText: "84 MB",
+        freeText: "41.0 GB free",
+        previousDir: "D:\\Old\\awesome-reminder",
+        previousText: "84 MB",
+      }),
+      check: async (path: string) => ({ path, free: 41e9, need: 90e6, hasData: false, network: false, cloud: false, same: false, err: "" }),
+      change: async () => console.info("demo: change data folder"),
+      removeOldCopy: async () => console.info("demo: remove old copy"),
+      open: async () => console.info("demo: open data folder"),
+    },
     saveSettings: async (s: Settings) => {
       const clock = /^([01]\d|2[0-3]):[0-5]\d$/;
       if (!clock.test(s.defaultTime)) throw new Error(`defaultTime: invalid time "${s.defaultTime}", want HH:MM`);

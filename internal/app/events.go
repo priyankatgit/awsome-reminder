@@ -4,6 +4,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"awesome-reminder/internal/cloudsync"
+	"awesome-reminder/internal/datamove"
 )
 
 // Events emitted to the frontend.
@@ -36,6 +37,8 @@ type ReplyPrefill struct {
 }
 
 func init() {
+	application.RegisterEvent[datamove.Progress](EventSetupProgress)
+	application.RegisterEvent[SetupDone](EventSetupDone)
 	application.RegisterEvent[application.Void]("items:changed")
 	application.RegisterEvent[[]AlertCard]("alerts:show")
 	application.RegisterEvent[string]("list:focus")
