@@ -3069,3 +3069,282 @@ html[data-view="setup"] body {
   flex-direction: column;
   gap: var(--space-2);
 }
+
+/* ========== Obsidian gloss: black glossy surfaces and motion ==========
+   specs/2026-11-28-black-glossy-theme-design.md. Decoration only: every
+   layer here is a pseudo-element or a background-image over the existing
+   fills, so contrast pairs stay those in tokens.css. Ambient loops (the
+   capture aurora, the High dot) are the two allowed by ruling R6; the
+   global reduced-motion rule stills them. */
+
+/* ---- Capture box: glossy black glass ---- */
+.capture {
+  position: relative;
+  isolation: isolate;
+  background-image: var(--aurora-haze), var(--gloss);
+  box-shadow: var(--gloss-edge);
+}
+
+html[data-backdrop="solid"] .capture {
+  background-image: var(--aurora-haze), var(--gloss);
+  box-shadow: var(--gloss-edge), var(--shadow-float);
+}
+
+/* The aurora light strip along the top edge, drifting while the box shows. */
+.capture::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  height: var(--aurora-strip);
+  background: var(--aurora);
+  background-size: var(--aurora-size);
+  pointer-events: none;
+  animation: aurora-drift var(--dur-aurora) linear infinite;
+}
+
+.capture.is-hidden::before {
+  animation-play-state: paused;
+}
+
+/* One gloss sheen sweeping across the box as it opens. */
+.capture::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--sheen);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-100%);
+}
+
+.capture.is-entering {
+  animation: capture-enter-gloss var(--dur-capture-enter) var(--ease-spring);
+}
+
+.capture.is-entering::after {
+  animation: sheen-sweep var(--dur-sheen) var(--ease-enter);
+}
+
+@keyframes capture-enter-gloss {
+  from {
+    opacity: 0;
+    filter: blur(var(--enter-blur));
+    transform: scale(var(--capture-enter-scale));
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+@keyframes sheen-sweep {
+  from {
+    opacity: 1;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(100%);
+  }
+}
+
+@keyframes aurora-drift {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+/* The input row's aurora under-glow: faint when empty, bright with text. */
+.cap-field::before {
+  content: "";
+  position: absolute;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: 0;
+  height: var(--hairline);
+  background: var(--aurora);
+  background-size: var(--aurora-size);
+  opacity: var(--aurora-glow-idle);
+  pointer-events: none;
+  transition: opacity var(--dur-hover) var(--ease-enter);
+  animation: aurora-drift var(--dur-aurora) linear infinite;
+}
+
+.cap-field:has(.cap-input:not(:placeholder-shown))::before {
+  opacity: var(--aurora-glow-live);
+}
+
+.capture.is-hidden .cap-field::before {
+  animation-play-state: paused;
+}
+
+/* The save line flashes in aurora. */
+.cap-flash {
+  background: var(--aurora);
+  background-size: var(--aurora-size);
+}
+
+/* A detected time: the bell glows. */
+.cap-lead[data-icon="bell"] .icon {
+  filter: var(--glow-remind);
+}
+
+/* Keycaps: small glossy pills. */
+kbd {
+  background-image: var(--gloss);
+  box-shadow: var(--gloss-edge);
+}
+
+/* A review row just added (Shift+Enter, a paste, or "new task") drops in. */
+.rv-row.is-new {
+  animation: rv-drop var(--dur-dictated) var(--ease-enter);
+}
+
+@keyframes rv-drop {
+  from {
+    opacity: 0;
+    transform: translateY(var(--cascade-offset));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Buttons ---- */
+.btn-primary {
+  background-image: var(--gloss-strong);
+  box-shadow: var(--gloss-edge), var(--glow-accent);
+}
+
+/* ---- List window ---- */
+.list-header {
+  position: relative;
+  background-image: var(--gloss);
+}
+
+/* A static aurora hairline under the header. */
+.list-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(-1 * var(--hairline));
+  height: var(--hairline);
+  background: var(--aurora);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.row:hover,
+.row.is-selected,
+.row.has-menu {
+  background-image: var(--gloss);
+  box-shadow: var(--gloss-edge);
+}
+
+/* Overdue: a thin red bar on the left edge. */
+.row.is-overdue {
+  box-shadow: inset var(--overdue-bar) 0 0 var(--danger);
+}
+
+.row.is-overdue:hover,
+.row.is-overdue.is-selected,
+.row.is-overdue.has-menu {
+  box-shadow: inset var(--overdue-bar) 0 0 var(--danger), var(--gloss-edge);
+}
+
+/* Opening the list: headers and rows cascade in (list.ts sets --i and
+   .is-cascading for one run per window open). */
+.is-cascading .row,
+.is-cascading .sec-head {
+  animation: row-cascade var(--dur-cascade) var(--ease-spring) both;
+  animation-delay: calc(min(var(--i, 0), var(--stagger-max)) * var(--stagger-row));
+}
+
+.is-cascading .sec-head {
+  animation-name: head-cascade;
+}
+
+@keyframes row-cascade {
+  from {
+    opacity: 0;
+    filter: blur(var(--cascade-blur));
+    transform: translateY(var(--cascade-offset));
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes head-cascade {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--cascade-offset)));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* High priority on an open item: the dot blinks and a ring ripples out. */
+.row:not(.is-done) .row-prio[data-prio="high"] {
+  position: relative;
+  box-shadow: var(--glow-prio-high);
+  animation: prio-blink var(--dur-blink) ease-in-out infinite;
+}
+
+.row:not(.is-done) .row-prio[data-prio="high"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 var(--ripple-ring) var(--prio-high);
+  pointer-events: none;
+  animation: prio-ripple var(--dur-blink) ease-out infinite;
+}
+
+@keyframes prio-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--blink-dim);
+  }
+}
+
+@keyframes prio-ripple {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(var(--ripple-scale));
+  }
+}
+
+/* ---- Floating surfaces: menus, toasts, alert cards, the details panel ---- */
+.menu,
+.alert-card {
+  background-image: var(--gloss);
+}
+
+.menu {
+  box-shadow: var(--gloss-edge), var(--shadow-menu);
+}
+
+.alert-app {
+  background-image: var(--aurora-haze);
+}

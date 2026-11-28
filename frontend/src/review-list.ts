@@ -27,6 +27,8 @@ interface Row {
   text: string;
   preview: Preview | null;
   error: string;
+  /** Added since the last render: its element drops in once (.is-new). */
+  fresh?: boolean;
 }
 
 export interface ReviewListOptions {
@@ -56,7 +58,7 @@ export class ReviewList {
   }
 
   add(text: string): void {
-    const row: Row = { text, preview: null, error: "" };
+    const row: Row = { text, preview: null, error: "", fresh: true };
     this.rows.push(row);
     this.changed();
     void api
@@ -138,6 +140,8 @@ export class ReviewList {
 
   private renderRow(r: Row, i: number): HTMLElement {
     const row = el("div", "rv-row");
+    if (r.fresh) row.classList.add("is-new");
+    r.fresh = false;
     row.setAttribute("role", "listitem");
     row.tabIndex = -1;
     row.dataset.index = String(i);

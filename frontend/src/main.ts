@@ -7,6 +7,7 @@ import { mountCapture } from "./capture";
 import { mountList } from "./list";
 import { mountSettings } from "./settings";
 import { mountSetup } from "./setup";
+import { installTheme } from "./theme";
 
 // One page, one view per window, chosen by location.hash.
 const routes: Record<string, (root: HTMLElement) => void> = {
@@ -32,6 +33,9 @@ for (const type of ["dragover", "drop"] as const) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
   });
 }
+
+// Black by default; before any view renders, so nothing flashes.
+installTheme();
 
 const root = document.getElementById("app");
 const route = routes[location.hash.replace(/^#/, "")];

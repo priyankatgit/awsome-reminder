@@ -13,7 +13,7 @@ import (
 // Capture window geometry in DIPs. The frontend reports its content height
 // through ResizeCapture; the window keeps its top edge when it grows.
 const (
-	captureWidth      = 640
+	captureWidth      = 880 // wide enough for a long task line (~64 mono chars)
 	captureHeight     = 138 // input row + one preview line + hint row (style.css)
 	captureMinHeight  = 96
 	captureMaxHeight  = 480
@@ -52,12 +52,11 @@ const (
 	settingsWindowName = "settings"
 )
 
-// Framed window background before the page paints, matching --bg in
-// frontend/src/tokens.css so opening it doesn't flash white.
-var (
-	listBgDark  = application.NewRGB(0x0F, 0x17, 0x2A)
-	listBgLight = application.NewRGB(0xF8, 0xFA, 0xFC)
-)
+// Framed window background before the page paints, matching the default
+// (black) --bg in frontend/src/tokens.css so opening it doesn't flash. The
+// theme is black by default whatever the OS theme; "Match Windows" is a
+// page-side choice, so a light page paints over this after load.
+var pageBg = application.NewRGB(0x07, 0x07, 0x0A)
 
 // wailsWindows implements Windows on top of a running Wails application.
 type wailsWindows struct {
@@ -368,13 +367,8 @@ func newWindows(app *application.App) *wailsWindows {
 	return w
 }
 
-// pageBackground is the framed windows' background colour for the OS theme.
-func (w *wailsWindows) pageBackground() application.RGBA {
-	if w.app.Env.IsDarkMode() {
-		return listBgDark
-	}
-	return listBgLight
-}
+// pageBackground is the framed windows' background colour (see pageBg).
+func (w *wailsWindows) pageBackground() application.RGBA { return pageBg }
 
 // newList creates and shows the list window. It is destroyed when closed;
 // a hook (run synchronously, before Wails' own destroy listener) drops our

@@ -9,6 +9,7 @@ import { mountPushSection, type PushForm } from "./push-settings";
 import { mountDataFolderSection } from "./data-folder-settings";
 import { mountSyncSection } from "./sync-settings";
 import { mountVoiceSection } from "./voice-settings";
+import { mountAppearanceSection } from "./appearance-settings";
 
 const SEC = 1;
 const MIN = 60 * SEC;
@@ -407,6 +408,7 @@ const TEMPLATE = `
         <p class="field-help" id="pending-count-help">Shows how many items are open on the tray icon and the taskbar.</p>
       </div>
     </form>
+    <section class="settings-sync settings-appearance" id="appearance-section"></section>
     <section class="settings-sync" id="sync-section"></section>
     <section class="settings-sync settings-push" id="push-section"></section>
     <section class="settings-sync settings-voice" id="voice-section"></section>
@@ -906,6 +908,7 @@ export function mountSettings(root: HTMLElement): void {
     }
   });
 
+  mountAppearanceSection($("appearance-section"));
   mountSyncSection($("sync-section"));
   mountVoiceSection($("voice-section"));
   mountDataFolderSection($("data-folder-section"));

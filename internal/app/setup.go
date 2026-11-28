@@ -71,10 +71,6 @@ func RunSetup(o SetupOptions) error {
 	}))
 	svc := newSetupService(o.Resolution, app.Quit, func(name string, data any) { app.Event.Emit(name, data) })
 	app.RegisterService(application.NewService(svc))
-	bg := listBgLight
-	if app.Env.IsDarkMode() {
-		bg = listBgDark
-	}
 	win = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             setupWindowName,
 		Title:            appName,
@@ -84,7 +80,7 @@ func RunSetup(o SetupOptions) error {
 		MinHeight:        setupMinHeight,
 		URL:              "/#setup",
 		InitialPosition:  application.WindowCentered,
-		BackgroundColour: bg,
+		BackgroundColour: pageBg,
 	})
 	// Closing the window mid-move rolls the copy back before the app exits.
 	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) { svc.stopMove() })

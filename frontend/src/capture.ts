@@ -7,6 +7,7 @@ import { KeyGuard } from "./key-guard";
 import { canAnimate, easing, pop, ring, tokenNumber } from "./motion";
 import { priorityLabel, setPriorityToken, type Priority } from "./priority";
 import { mountReplyMode } from "./reply-mode";
+import { placePaste, splitPasted } from "./multi-task";
 import { ReviewList, saveSequential } from "./review-list";
 import { mountVoice, playChime } from "./voice";
 import type { SessionMode } from "./voice-segment";
@@ -90,6 +91,7 @@ const TEMPLATE = `
     <footer class="cap-hint" id="cap-hint">
       <span class="cap-hint-status" id="cap-hint-status" role="status" aria-live="polite" hidden></span>
       <span><kbd>↵</kbd> <span id="cap-hint-save">save</span></span>
+      <span><kbd>Shift</kbd><span class="keycap-plus">+</span><kbd>↵</kbd> add another</span>
       <span><kbd>Tab</kbd> time</span>
       <span><kbd>Ctrl</kbd><span class="keycap-plus">+</span><kbd>M</kbd> dictate</span>
       <span><kbd>Esc</kbd> close</span>
@@ -128,6 +130,7 @@ export function mountCapture(root: HTMLElement): void {
   const note = root.querySelector<HTMLElement>("#cap-note")!;
   const noteText = root.querySelector<HTMLElement>("#cap-note-text")!;
   const noteUndo = root.querySelector<HTMLButtonElement>("#cap-note-undo")!;
+  const voiceLive = root.querySelector<HTMLElement>("#cap-voice-live")!;
   const hintStatus = root.querySelector<HTMLElement>("#cap-hint-status")!;
   const hintSave = root.querySelector<HTMLElement>("#cap-hint-save")!;
   const voiceSave = root.querySelector<HTMLElement>("#cap-voice-save")!;
@@ -819,9 +822,24 @@ export function mountCapture(root: HTMLElement): void {
     schedulePreview();
   });
 
+  /**
+   * Shift+Enter: the typed line joins the review list and the box stays open
+   * for the next one; Enter then saves them all (R9 of the black glossy theme
+   * design). Reply mode is one line, so there it saves like Enter.
+   */
+  function stage(): void {
+    if (busy) return;
+    const n = addTask();
+    if (n > 0) voiceLive.textContent = `Task ${n} added`;
+    input.focus();
+  }
+
   input.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && e.shiftKey && !reply.active) {
+      e.preventDefault();
+      stage();
+    } else if (e.key === "Enter") {
       e.preventDefault();
       void submit();
     } else if (e.key === "Tab" && !e.shiftKey) {
@@ -831,6 +849,29 @@ export function mountCapture(root: HTMLElement): void {
       e.preventDefault();
       list.focusLast();
     }
+  });
+
+  // A paste of several lines (a list from notes or chat): every line but the
+  // last joins the review list, the last goes into the input. An <input>
+  // would otherwise squash the lines into one.
+  input.addEventListener("paste", (e) => {
+    if (reply.active || busy) return;
+    const lines = splitPasted(e.clipboardData?.getData("text/plain") ?? "");
+    if (lines.length < 2) return;
+    e.preventDefault();
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const placed = placePaste(input.value, start, end, lines);
+    clearConfirm();
+    leftover = false;
+    leftoverText = false;
+    for (const t of placed.rows) list.add(t);
+    input.value = placed.input;
+    input.setSelectionRange(placed.caret, placed.caret);
+    showError("");
+    voiceLive.textContent = `${tasks(placed.rows.length)} added`;
+    updateReview();
+    void runPreview();
   });
 
   /** Rewrites the priority token in the text and re-previews at once. */

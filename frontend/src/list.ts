@@ -12,7 +12,7 @@ import { el, keycaps, motionMs } from "./dom";
 import { icons } from "./icons";
 import { applyMarker, createRow, editRow, effectiveDue, fillRow, isDone, isOpenReply, isReminder, rowSignature, type RowModel } from "./item-row";
 import { closeMenu, isMenuOpen, openMenu, type MenuItem } from "./menu";
-import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide } from "./motion";
+import { canAnimate, celebrate, easing, enter, ghost, glide, measure, reducedMotion, stopGlide, tokenNumber } from "./motion";
 import { personLabel } from "./reply-mode";
 import { mountSyncPill } from "./sync-pill";
 import { needsRefetch, showMarkers } from "./sync-status";
@@ -547,6 +547,7 @@ export function mountList(root: HTMLElement): void {
     }
     render(!first);
     if (first) {
+      cascade();
       void consumeFocus();
       if (focusAfterLoad) {
         const id = focusAfterLoad;
@@ -554,6 +555,26 @@ export function mountList(root: HTMLElement): void {
         focusItem(id);
       }
     }
+  }
+
+  /**
+   * The window just opened: headers and rows cascade in, --stagger-row apart
+   * (rows past --stagger-max start together). Runs once per window, on the
+   * first view; later renders glide as before. Ruling R7 of the black glossy
+   * theme design.
+   */
+  function cascade(): void {
+    if (reducedMotion()) return;
+    const els = reflowEls();
+    if (els.length === 0) return;
+    els.forEach((e, i) => e.style.setProperty("--i", String(i)));
+    sectionsBox.classList.add("is-cascading");
+    const steps = Math.min(els.length - 1, tokenNumber("--stagger-max"));
+    const total = steps * motionMs("--stagger-row") + motionMs("--dur-cascade");
+    window.setTimeout(() => {
+      sectionsBox.classList.remove("is-cascading");
+      for (const e of els) e.style.removeProperty("--i");
+    }, total);
   }
 
   // ---------- focus from OpenList(id) ----------
