@@ -221,7 +221,7 @@ Open Settings from the tray menu or the gear in the list window.
 
 Sync is off by default and the app never touches the network for it until you turn it on. To turn it on, create a free MongoDB Atlas cluster and a database user limited to `readWrite` on `awesome_reminder`, then paste the cluster's `mongodb+srv://` connection string in **Settings › Sync across machines** and click **Connect**. The step-by-step guide is [docs/atlas-setup.md](docs/atlas-setup.md).
 
-- **What syncs:** to-dos and reminders (text, tags, due time, repeat, priority, description, done and snooze state, deletions), the description images, and the reminder defaults (lead times, default time, "next week" day and time). The hotkey, export path, "Start at login", "Show pending count" and the record of shown alerts stay on each computer.
+- **What syncs:** to-dos and reminders (text, tags, due time, repeat, priority, description, done and snooze state, deletions), the description images, the reminder defaults (lead times, default time, "next week" day and time), the reply settings and the phone push settings (on/off, server, topic, the two checkboxes and the grace; not the access token). The hotkey, export path, "Start at login", "Show pending count" and the record of shown alerts stay on each computer.
 - **A new machine** connects with the same string and restores everything. The first sync merges both sides: the union of the two, and for an item edited on both the newest edit wins. Overdue items that come back do not flood you with "missed" cards.
 - **Cadence:** a change is sent about 2 seconds after you make it, and the app checks for changes from other computers every 30 seconds. Your changes made offline are kept and sent when the network returns. Capture, the list and alerts never wait for the network.
 - **Status:** the list header shows a pill (`All synced · 2 min ago`, `Syncing…`, `Offline · 3 changes waiting`, `Sync error`); click it for details, **Sync now** and the cluster host. Rows that Atlas has not received yet show a small crossed-out cloud marker. The tray icon carries a status dot and the tooltip ends with the same wording.
@@ -243,9 +243,9 @@ Phone push is off by default and the app does not touch ntfy until you turn it o
 - **Buzz the phone if not handled here within** is immediately, 2, 5 or 10 minutes (default 2).
 - **Send test** pushes a test message; the status line shows the state (`Phone push: 3 scheduled · last sent 2 min ago`, `Offline · will retry`, or the error).
 
-The server, topic, the two checkboxes and the grace sync between computers; the token does not (set it on each computer).
+With sync on, the Phone push switch, the server, the topic, the two checkboxes and the grace sync between computers; the token does not (set it on each computer).
 
-**What gets pushed.** One buzz per reminder occurrence, at the due time (or the end of a snooze) plus the grace, not one per lead-time alert. High-priority items buzz as urgent (ntfy priority 5), others as high (4). The buzz is scheduled ahead on the ntfy server, up to 3 days (71 hours) ahead, so it arrives with the laptop closed or off, as long as a computer running the app was online at some point in the 3 days before. Each computer reschedules every 15 minutes and whenever something changes.
+**What gets pushed.** One buzz per reminder occurrence, at the due time (or the end of a snooze) plus the grace, not one per lead-time alert. High-priority items buzz as urgent (ntfy priority 5), others as high (4), and the end-of-day sweep at default priority (3). The buzz is scheduled ahead on the ntfy server, up to 3 days (71 hours) ahead, so it arrives with the laptop closed or off, as long as a computer running the app was online at some point in the 3 days before. Each computer reschedules every 15 minutes and whenever something changes.
 
 **Staying in step with the computers.**
 
@@ -257,7 +257,7 @@ The server, topic, the two checkboxes and the grace sync between computers; the 
 
 **Privacy.** The ntfy server (ntfy.sh unless you host your own) can read everything that is sent unless you hide the text. The topic works like a password: anyone who knows it can read it and post to it. A token you save is included in the phone's Done and Snooze buttons, so use one that can only post to the topic and `<topic>-ctl`.
 
-**Limits.** ntfy.sh's free tier allows 250 messages a day. Above 200 requests a day the app slows down and only schedules pushes due within 6 hours. A failed request is retried in the background and never delays an alert on the computer.
+**Limits.** ntfy.sh's free tier allows 250 messages a day. Above 200 requests a day the app only schedules pushes due within the next 6 hours. The count is kept per computer and starts again at local midnight and when the app restarts. A failed request is retried in the background and never delays an alert on the computer.
 
 ### Pending count
 

@@ -36,9 +36,10 @@ The user juggles many things and is often away from the desk. Desktop alerts onl
 
 From docs.ntfy.sh (checked 2026-11-28):
 
-- `POST <server>/<topic>` publishes. Headers: `X-Title`, `X-Priority` (1–5), `X-Tags`, `X-Delay` (Unix timestamp; min 10 s, max 3 days on ntfy.sh), `X-Actions`, `X-Sequence-ID`, `Authorization: Bearer tk_…`.
+- `POST <server>/<topic>` publishes. Headers: `X-Title`, `X-Priority` (1–5), `X-Tags`, `X-Delay` (min 10 s, max 3 days on ntfy.sh), `X-Actions`, `X-Sequence-ID`, `Authorization: Bearer tk_…`.
 - **Sequence IDs** (server v2.16.0+): `POST <server>/<topic>/<seq>` publishes with a sequence ID; `DELETE <server>/<topic>/<seq>` cancels a scheduled message before delivery (and removes a delivered one from clients).
 - **Verified on ntfy.sh, 2026-11-28** (three throwaway-topic tests):
+  - `X-Delay` must be a **duration** such as `120s` on ntfy.sh: an absolute Unix timestamp or RFC 3339 time is rejected with HTTP 400 "invalid delay parameter" (verified 2026-11-28). A duration is also immune to the computer's clock being off from the server's.
   - Published with the sequence ID **in the path**, a `DELETE` before delivery **cancels** it. Published with the `X-Sequence-ID` **header**, the `DELETE` does **not** stop delivery. → Always use the path form.
   - Publishing twice with the same sequence ID **delivers both** (the documented replace does not happen on ntfy.sh).
   - `DELETE` then publish again with the same sequence ID delivers **only the new one**. → "Replace" is implemented as delete-then-publish.
@@ -85,7 +86,7 @@ QR generation: a small pure-Go QR library (e.g. `github.com/skip2/go-qrcode`) re
 One push per **occurrence**, not per lead-time alert:
 
 - **Reminder** (open, has `DueAt`): at the due time (or at `SnoozeUntil` if snoozed later than that), plus `PushGrace`. Recurring reminders: each occurrence inside the window (use `internal/recur` / the planner's occurrence logic).
-- **Reply nudge** (only with `PushReplies`): at each nudge time the scheduler's `nudges()` computes, plus grace.
+- **Reply nudge** (only with `PushReplies`): at each nudge time the scheduler's `nudges()` computes, plus grace. Exception: a snoozed owed reply **with a due time** is pushed at its snooze end even with `PushReplies` off, styled as a reminder (its occurrence kind stays "nudge", so the seq still pairs with its snooze card).
 - **End-of-day sweep** (only with `PushReplies` and `EndOfDaySweep`): at each sweep time in the window, plus grace. Body lists the people (or "N replies owed" when hidden).
 - To-dos without a due time are never pushed.
 
@@ -93,11 +94,11 @@ Only pushes whose delivery time is between `now + 15 s` and `now + 71 h` are sch
 
 ### Message format
 
-- **Title:** `⏰ 17:00 · check deploy` (the local due time; date prefix when not today, e.g. `Thu 26 Nov 17:00`). Hidden: `Reminder due · 17:00`. Nudge: `Reply owed · Priya`; hidden `Reply owed`. Sweep: `3 people still waiting`.
+- **Title:** `⏰ 17:00 · check deploy` (the local due time; date prefix only when delivery, due time plus grace, falls on another local day, e.g. `Thu 26 Nov 23:59`; never compared with "now", so messages don't change at midnight). Hidden: `Reminder due · 17:00`. Nudge: `Reply owed · Priya`; hidden `Reply owed`. Sweep: `3 people still waiting`.
 - **Body:** the task text (truncated to keep the message under 4,096 bytes), tags as `#tag`; for a nudge "waiting 2 h". Hidden: "Open Awesome Reminder on a computer."
 - **Priority:** 5 (urgent) for High-priority items, 4 (high) otherwise; 3 for the sweep.
 - **Tags:** `alarm_clock` for reminders, `speech_balloon` for replies.
-- **Delay:** `X-Delay: <unix seconds>`.
+- **Delay:** `X-Delay: <N>s`, N = whole seconds from now to delivery, rounded up, at least 10.
 - **Sequence ID:** deterministic, see below.
 - **Actions** (reminders and nudges; not the sweep): `Done` and `Snooze 1h` (see Phone actions).
 
@@ -136,7 +137,7 @@ With grace 0 the phone buzzes at the same moment as the desktop.
 The phone cannot reach the laptop, so actions go through ntfy itself:
 
 - **Done:** `http` action → `POST <server>/<topic>-ctl` with body `{"op":"done","id":"<itemID>","occ":<occurrenceUnixSeconds>}`, `clear=true`, plus `headers.Authorization=Bearer …` when a token is set. The phone does not subscribe to `-ctl`, so it never buzzes.
-- **Snooze 1h:** `http` action → `POST <server>/<topic>/<seq>s` (path form, so computers can cancel it) with `headers.X-Delay=1h`, the same title/body (prefixed "Snoozed · ") and `clear=true`. This schedules the re-buzz on the server with every computer off. One action can send only one request, so the computers are not told about a phone snooze and the item is not snoozed on them. Instead, every computer that deletes a push for an occurrence (done, edit, delete, dismiss) also deletes `<seq>s`, so handling the item on a computer within the hour cancels the snoozed re-buzz too. The snoozed re-buzz carries only Done (no second snooze).
+- **Snooze 1h:** `http` action → `POST <server>/<topic>/<seq>s` (path form, so computers can cancel it) with `headers.X-Delay=1h`, the same title/body (prefixed "Snoozed · ") and `clear=true`. This schedules the re-buzz on the server with every computer off. One action can send only one request, so the computers are not told about a phone snooze and the item is not snoozed on them. Instead, every computer that deletes a push for an occurrence (done, edit, delete, dismiss) also deletes `<seq>s`, so handling the item on a computer within the hour cancels the snoozed re-buzz too. The snoozed re-buzz carries only Done (no second snooze): the Snooze action's headers include `X-Actions` holding just the Done action (with its `Authorization` when a token is set).
 - **Control listener:** each computer with push on keeps a streaming `GET <server>/<topic>-ctl/json` subscription (reconnect with backoff; on (re)connect it first polls `?poll=1&since=<last id>` stored locally, so messages sent while it was off are applied when it comes back within ntfy's 12 h cache). For `done`: if the item is open and `occ` equals its current due time — or, for a recurring item, is a later occurrence of its rule that is not in the future (the computer has not caught up yet), mark it done through the normal core path (which syncs to other computers and lets recurring items advance). Otherwise ignore (stale or already handled). Messages are idempotent across computers.
 - **Token in the buttons** *[my call]*: an `http` action runs on the phone, so on a protected topic it must carry a token. When the publishing computer has a token, it is put in the Done/Snooze actions (`headers.Authorization`), which means it is stored on the ntfy server and on every subscribed client. The Settings help says so and recommends a dedicated token that can only write to `<topic>` and `<topic>-ctl`. With no token (the ntfy.sh default, where the unguessable topic is the secret) nothing extra is exposed. The token is never logged.
 - **Which occurrence a phone Done applies to** *[builder's call, accepted]*: the item's current due time, or the next occurrence after it (a recurring item may already have advanced); apply through `core.DoneThrough`. Control messages are applied before missed alerts are shown on wake.
@@ -165,7 +166,7 @@ If a self-hosted server is older than v2.16 (deletes are ignored), pushes still 
 ## Constraints
 
 - Go 1.27 + Wails v3.1.0, vanilla TS frontend; follow the UI design guide.
-- Idle cost: one goroutine and one long-lived HTTP stream when on; nothing at all when off.
+- Idle cost: one goroutine and one long-lived HTTP stream when on; no network use and only idle goroutines when off.
 - Never block capture, the alert window, the scheduler or sync on the network.
 - Keep the existing test style (fakes, `httptest` ntfy server). The fake ntfy server must model what ntfy.sh actually does (scheduled delivery; path-form DELETE cancels a pending message; two publishes with the same sequence ID both deliver), so tests can assert "one delivery" across two simulated computers.
 - Manual testing uses temp copies of the binary with `APPDATA` pointed at a temp dir, never `bin/awesome-reminder.exe` from the repo path.
