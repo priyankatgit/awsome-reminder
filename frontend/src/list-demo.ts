@@ -508,6 +508,12 @@ function installSettingsDemo(): void {
     workDays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     endOfDay: "17:30",
     endOfDaySweep: true,
+    pushEnabled: false,
+    pushServer: "https://ntfy.sh",
+    pushTopic: "",
+    pushReplies: true,
+    pushHideText: false,
+    pushGrace: "2m0s",
   };
   let hotkeyErr = "";
   Object.assign(api, {
