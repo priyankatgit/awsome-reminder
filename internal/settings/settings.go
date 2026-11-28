@@ -240,7 +240,6 @@ func Defaults(goos string) Settings {
 		EndOfDay:         "17:30",
 		EndOfDaySweep:    true,
 		PushServer:       DefaultPushServer,
-		PushReplies:      true,
 		PushGrace:        2 * time.Minute,
 	}
 }

@@ -26,7 +26,6 @@ func TestDefaults(t *testing.T) {
 		EndOfDay:         "17:30",
 		EndOfDaySweep:    true,
 		PushServer:       "https://ntfy.sh",
-		PushReplies:      true,
 		PushGrace:        2 * time.Minute,
 	}
 	if got := Defaults("windows"); !reflect.DeepEqual(got, want) {
@@ -373,7 +372,7 @@ func TestSharedEqualIgnoresWorkDaysOrder(t *testing.T) {
 
 func TestDefaultsPush(t *testing.T) {
 	d := Defaults("windows")
-	if d.PushEnabled || d.PushServer != "https://ntfy.sh" || d.PushTopic != "" || d.PushGrace != 2*time.Minute {
+	if d.PushEnabled || d.PushReplies || d.PushServer != "https://ntfy.sh" || d.PushTopic != "" || d.PushGrace != 2*time.Minute {
 		t.Fatalf("push defaults: %+v", d)
 	}
 }
@@ -419,14 +418,14 @@ func TestUnmarshalOldSettingsPushDefaults(t *testing.T) {
 	if err := json.Unmarshal([]byte(old), &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.PushEnabled || s.PushServer != DefaultPushServer || s.PushGrace != 2*time.Minute || !s.PushReplies || s.PushTopic != "" {
+	if s.PushEnabled || s.PushServer != DefaultPushServer || s.PushGrace != 2*time.Minute || s.PushReplies || s.PushTopic != "" {
 		t.Fatalf("push defaults: %+v", s)
 	}
 }
 
 func TestPushJSONRoundTrip(t *testing.T) {
 	s := Defaults("windows")
-	s.PushEnabled, s.PushTopic, s.PushHideText, s.PushReplies, s.PushGrace = true, "ar-abc", true, false, 10*time.Minute
+	s.PushEnabled, s.PushTopic, s.PushHideText, s.PushReplies, s.PushGrace = true, "ar-abc", true, true, 10*time.Minute
 	b, err := json.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
