@@ -177,7 +177,7 @@ The source is not open by any other process: setup mode holds the single-instanc
 3. Copy `attachments/` and `sync.key`, each file written to `name.tmp` then renamed. Copy `voice/` from its current location (old builds: `<UserCacheDir>/awesome-reminder/voice`). The log isn't copied: a new one starts.
 4. Check: `store.Open` on the copy plus `PRAGMA integrity_check` returns `ok`. Every table's row count matches the source. Every attachment file exists with the same size. `sync.key` bytes are identical. Voice files match in size.
 5. Switch: write the pointer (`dataDir` = target, `previousDir` = old root, `pendingMove` cleared).
-6. Delete the old `voice/` folder (agreed exception; skipped when it is the shared cache folder of the standard location only if the target is also standard, which never happens for a move).
+6. Delete the voice folder the copy came from (the agreed exception: it is only a download).
 7. Rename the old database files `awesome.db`, `-wal` and `-shm` to `awesome.db.moved`, `-wal.moved` and `-shm.moved` (my call). Older builds of the exe always open `<UserConfigDir>/awesome-reminder/awesome.db`. Without the rename, an old copy of the exe started by mistake would silently open the stale backup, and new tasks would split across two databases. With it, an old build shows an empty list: obvious, and nothing diverges. The backup is still complete and can be restored by renaming. The old root is otherwise untouched.
 7. If any step fails, delete the half-written target files the app created (never pre-existing ones), leave the pointer as it was, show the error with **Try again** / **Cancel**, and the app keeps using the old root.
 
