@@ -124,10 +124,6 @@ export function mountDataFolderSection(host: HTMLElement): void {
     );
     if (adopt) {
       panel.append(el("p", "data-folder-path", c.path));
-      const n = el("p", "setup-notice");
-      n.insertAdjacentHTML("afterbegin", icons.info);
-      n.append(el("span", undefined, "Sync across machines will be off until you connect again."));
-      panel.append(n);
     }
     if (c.network) panel.append(note(NETWORK_WARNING, "warn"));
     if (c.cloud) panel.append(note(CLOUD_WARNING, "warn"));

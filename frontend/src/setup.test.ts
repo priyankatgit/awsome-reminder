@@ -172,7 +172,7 @@ describe("options", () => {
     expect(h.chosen[0]).toEqual(["other", "E:\\Notes\\Awesome Reminder", false]);
     expect(root().textContent).toContain("This folder already has Awesome Reminder data.");
     expect(root().textContent).toContain("Your other data stays where it is.");
-    expect(root().textContent).toContain("Sync across machines will be off until you connect again.");
+    expect(root().textContent).not.toContain("Sync across machines will be off");
     byText("Use that data").click();
     await flush();
     expect(h.chosen[1]).toEqual(["other", "E:\\Notes\\Awesome Reminder", true]);
@@ -301,8 +301,7 @@ describe("unavailable", () => {
     byText("Choose another folder…").click();
     await flush();
     expect(root().textContent).toContain("Start with an empty list here?");
-    // Starting fresh here clears the saved connection string too.
-    expect(root().textContent).toContain("Sync across machines will be off until you connect again.");
+    expect(root().textContent).not.toContain("Sync across machines will be off");
     byText("Start with an empty list").click();
     await flush();
     expect(h.chosen.at(-1)).toEqual(["other", "E:\\Notes\\Awesome Reminder", true]);

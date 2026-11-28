@@ -7,12 +7,8 @@ import (
 	"path/filepath"
 
 	"awesome-reminder/internal/paths"
-	"awesome-reminder/internal/secret"
 	"awesome-reminder/internal/store"
 )
-
-// clearKeychain is swapped in tests so they never touch the real keychain.
-var clearKeychain = secret.ClearKeychain
 
 func previousOf(prev *paths.Location) string {
 	if prev == nil {
@@ -22,8 +18,8 @@ func previousOf(prev *paths.Location) string {
 }
 
 // Adopt switches to a folder that already holds Awesome Reminder data. The
-// Atlas connection string saved in this computer's keychain belongs to the
-// folder being left, so it is cleared.
+// Atlas connection saved on this computer is kept: it is per computer, not
+// per folder.
 func Adopt(target string, prev *paths.Location) error {
 	db := filepath.Join(target, paths.DBFile)
 	if !exists(db) {
@@ -45,16 +41,11 @@ func Adopt(target string, prev *paths.Location) error {
 	if err != nil {
 		return err
 	}
-	if err := clearKeychain(); err != nil {
-		return fmt.Errorf("couldn't clear the saved connection string: %w", err)
-	}
 	return paths.SaveLocation(paths.Location{DataDir: target, PreviousDir: previousOf(prev)})
 }
 
 // StartFresh creates an empty database in target and switches to it.
-// clearKeychainEntry is true when leaving data that had an Atlas connection
-// saved.
-func StartFresh(target string, prev *paths.Location, clearKeychainEntry bool) error {
+func StartFresh(target string, prev *paths.Location) error {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return err
 	}
@@ -64,11 +55,6 @@ func StartFresh(target string, prev *paths.Location, clearKeychainEntry bool) er
 	}
 	if err := s.Close(); err != nil {
 		return err
-	}
-	if clearKeychainEntry {
-		if err := clearKeychain(); err != nil {
-			return fmt.Errorf("couldn't clear the saved connection string: %w", err)
-		}
 	}
 	return paths.SaveLocation(paths.Location{DataDir: target, PreviousDir: previousOf(prev)})
 }

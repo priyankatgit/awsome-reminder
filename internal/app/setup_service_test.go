@@ -19,7 +19,6 @@ type setupFx struct {
 	quits    int
 	adopts   []string
 	fresh    []string
-	freshClr []bool
 	keeps    int
 	mu       sync.Mutex
 	events   []string
@@ -54,9 +53,8 @@ func newSetupFx(t *testing.T, state paths.State) *setupFx {
 			fx.adopts = append(fx.adopts, target)
 			return nil
 		},
-		startFresh: func(target string, _ *paths.Location, clr bool) error {
+		startFresh: func(target string, _ *paths.Location) error {
 			fx.fresh = append(fx.fresh, target)
-			fx.freshClr = append(fx.freshClr, clr)
 			return nil
 		},
 		keep: func() error { fx.keeps++; return nil },
@@ -157,8 +155,8 @@ func TestChooseFreshStandardStartsFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	std, _ := paths.StandardRoot()
-	if len(fx.fresh) != 1 || fx.fresh[0] != std || fx.freshClr[0] || !RestartRequested() || fx.quits != 1 {
-		t.Fatalf("fresh=%v clr=%v", fx.fresh, fx.freshClr)
+	if len(fx.fresh) != 1 || fx.fresh[0] != std || !RestartRequested() || fx.quits != 1 {
+		t.Fatalf("fresh=%v", fx.fresh)
 	}
 }
 
@@ -182,8 +180,8 @@ func TestChooseFreshEmptyTargetStartsFresh(t *testing.T) {
 	if err := fx.svc.Choose("other", t.TempDir(), false); err != nil {
 		t.Fatal(err)
 	}
-	if len(fx.fresh) != 1 || fx.freshClr[0] {
-		t.Fatalf("fresh=%v clr=%v", fx.fresh, fx.freshClr)
+	if len(fx.fresh) != 1 {
+		t.Fatalf("fresh=%v", fx.fresh)
 	}
 }
 
@@ -197,8 +195,8 @@ func TestChooseUnavailableEmptyNeedsConfirm(t *testing.T) {
 	if err := fx.svc.Choose("other", target, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(fx.fresh) != 1 || !fx.freshClr[0] || !RestartRequested() || fx.quits != 1 {
-		t.Fatalf("fresh=%v clr=%v", fx.fresh, fx.freshClr)
+	if len(fx.fresh) != 1 || !RestartRequested() || fx.quits != 1 {
+		t.Fatalf("fresh=%v", fx.fresh)
 	}
 }
 
@@ -473,7 +471,7 @@ func TestChooseUnavailableStandardWithoutDataStartsFresh(t *testing.T) {
 	if err := fx.svc.Choose("standard", "", true); err != nil {
 		t.Fatal(err)
 	}
-	if len(fx.fresh) != 1 || !paths.SameDir(fx.fresh[0], std) || !fx.freshClr[0] {
-		t.Fatalf("fresh = %v clr=%v, want %q", fx.fresh, fx.freshClr, std)
+	if len(fx.fresh) != 1 || !paths.SameDir(fx.fresh[0], std) {
+		t.Fatalf("fresh = %v, want %q", fx.fresh, std)
 	}
 }

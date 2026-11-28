@@ -382,18 +382,8 @@ func TestMoveRefusesExistingDatabase(t *testing.T) {
 	}
 }
 
-func stubKeychain(t *testing.T, err error) *int {
-	t.Helper()
-	calls := 0
-	old := clearKeychain
-	clearKeychain = func() error { calls++; return err }
-	t.Cleanup(func() { clearKeychain = old })
-	return &calls
-}
-
 func TestAdoptKeepsOtherDataLive(t *testing.T) {
 	isolate(t)
-	calls := stubKeychain(t, nil)
 	target := newDest(t, "other")
 	os.MkdirAll(target.Root, 0o755)
 	putItems(t, target.DB(), 2)
@@ -409,47 +399,24 @@ func TestAdoptKeepsOtherDataLive(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("adopted database was modified")
 	}
-	if *calls != 1 {
-		t.Fatalf("keychain calls %d", *calls)
-	}
-}
-
-func TestAdoptKeychainErrorLeavesPointer(t *testing.T) {
-	isolate(t)
-	boom := errors.New("keychain locked")
-	stubKeychain(t, boom)
-	target := newDest(t, "other")
-	os.MkdirAll(target.Root, 0o755)
-	putItems(t, target.DB(), 1)
-	if err := paths.SaveLocation(paths.Location{DataDir: "D"}); err != nil {
-		t.Fatal(err)
-	}
-	before := pointerBytes(t)
-	if err := Adopt(target.Root, nil); !errors.Is(err, boom) {
-		t.Fatalf("err = %v", err)
-	}
-	if !bytes.Equal(pointerBytes(t), before) {
-		t.Fatal("pointer changed")
-	}
 }
 
 func TestStartFreshCreatesDB(t *testing.T) {
 	isolate(t)
-	calls := stubKeychain(t, nil)
 	target := newDest(t, "fresh")
-	if err := StartFresh(target.Root, nil, false); err != nil {
+	if err := StartFresh(target.Root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if countItems(t, target.DB()) != 0 || *calls != 0 {
-		t.Fatalf("calls %d", *calls)
+	if countItems(t, target.DB()) != 0 {
+		t.Fatal("new database is not empty")
 	}
 	target2 := newDest(t, "fresh2")
-	if err := StartFresh(target2.Root, &paths.Location{PreviousDir: "P"}, true); err != nil {
+	if err := StartFresh(target2.Root, &paths.Location{PreviousDir: "P"}); err != nil {
 		t.Fatal(err)
 	}
 	loc, _, _ := paths.LoadLocation()
-	if *calls != 1 || loc.DataDir != target2.Root || loc.PreviousDir != "P" {
-		t.Fatalf("calls %d loc %+v", *calls, loc)
+	if loc.DataDir != target2.Root || loc.PreviousDir != "P" {
+		t.Fatalf("loc %+v", loc)
 	}
 }
 
