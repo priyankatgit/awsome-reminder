@@ -1247,6 +1247,19 @@ export function mountList(root: HTMLElement): void {
   });
   window.addEventListener("blur", () => closeMenu(false));
 
+  // High-priority dots blink for --dur-blink-active after the window opens
+  // or comes back into focus, then rest (glow only), so an open list never
+  // pulses at the user all day.
+  const app = root.querySelector<HTMLElement>(".list-app")!;
+  let calmTimer: number | undefined;
+  function wakeBlink(): void {
+    app.classList.remove("is-calm");
+    window.clearTimeout(calmTimer);
+    calmTimer = window.setTimeout(() => app.classList.add("is-calm"), motionMs("--dur-blink-active"));
+  }
+  wakeBlink();
+  window.addEventListener("focus", wakeBlink);
+
   renderEmpty();
   api
     .getSettings()

@@ -3318,6 +3318,12 @@ kbd {
   animation: prio-ripple var(--dur-blink) ease-out infinite;
 }
 
+/* After --dur-blink-active the dot rests with its glow (list.ts .is-calm). */
+.is-calm .row:not(.is-done) .row-prio[data-prio="high"],
+.is-calm .row:not(.is-done) .row-prio[data-prio="high"]::after {
+  animation: none;
+}
+
 @keyframes prio-blink {
   0%,
   100% {
